@@ -1,0 +1,6 @@
+{
+    "deepwiki": {
+        "url": "https://mcp.deepwiki.com/mcp",
+        "transport": "streamable-http"
+    }
+}

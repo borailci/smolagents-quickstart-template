@@ -28,5 +28,5 @@ class ExampleCodeAgent(BaseAgent):
 
         logger.info(f"Initialized {self.agent.name}.")
 
-    def run(self, message, history=None):
-        return self.agent.run(message)
+    def run(self, *args, **kwargs):
+        return self.agent.run(*args, **kwargs)

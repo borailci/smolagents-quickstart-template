@@ -32,7 +32,4 @@ class ExampleManagerAgent(BaseManagerAgent):
         logger.info(f"Initialized {self.agent.name}.")
 
     def run(self, *args, **kwargs):
-        """
-        Runs the agent with the provided arguments within an MCP Client context.
-        """
         return self.agent.run(*args, **kwargs)

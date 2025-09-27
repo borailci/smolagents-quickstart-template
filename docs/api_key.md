@@ -6,37 +6,41 @@ This guide explains how to get API keys for running your Smolagents project. You
 
 ```mermaid
 flowchart LR
-	subgraph AGENTIC_LIB["Agentic Library"]
-		A["Smolagents"]
-	end
-	subgraph INTERFACE["Interface"]
-		B["LiteLLM"]
-	end
-	subgraph ROUTER["Router"]
-		C["OpenRouter"]
-	end
-	subgraph PROVIDER1["LLM Provider"]
-		D["Google"]
-	end
-	subgraph PROVIDERS["LLM Providers"]
-		E1["OpenAI"]
-		E2["Google"]
-		E3["Qwen"]
-		E4["Others"]
-	end
-	A --> B
-	B --> C
-	B --> D
-	C --> E1
-	C --> E2
-	C --> E3
-	C --> E4
+    subgraph AGENTIC_LIB["Agentic Library"]
+        A["Smolagents"]
+    end
+    subgraph INTERFACE["Interface"]
+        B["LiteLLM"]
+    end
+    subgraph ROUTER["Router"]
+        C["OpenRouter"]
+    end
+    subgraph PROVIDER_GAI["LLM Providers"]
+        D1["OpenAI"]
+        D2["Google"]
+        D3["Others"]
+    end
+    subgraph PROVIDERS["LLM Providers"]
+        E1["OpenAI"]
+        E2["Google"]
+        E3["Others"]
+    end
+    A --> B
+    B -- "OpenRouter API Key" --> C
+    B -- "API Key 1" --> D1
+    B -- "API Key 2" --> D2
+    B -- "API Key 3" --> D3
+    C -- "Same key" --> E1
+    C -- "Same key" --> E2
+    C -- "Same key" --> E3
 ```
-
 **How it works:**
 - Smolagents uses LiteLLM to talk to AI models.
 - LiteLLM can send requests to either OpenRouter or Google AI Studio.
 - OpenRouter itself can route to many different providers (OpenAI, Google, Anthropic, etc).
+  
+**Note:**
+If you use LiteLLM to connect directly to each provider, you need a separate API key for each (OpenAI, Google, etc). If you use OpenRouter, you only need a single OpenRouter key to access multiple providers.
 
 ### What is LiteLLM?
 **LiteLLM** is a library that provides a unified interface for different AI models. Instead of learning separate APIs for each provider, you can use one simple interface that works with OpenAI, Google, Anthropic, and many others.

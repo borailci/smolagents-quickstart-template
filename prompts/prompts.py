@@ -3,10 +3,6 @@ You are a Tool Calling agent.
 Your job is to assist with various tasks using the available DeepWiki MCP tools.
 """
 
-EXAMPLE_CODE_AGENT= """
-You are a Code agent.
-Your job is to assist with various tasks using the available Joke API native tools.
-"""
 
 EXAMPLE_MANAGER_AGENT = """
 You are a Manager agent.

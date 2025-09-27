@@ -20,7 +20,7 @@ class ExampleToolCallingAgent(BaseAgent):
 
         self.agent = ToolCallingAgent(
             name="tool_calling_agent",
-            description="A worker agent with access to DeepWiki MCP tools to retrieve information about public github repositories.",
+            description="A worker agent with a workspace and access to its files using filesystem tools.",
             tools=tools,
             model=LiteLLMModel(model_id=LITELLM_MODEL_ID, api_key=LITELLM_API_KEY),
             instructions=prompts.EXAMPLE_TOOL_CALLING_AGENT

@@ -1,6 +1,5 @@
-EXAMPLE_TOOL_CALLING_AGENT= """
-You are a Tool Calling agent.
-Your job is to assist with various tasks using the available DeepWiki MCP tools.
+EXAMPLE_TOOL_CALLING_AGENT = """
+You are a Tool Calling agent with access to file management tools. Use your tools to read, write, search, and explore files and directories as needed to complete user requests.
 """
 
 

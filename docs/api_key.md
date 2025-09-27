@@ -16,7 +16,7 @@ flowchart LR
 		C["OpenRouter"]
 	end
 	subgraph PROVIDER1["LLM Provider"]
-		D["Google AI Studio"]
+		D["Google"]
 	end
 	subgraph PROVIDERS["LLM Providers"]
 		E1["OpenAI"]

@@ -4,7 +4,7 @@ Hi! Modules 1 and 2 covered LLMs and RAG. Now, let's make LLMs do real actions, 
 
 ## I. What is an LLM Tool?
 
-A **tool** is simply a function that you write in code. It's a normal Python function with a name, inputs, and outputs. The LLM doesn't run it directly—instead, based on what the user asks, the LLM decides if it needs to call one of your tools and provides the right inputs.
+A **tool** is just a function that you write in code. It's a normal Python function with a name, inputs, and outputs. The LLM doesn't run it directly—instead, based on what the user asks, the LLM decides if it needs to call one of your tools and provides the right inputs.
 
 For example, you define a tool like `read_file(filename)`. The LLM sees the tool's description and, if the user says "Read the main.py file," the LLM calls it with `filename="main.py"`.
 
@@ -21,48 +21,69 @@ LLM: "File says: ..."
 
 ### A. LLM Limitations
 
-LLMs are powerful, but they have big limits:
-- Their knowledge comes from training data, which is old and fixed.
-- They can't get new info, like today's weather or latest news.
-- They can't interact with the world—no sending emails, checking files, or running commands.
-
-Without tools, LLMs are like smart but isolated brains.
+LLMs are trained on fixed data, so their knowledge is limited. They can't get live info or interact with the world.
 
 ### B. Expanding Capabilities
 
-Tools fix these limits! They let LLMs:
-- Access live, real-time info.
-- Perform actions in the real world.
+Tools fix this! They let LLMs access real-time info or perform actions.
 
 **Example 1: Web Search**
-LLMs can't search the internet. But you can write a tool:
-```python
-def web_search(query):
-    # Code to search Google or another engine
-    return results
-```
-Now, the LLM can "search" by calling this tool.
+LLMs can't search the internet. But you can write a tool (a function) that accepts a query and runs it in web search engines (like Google). This way, the LLM can access the internet.
 
 **Example 2: Code Access**
-LLMs can't read your local files. But with a tool:
-```python
-def read_file(filename):
-    with open(filename, 'r') as f:
-        return f.read()
-```
-The LLM can now "see" your code by calling `read_file("main.py")`.
+LLMs can't read your local files. But with a tool that takes a filename and returns the content, the LLM can "see" your code.
 
 Tools make LLMs active helpers, not just passive chatbots.
 
 ## III. Use Cases and Examples of Tools
 
-Tools can do many things based on needs. Here are some examples:
+Tools can do many things based on needs. Numerous tools can be used for LLMs, such as:
 
-- **Sending Emails**: A tool to send emails via SMTP.
-- **Terminal Access**: Run shell commands, like `git log` or tests.
-- **Getting Time**: Return current date/time.
-- **Database Queries**: Write and run SQL on databases.
-- **Vector DB Queries**: Search embeddings for RAG-like info.
+- **Sending Emails**:
+  ```python
+  import smtplib
+  def send_email(to, subject, body):
+      # SMTP setup
+      server = smtplib.SMTP('smtp.example.com')
+      server.sendmail('from@example.com', to, f'Subject: {subject}\n\n{body}')
+      server.quit()
+  ```
+
+- **Terminal Access**:
+  ```python
+  import subprocess
+  def run_command(command):
+      result = subprocess.run(command, shell=True, capture_output=True, text=True)
+      return result.stdout
+  ```
+
+- **Getting Time**:
+  ```python
+  import datetime
+  def get_current_time():
+      return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+  ```
+
+- **Database Queries**:
+  ```python
+  import sqlite3
+  def query_db(sql):
+      conn = sqlite3.connect('database.db')
+      cursor = conn.cursor()
+      cursor.execute(sql)
+      results = cursor.fetchall()
+      conn.close()
+      return results
+  ```
+
+- **Vector DB Queries**:
+  ```python
+  def query_vector_db(query):
+      # Similar to RAG
+      embedding = encode(query)
+      results = vector_db.search(embedding, top_k=5)
+      return results
+  ```
 
 For your projects, tools like read_file, run_shell, and query_vector_db are key for code tasks.
 

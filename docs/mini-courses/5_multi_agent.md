@@ -12,7 +12,7 @@ This needs two things:
 1. Write SQL to query the database.
 2. Visualize results as a bar chart.
 
-**Single-Agent Issue**: One agent handling both SQL and visualization might get confused. It could mix up steps or make mistakes (hallucinate) because it's juggling two different jobs.
+**Single-Agent Issue**: One agent handling both SQL and visualization might get confused. It could mix up steps or make mistakes (hallucinate) because it's juggling two different jobs. The prompt would be huge, covering SQL and visualization in different domains.
 
 ASCII Art:
 ```
@@ -43,7 +43,11 @@ A **Manager Agent** handles everything:
 - Delegates tasks.
 - Collects results and gives the final answer.
 
-This keeps things organized!
+For example, when the task requires only SQL querying, we route the task to the SQL Agent. If it requires both, we first route to the SQL Agent, and then the results route to the Visualization Agent.
+
+This way, the user prompt is received first by the Manager Agent. The Manager Agent delegates the task to Worker Agents (the SQL Agent and Visualization Agent). The Manager Agent finally returns the results to the user.
+
+This architecture is called Supervisor,  Manager-Worker, Orchestrator-Worker, or Master-Slave architecture.
 
 ## III. Multi-Agent Architectures
 

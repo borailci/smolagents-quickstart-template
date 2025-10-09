@@ -6,6 +6,8 @@ Welcome to the first module of our AI tutorial series! As your expert tutor, I'l
 
 ### A. Core Definition
 
+What are LLMs? They're just models that take text as input and output text. You give them a prompt, and they generate a response based on patterns learned from training data.
+
 Imagine an LLM as a super-smart text machine. You give it some words (called a **prompt**), and it replies with more words (called **generation**). It's like chatting with a knowledgeable friend who predicts what you'll say next.
 
 At its heart, an LLM is a deep learning model trained on huge amounts of text from books, websites, and more. It learns patterns in language to guess the most likely next word in a sentence.
@@ -18,21 +20,25 @@ LLM Brain: [Magic Processing]
 Output: "blue."
 ```
 
-### B. The Building Blocks
+### B. Key Parameters: Temperature, Max Output Tokens, Context Window
 
-To understand LLMs, let's break them down:
+LLMs have settings to control output:
 
-1. **Tokenization**: LLMs don't process whole words or letters—they use **tokens**, which are small pieces like word parts or symbols. For example, "running" might be split into "run" and "ning".
+- **Temperature**: 0.0 to 1.0. Low (0.1-0.3) for accurate, consistent answers (good for code). High (0.9) for creative but risky.
 
-   Why does this matter? Tokens affect how fast the model works and how much it costs to use (via APIs). Fewer tokens mean quicker responses and lower costs.
+- **Max Output Tokens**: Limits response length to save costs.
 
-   ASCII Art Example:
-   ```
-   Sentence: "Hello world!"
-   Tokens: ["Hello", " world", "!"]
-   ```
+- **Context Window**: Max text (input + output) per call. Exceeded? Truncation or errors.
 
-2. **Architectural Overview**: Modern LLMs use something called the **Transformer architecture**, powered by an **Attention mechanism**. Think of it as the engine that lets the model focus on important parts of your input. We won't dive deep here, but know it's what makes LLMs so smart!
+### C. Context Window Limitations
+
+The context window is a big limit. It prevents processing huge codebases. That's why RAG helps—pulls in extra info.
+
+ASCII Art for Context Window:
+```
+Context Window: [Input Text] + [Output Text] <= Limit
+If too much: [Input Text] ... [Truncated!]
+```
 
 ## II. Controlling Output and Understanding Constraints
 
@@ -65,7 +71,7 @@ You can tweak settings to change how the LLM responds. Here are the main ones:
 
 ## III. LLM Deployment and Optimization
 
-Now, how do you actually use an LLM? There are two main ways.
+Now, how do you actually use an LLM? Inference needs GPU for larger models, so cloud or local.
 
 ### A. Inference Execution Methods
 
@@ -103,8 +109,8 @@ For your projects, you'll need access to LLMs. Here's how:
 
 ### B. OpenRouter (Unified Gateway)
 
-- **What it is**: One API key to access many LLMs from providers like Google, OpenAI, and more ([openrouter.ai](https://openrouter.ai/)).
-- **Benefit**: Free models with daily limits, easy switching for testing.
+- **What it is**: Instead of separate keys for Google, OpenAI, Qwen, etc., get one OpenRouter key to access almost all models from different providers ([openrouter.ai](https://openrouter.ai/)).
+- **Benefit**: Free models with daily limits (beyond Google), easy switching for testing.
 
 Here's a Mermaid diagram showing how OpenRouter works as a gateway:
 

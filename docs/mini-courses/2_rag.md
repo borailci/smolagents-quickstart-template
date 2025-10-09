@@ -10,12 +10,9 @@ LLMs have a "memory limit" called the context window. They can't read your whole
 
 ### B. What is RAG?
 
-RAG stands for Retrieval-Augmented Generation. It's like giving the LLM a helper that finds facts from your code before answering.
+RAG stands for Retrieval-Augmented Generation. It helps with context window limits by pulling in relevant info from your data before generating answers.
 
-**How it works in 3 steps**:
-1. **Find (Retrieval)**: Search your code for relevant parts.
-2. **Add (Augmentation)**: Put those parts into the LLM's question.
-3. **Answer (Generation)**: LLM gives a smart reply based on the added info.
+**How it works**: Convert text to vector embeddings (numbers) using encoder models. Store in vector DBs like ChromaDB, Milvus, Weaviate, Pinecone, FAISS. Query by converting your question to vectors, find similar ones (cosine similarity), get top results to LLM.
 
 **Why cool?** RAG stops wrong answers and lets LLMs use real code facts.
 
@@ -39,6 +36,8 @@ Similar code gets similar numbers. Like neighbors in a city—close addresses me
 
 We check how close two fingerprints are using "cosine similarity." High score = very similar!
 
+**Vector Generation**: Encoder models create these vectors.
+
 Example:
 ```
 Code 1: "def add(a, b): return a + b" -> Numbers: [0.1, 0.8, ...]
@@ -53,6 +52,8 @@ Close numbers = Similar code!
 Vector DBs are special storages for millions of fingerprints. They keep the numbers and link them to the original code.
 
 They search super fast using smart math.
+
+**Querying**: Convert query to vector, search DB for top-N similar (cosine similarity), return to LLM.
 
 ### B. Popular Ones
 
@@ -171,6 +172,8 @@ distances, indices = index.search(query, 5)
 
 - Tutorial Maker: Find code parts to explain.
 - Chatbot: Get exact code for questions.
+
+**Usages and Use Cases**: RAG is great for Q&A on codebases, docs, or any large data. Libraries like Haystack and LlamaIndex have ready-to-use RAG with examples.
 
 ## Mermaid Diagram: RAG in Action
 

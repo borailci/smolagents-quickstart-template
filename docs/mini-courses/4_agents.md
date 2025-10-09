@@ -15,6 +15,8 @@ LLMs handle simple questions, but complex tasks (like fixing bugs or analyzing c
 
 Tools are the "hands"—functions for actions.
 
+You can think of an LLM like a brain and an Agent like a human body, and Tools as the hands or feet of the human body.
+
 ![Agents are just LLM wrappers](../images/agents-meme-card.jpg)  
 *Everyone thinks agents are magic, but they're just smart LLM setups!*
 
@@ -48,6 +50,14 @@ For "fix the bug in your code":
 | 5 | Summarize if tests pass | Invoked to summarize |
 
 Agents invoke LLMs multiple times; LLMs do it once.
+
+This example shows that while a single LLM is invoked only for one time, the agent invokes LLMs multiple times to reach their goal (which is solving the bug) in multiple, controlled steps.
+
+So in a simple manner we can say that:
+
+- An LLM is just a neural networks that inputs text and output text.
+
+- An Agent is an LLM that has access to tools, and is invoked within a loop multiple times until a goal is reached.
 
 ![Multi-Step Process](../images/e55e6269-afb4-4aa7-9665-100bc060f952_690x362.jpg)  
 *See the steps in action!*

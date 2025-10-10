@@ -9,5 +9,5 @@ dependencies = [
     "langchain-community>=0.3.30",
     "loguru>=0.7.3",
     "openai<1.100.0",
-    "smolagents[extra1,extra2,gradio,litellm,mcp,toolkit]>=1.21.1",
+    "smolagents[extra1,extra2,gradio,litellm,mcp,telemetry,toolkit]>=1.21.1",
 ]

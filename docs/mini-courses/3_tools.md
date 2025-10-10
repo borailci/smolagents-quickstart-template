@@ -128,3 +128,5 @@ Tools let LLMs act in the real world. You learned what they are, why they're use
 **Quick Check**: Why do LLMs need tools?
 
 Keep learning! 🚀
+
+**Next Module:** [Module 4: AI Agents: From Single Call to Multi-Step Reasoning](4_agents.md)

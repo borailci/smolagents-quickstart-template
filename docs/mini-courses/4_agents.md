@@ -159,3 +159,5 @@ Agents are LLMs in loops with tools and memory. They handle complex tasks. Next,
 **Quick Check**: What's the agent loop?
 
 Keep going! 🚀
+
+**Next Module:** [Module 5: Multi-Agent Architectures](5_multi_agent.md)

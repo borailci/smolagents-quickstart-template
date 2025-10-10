@@ -212,3 +212,5 @@ RAG, LLM'leri kod bilginle güçlendirir. Embeddings, DB'ler ve adımları biliy
 **Hızlı Kontrol**: 3 RAG adımını söyle. Embeddings neden faydalı?
 
 Devam et! 🚀
+
+**Sonraki Modül:** [Modül 3: LLM Tool Calling](3_tools_tr.md)

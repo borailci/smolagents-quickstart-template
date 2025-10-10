@@ -176,3 +176,5 @@ You've learned the basics of LLMs: what they are, how they work, their limits, a
 **Quiz Yourself**: What is a context window? Why use low temperature for code tasks?
 
 Happy learning! 🚀
+
+**Next Module:** [Module 2: Retrieval-Augmented Generation (RAG)](2_rag.md)

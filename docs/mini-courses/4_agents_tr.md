@@ -159,3 +159,5 @@ Agent'lar tool'lar ve hafıza ile döngülerdeki LLM'ler. Karmaşık görevleri 
 **Hızlı Kontrol**: Agent loop nedir?
 
 Devam et! 🚀
+
+**Sonraki Modül:** [Modül 5: Multi-Agent Architectures](5_multi_agent_tr.md)

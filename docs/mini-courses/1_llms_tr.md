@@ -174,3 +174,5 @@ LLM'lerin temellerini öğrendin: Ne oldukları, nasıl çalıştıkları, sın�
 **Kendini Sınav Et**: Context window nedir? Kod görevlerinde neden düşük temperature kullan?
 
 Mutlu öğrenmeler! 🚀
+
+**Sonraki Modül:** [Modül 2: Retrieval-Augmented Generation (RAG)](2_rag_tr.md)

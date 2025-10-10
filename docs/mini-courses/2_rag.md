@@ -210,3 +210,5 @@ RAG boosts LLMs with your code knowledge. You now know embeddings, DBs, and the 
 **Quick Check**: Name the 3 RAG steps. Why are embeddings useful?
 
 Keep going! 🚀
+
+**Next Module:** [Module 3: LLM Tool Calling](3_tools.md)

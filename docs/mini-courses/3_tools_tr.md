@@ -128,3 +128,5 @@ Tool'lar LLM'lerin gerçek dünyada eylem yapmasını sağlar. Ne olduklarını,
 **Hızlı Kontrol**: LLM'ler neden tool'lara ihtiyaç duyar?
 
 Öğrenmeye devam et! 🚀
+
+**Sonraki Modül:** [Modül 4: AI Agents: From Single Call to Multi-Step Reasoning](4_agents_tr.md)

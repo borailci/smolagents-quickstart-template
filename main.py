@@ -8,8 +8,14 @@ from toolkits.filesystem_toolkit import FileSystemToolkit
 from agents.base_agent import BaseAgent
 from agents.example_tool_calling_agent import ExampleToolCallingAgent
 from agents.example_manager_agent import ExampleManagerAgent
+from phoenix.otel import register
+from openinference.instrumentation.smolagents import SmolagentsInstrumentor
 
 load_dotenv()
+
+# Initialize OpenTelemetry tracing with Phoenix and OpenInference
+register()
+SmolagentsInstrumentor().instrument()
 
 
 def main():

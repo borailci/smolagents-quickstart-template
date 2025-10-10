@@ -1,6 +1,6 @@
 # Smolagents Quickstart Template
 
-A minimal template for building AI agents with [Smolagents](https://huggingface.co/docs/smolagents). Features tool-calling agents, filesystem operations, and optional multi-agent orchestration.
+A minimal template for building AI agents with [Smolagents](https://huggingface.co/docs/smolagents). Features tool-calling agents, filesystem operations, optional multi-agent orchestration, and OpenTelemetry tracing.
 
 ## Features
 
@@ -9,6 +9,7 @@ A minimal template for building AI agents with [Smolagents](https://huggingface.
 - File workspace for agent operations
 - Optional multi-agent coordination
 - Easy LLM provider integration via LiteLLM
+- OpenTelemetry tracing with Phoenix and OpenInference for agent observability
 
 ## Quick Start
 
@@ -46,3 +47,4 @@ Open the Gradio URL printed in your terminal to start chatting with the agent.
 ## License
 
 MIT
+

@@ -40,7 +40,26 @@ def read_file(file_path: str) -> List[str]:
     Returns:
         List[str]: A list of strings representing the lines or contents of the file.
     """
-    return read_file_tool.invoke(input={"file_path": file_path})
+    file_content = read_file_tool.invoke(input={"file_path": file_path})
+    return [f"===== Contents of {file_path} ====="] + file_content
+
+
+@tool
+def read_file_bulk(file_paths: List[str]) -> List[str]:
+    """
+    Reads the contents of multiple files specified by the given file paths.
+
+    Args:
+        file_paths (List[str]): A list of paths to the files to be read.
+
+    Returns:
+        List[str]: A list of strings representing the lines or contents of the files.
+    """
+    contents = []
+    for path in file_paths:
+        file_content = read_file_tool.invoke(input={"file_path": path})
+        contents.append(f"===== Contents of {path} =====\n" + "\n".join(file_content))
+    return contents
 
 
 @tool
@@ -101,7 +120,7 @@ def get_tree(root_path: str) -> List[str]:
             entries = sorted(os.listdir(dir_path))
         except (PermissionError, OSError):
             return [f"{prefix}[Permission Denied] {os.path.basename(dir_path)}/"]
-        entries = [e for e in entries if not e.startswith('.')]
+        entries = [e for e in entries if not e.startswith(".")]
         result = []
         for idx, entry in enumerate(entries):
             path = os.path.join(dir_path, entry)
@@ -129,6 +148,7 @@ class FileSystemToolkit:
     def get_tools() -> List[Tool]:
         return [
             read_file,
+            read_file_bulk,
             write_file,
             file_search,
             list_workspace_dir,

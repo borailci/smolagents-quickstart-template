@@ -107,6 +107,29 @@ In order to implement this feature, we can create a simple tool that allows the 
 
 **NOTE:** You may decide to implement the TODO list or use the planning parameter of the Smolagents framework. Both approaches are valid and can be used to help the main agent stay organized and focused on its tasks. These two approaches are OPTIONAL, and you are totally free to implement or not implement them based on your preference. However, their implementation can be very helpful in managing the complexity of the knowledge base generation process.
 
+**NOTE: Simplified Planning Approach**
+You can also user a much simpler approach for task decomposition instead of implementing a full TODO list or using the planning mechanism of Smolagents.
+
+Instead of implementing intelligent task decomposition, use this deterministic rule:
+
+```
+For every first-level directory in src/:
+  - Create one sub-agent
+  - Task: "Analyze [directory_name] and document it"
+```
+Example:
+If your codebase has:
+```
+src/
+├── api/
+├── models/
+├── utils/
+└── config/
+```
+
+Then spawn exactly 4 sub-agents (one for each directory).
+
+
 ### 3. Spawning Sub-Agents for Specific Tasks
 
 #### Understanding Sub-Agents Architecture

@@ -95,12 +95,21 @@ Each sub-agent gets tools that are scoped to specific directories:
 **Key elements to include:**
 - How to use `get_tree` or `list_directory` tools to understand codebase structure
 - How to read important files (README.md, main.py, package.json)
-- How to identify logical chunks for delegation (e.g., "analyze API folder", "analyze models folder")
+- **Simplified approach:** For every first-level directory under `src/`, spawn one sub-agent with a standard task
 - How to use `spawn_sub_agents` tool with clear task descriptions
 - How to read results from sub-agent workspaces
 - How to combine markdown files into final knowledge base
 
-**Tip:** Be specific about output format expectations (markdown with mermaid diagrams, code examples, etc.)
+**Example main agent logic:**
+```
+1. Read codebase tree
+2. Find all first-level directories in src/
+3. For each directory, create a task: "Analyze [directory_name] and document it"
+4. Spawn one sub-agent per directory
+5. Read all results from sub-agent workspaces
+6. Combine into final knowledge base
+```
+
 
 ### Task 2: Write Sub-Agent Prompts
 
@@ -109,14 +118,17 @@ Each sub-agent gets tools that are scoped to specific directories:
 **Approach A: Generic prompt** (simpler)
 - Main agent defines entire task in tool call
 - Sub-agent just follows the task description
+- Easier to implement and debug
+- Perfect for prototypes
 
-**Approach B: Pre-built agent types** (better quality)
+**Approach B: Pre-built agent types** (better quality, optional upgrade)
 - Create specialized prompts: `ANALYZER_AGENT_PROMPT`, `SUMMARIZER_AGENT_PROMPT`
 - These prompts include detailed instructions on how to analyze, what format to use, what to include
 - Main agent just picks agent type + adds specific task
 - Final prompt = Pre-built instructions + Main agent's task
+- Produces more consistent, higher-quality output
 
-**Recommendation:** Start with Approach A, upgrade to Approach B if outputs are inconsistent
+**Recommendation:** Start with Approach A. If output quality is poor and you have time, upgrade to Approach B.
 
 ### Task 3: Implement `spawn_sub_agents` Tool
 
@@ -203,6 +215,66 @@ project_root/
 | Sub-Agent 1 | `my_project/` | `sub_agents_workspace/sub_agent_1/` only |
 
 **Key principle:** Isolation prevents conflicts and enables parallel conceptual work
+
+## Critical Risks and Mitigation Strategies
+
+### Risk 1: Scoped Tools Security (The Hardest Part)
+
+**Why it's critical:** Implementing secure, scoped filesystem tools is the **single greatest technical challenge** in this project.
+
+**The danger:** A naive implementation like `os.path.join(workspace_path, file_path)` is vulnerable to path traversal attacks. An attacker (or confused sub-agent) could use `../../main_agent_workspace/evil.txt` to write outside their workspace.
+
+**What students must do:**
+- Use `os.path.abspath()` and `os.path.realpath()` to resolve paths to their canonical form
+- Always validate that the resolved path **starts with** the allowed base path
+- Test with deliberate attack patterns like `../`, `../../`, `/../`, etc.
+- **Use AI coding tools for this** - give them a specific prompt like: "Implement create_scoped_tools in Python ensuring it's secure against path traversal attacks using os.path.abspath and os.path.realpath"
+
+**Verification:** Security-conscious students will spend 2-4 hours here. This is time well spent.
+
+### Risk 2: Main Agent Planning Logic (Can Be Unreliable)
+
+**The challenge:** The main agent must decide which tasks to delegate to sub-agents. This requires:
+1. Reading codebase structure (easy)
+2. Reading key files like README.md (easy)
+3. **Deciding what sub-tasks to create** (hard - this is complex reasoning)
+
+**Why it's risky:** Step 3 can be unreliable. An LLM might identify vague or overlapping tasks, leading to poor decomposition.
+
+**Recommended simplification:**
+
+Instead of a "smart" planning agent, use a **simple, dumb rule:**
+```
+For every first-level directory in src/:
+  - Create one sub-agent
+  - Task: "Analyze this directory and document it"
+```
+
+**Example:**
+If the codebase has:
+```
+src/
+├── api/
+├── models/
+├── utils/
+└── config/
+```
+
+Then spawn exactly 4 sub-agents:
+- Sub-agent 0: Analyze `src/api/`
+- Sub-agent 1: Analyze `src/models/`
+- Sub-agent 2: Analyze `src/utils/`
+- Sub-agent 3: Analyze `src/config/`
+
+**Why this works:**
+- No complex planning logic needed
+- Guaranteed to cover the codebase systematically
+- Easy to implement and debug
+- Sub-agents work consistently with the same task structure
+- Students can upgrade to "smart" planning later if they want
+
+**Key insight:** **This project aims for a working prototype, not an elegant solution.** Simple and reliable beats complex and broken.
+
 
 ## Common Pitfalls and Solutions
 
@@ -370,21 +442,28 @@ project_root/
 - RAG integration for chatbot
 - Error handling and retry logic
 - Cost tracking for LLM API calls
-
-## Final Notes for AI Assistants
+- 
 
 **Focus areas for student help:**
-1. Path validation in scoped tools (security critical)
-2. Prompt engineering for quality output
-3. Debugging when agents produce unexpected results
-4. Understanding the "why" behind sub-agents architecture
+1. **Path validation in scoped tools** (security critical - allocate 2-4 hours here)
+2. Implementing the spawn_sub_agents tool
+3. Writing effective main agent prompt
+4. Debugging when agents produce unexpected results
+5. Understanding the "why" behind sub-agents architecture
+
 
 **Avoid:**
-- Threading/async complexity (use sequential execution)
-- Over-engineering (simple prototype is fine)
-- Large codebases for testing (keep it small)
-- Perfect output (iteration is expected)
+- ❌ Threading/async complexity (use sequential execution)
+- ❌ Over-engineering (simple prototype is fine)
+- ❌ Large codebases for testing (keep it small)
+- ❌ Perfect output (iteration is expected)
+- ❌ Intelligent planning logic (keep it dumb and reliable)
 
-**Remember:** The goal is learning the Deep Agents pattern and building a working prototype, not creating a production-ready system.
+**Remember:** The goal is learning the Deep Agents pattern and building a working prototype that demonstrates:
+1. How to securely scope filesystem access
+2. How to spawn multiple agents dynamically
+3. How to combine agent outputs into a cohesive knowledge base
+
+Elegance and optimization come later. Reliability and learning come first.
 
 

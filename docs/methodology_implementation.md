@@ -50,32 +50,37 @@ my-project/
 
 #### 1. Initial Analysis by the Main Agent
 
-The main agent is given a codebase in its workspace to analyze. Initially it has no clue about the codebase structure.
-- It doesnt know whats inside the codebase and what languages or frameworks are used.
-- It doesnt know the business logic of the codebase and what the code is supposed to do.
-- It doesnt know the dependencies of the codebase.
-- It doesnt know files sizes or their importance.
-- It doesnt know the tree structure of the codebase. (directories, subdirectories, files, etc)
+The main agent is given a codebase in its workspace to analyze. Initially, it has no clue about the codebase structure:
 
-So at the very initial step, when the agent knows nothing about the codebase, what it can do ?
+- It doesn't know what's inside the codebase or what languages/frameworks are used
+- It doesn't know the business logic of the codebase or what the code is supposed to do
+- It doesn't know the dependencies of the codebase
+- It doesn't know file sizes or their importance
+- It doesn't know the tree structure of the codebase (directories, subdirectories, files, etc.)
+
+**So at the very initial step, when the agent knows nothing about the codebase, what can it do?**
 
 Multiple techniques can be used here, for example:
-- The main agent can start by reading the root directory structure of the codebase to get an overview of the files and directories present. We can give an agent a tool that when agent calls it, it returns the root directory structure of the codebase.
+
+- The main agent can start by reading the root directory structure of the codebase to get an overview of the files and directories present. We can give the agent a tool that, when called, returns the root directory structure of the codebase.
 - We can also give it a more detailed tool such as `get_tree` that returns the full tree structure of the codebase, including directories, subdirectories, and files.
 
-These two tools are SUPER USEFUL at the initial step, because they give the agent a high-level overview of the codebase structure, allowing it to identify important files and directories that may require further analysis.
+These two tools are **SUPER USEFUL** at the initial step because they give the agent a high-level overview of the codebase structure, allowing it to identify important files and directories that may require further analysis.
 
-After having an overview of the codebase structure, the main agent can start by reading some important files that are usually present in the codebase, such as README.md, package.json, or other configuration files, to gain insights into the project structure and dependencies.
+After having an overview of the codebase structure, the main agent can start by reading some important files that are usually present in the codebase, such as `README.md`, `package.json`, or other configuration files, to gain insights into the project structure and dependencies.
 
-Also the agent may decide to read some of the code files that are starting point or entry points of the codebase, such as `main.py` in Python projects or `index.js` in JavaScript projects, to understand the overall flow of the application. It may also from the main.py imports and dependencies identify other important files to read.
+Also, the agent may decide to read some of the code files that are starting points or entry points of the codebase, such as `main.py` in Python projects or `index.js` in JavaScript projects, to understand the overall flow of the application. It may also identify other important files to read from the `main.py` imports and dependencies.
 
-Now after this initial analysis, the main agent should have a basic understanding of the codebase, including its structure, dependencies, and overall purpose. With this knowledge, it can now identify specific tasks that can be delegated to sub-agents for more detailed analysis and knowledge base generation.
+Now, after this initial analysis, the main agent should have a basic understanding of the codebase, including its structure, dependencies, and overall purpose. With this knowledge, it can now identify specific tasks that can be delegated to sub-agents for more detailed analysis and knowledge base generation.
 
-### 2. Write a TODO list
+### 2. Write a TODO List
 
-One featuer that can be very helpful here is to have the main agent write a TODO list of tasks that need to be accomplished to generate the knowledge base.
+One feature that can be very helpful here is to have the main agent write a TODO list of tasks that need to be accomplished to generate the knowledge base.
+
 This TODO list is written and managed by the main agent itself, and it can add or remove tasks from the list as needed.
-For example the TODO list may look like this:
+
+For example, the TODO list may look like this:
+
 ```
 - [ ] Analyze the API endpoints and document their functionality.
 - [ ] Review the data models and document their relationships.
@@ -85,15 +90,22 @@ For example the TODO list may look like this:
 ```
 
 This TODO list serves as a guide for the main agent in long-term planning of the knowledge base generation process. The main agent can refer to this list to determine which tasks have been completed and which ones still need to be addressed. It can also use this list to prioritize tasks and allocate resources accordingly.
-This is usefull because sometimes when the codebase is too large or complex, the agent may hallucinate or lose its focus on what tasks need to be done. Having a TODO list helps the agent stay organized and on track.
 
-After for example doing one of the tasks in the TODO list, the agent can mark that task as completed and move on to the next one. This iterative process continues until all tasks in the TODO list have been addressed and the knowledge base is fully generated.
+This is useful because sometimes when the codebase is too large or complex, the agent may hallucinate or lose its focus on what tasks need to be done. Having a TODO list helps the agent stay organized and on track.
 
-In order to implement this feature, we can create a simple tool that allows the main agent to add, remove, and view tasks in the TODO list. The TODO list tool can be implemented as a simple text file or a more structured format such as JSON or YAML, depending on the complexity of the tasks and the needs of the project. Or even it can be a no-op tool that just the agent manages it in its own memory. Even if it is no-op tool, it explicitly tells the agent to manage a TODO list in its own memory.
+After completing one of the tasks in the TODO list, the agent can mark that task as completed and move on to the next one. This iterative process continues until all tasks in the TODO list have been addressed and the knowledge base is fully generated.
 
-NOTE: The Smolagents framework has a parameter when craeting the agent named `planning` or something similar. This parameter accepts integer values such as 2 or 5. For example if you set it to 5, the agent after 5 iterations in its loop (for example after using its tools 5 times), it will re-evaluate its overall plan and goals, and adjust its strategy accordingly. This can server a similar purpose as the TODO list, by allowing the agent to periodically review its progress and make adjustments as needed. Youc an experiment with this parameter in the Smolagents framework and using the UI we have implemented in this code template.
+**Implementation options:**
 
-NOTE: You may decide to implement the TODO list or use the planning parameter of the Smolagents framework. Both approaches are valid and can be used to help the main agent stay organized and focused on its tasks. These two appraoches are OPTIONAL and you are totally free to implement or not implement them based on your preference. But their implementation can be very helpful in managing the complexity of the knowledge base generation process.
+In order to implement this feature, we can create a simple tool that allows the main agent to add, remove, and view tasks in the TODO list. The TODO list tool can be implemented as:
+
+- A simple text file
+- A more structured format such as JSON or YAML (depending on the complexity of the tasks and the needs of the project)
+- Even a no-op tool that just tells the agent to manage the TODO list in its own memory
+
+**NOTE:** The Smolagents framework has a parameter when creating the agent named `planning` or something similar. This parameter accepts integer values such as 2 or 5. For example, if you set it to 5, the agent will re-evaluate its overall plan and goals after 5 iterations in its loop (for example, after using its tools 5 times), and adjust its strategy accordingly. This can serve a similar purpose as the TODO list, by allowing the agent to periodically review its progress and make adjustments as needed. You can experiment with this parameter in the Smolagents framework using the UI we have implemented in this code template.
+
+**NOTE:** You may decide to implement the TODO list or use the planning parameter of the Smolagents framework. Both approaches are valid and can be used to help the main agent stay organized and focused on its tasks. These two approaches are OPTIONAL, and you are totally free to implement or not implement them based on your preference. However, their implementation can be very helpful in managing the complexity of the knowledge base generation process.
 
 ### 3. Spawning Sub-Agents for Specific Tasks
 
@@ -330,9 +342,10 @@ flowchart TD
 ```
 
 **Key Points:**
+
 - **Main Agent** (blue) orchestrates the entire process
 - **Codebase** (red) is accessible by all sub-agents for reading source code
-- **Sub-Agents** (yellow) work independently and in parallel
+- **Sub-Agents** (yellow) work independently (one after another, not in parallel)
 - **Workspaces** (purple) keep each sub-agent's outputs isolated (write access only)
 - **Final Knowledge Base** (green) is created by combining all sub-agent outputs
 
@@ -566,11 +579,26 @@ Similar to DeepWiki, the knowledge base should consist of multiple markdown file
 ![Knowledge Base Structure](./images/knowledge_base_structure.png)
 
 ## Downstream Applications
+
 Once the knowledge base is generated using the sub-agents architecture, it can be utilized for various downstream applications.
 
-- For the group working on their "ara proje": Use a simple LLM/Agent that reads the knowledge base markdown files and generates a tutorial (in the format of markdown files) that teaches new developers how to use the codebase effectively. It should include code examples, diagrams and etc.
-Your output should look like something similar to this:
-https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge 
-  
-- For the group working on "final proje": You should build a Q&A agent that uses the knowledge base to answer questions about the codebase through a simple GUI (the existing GUI in this code template is enough). The agent should be able to read the markdown files in the knowledge base and also access the codebase files if needed to provide accurate answers. To improve the accuracy of the answers, you can index the codebase files using vector databases such as FAISS or ChromaDB, and use retrieval-augmented generation (RAG) techniques to fetch relevant information from the codebase when answering questions. You can also use per-made frameworks that provide RAG such as Haystack https://haystack.deepset.ai/. 
+### For "Ara Proje" Group
+
+Use a simple LLM/Agent that reads the knowledge base markdown files and generates a tutorial (in the form of markdown files) that teaches new developers how to use the codebase effectively. It should include code examples, diagrams, and more.
+
+Your output should look similar to this:
+[PocketFlow Tutorial Codebase Knowledge](https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge)
+
+### For "Final Proje" Group
+
+You should build a Q&A agent that uses the knowledge base to answer questions about the codebase through a simple GUI (the existing GUI in this code template is enough). The agent should be able to:
+
+- Read the markdown files in the knowledge base
+- Access the codebase files if needed to provide accurate answers
+
+**To improve accuracy:**
+
+- You can index the codebase files using vector databases such as FAISS or ChromaDB
+- Use retrieval-augmented generation (RAG) techniques to fetch relevant information from the codebase when answering questions
+- You can also use pre-made frameworks that provide RAG such as [Haystack](https://haystack.deepset.ai/)
 

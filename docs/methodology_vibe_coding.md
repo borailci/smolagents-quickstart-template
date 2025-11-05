@@ -17,6 +17,7 @@ This document provides high-level guidance for AI coding assistants (Claude, Cur
 ### Three-Layer Structure
 
 1. **Main Agent (Orchestrator)**
+
    - Analyzes codebase structure
    - Identifies tasks to delegate
    - Spawns sub-agents dynamically
@@ -24,6 +25,7 @@ This document provides high-level guidance for AI coding assistants (Claude, Cur
    - Combines outputs into final knowledge base
 
 2. **Sub-Agents (Workers)**
+
    - Created on-demand by main agent
    - Each has isolated workspace
    - Analyzes specific parts of codebase
@@ -43,6 +45,7 @@ This document provides high-level guidance for AI coding assistants (Claude, Cur
 **Why:** The main agent must NOT see sub-agents' reasoning, tool calls, or intermediate steps. This keeps the main agent's context window clean for long-horizon tasks.
 
 **How it works:**
+
 - Main agent calls `spawn_sub_agents` tool
 - Tool creates sub-agents and runs them sequentially
 - Sub-agents save results to files in their workspaces
@@ -56,6 +59,7 @@ This document provides high-level guidance for AI coding assistants (Claude, Cur
 **Implementation:** Sub-agents execute one after another in a loop, NOT in parallel using threads/async.
 
 **Why:**
+
 - Simpler to implement
 - No threading complexity
 - No race conditions
@@ -69,14 +73,17 @@ This document provides high-level guidance for AI coding assistants (Claude, Cur
 Each sub-agent gets tools that are scoped to specific directories:
 
 **Read-only access:**
+
 - Can read from codebase directory
 - Path must be validated to prevent traversal attacks
 
 **Write-only access:**
+
 - Can write to its own workspace directory only
 - Path must be validated to prevent writing outside workspace
 
 **Security validation pattern:**
+
 ```
 1. User provides: "src/api/users.py"
 2. Join with base path: "/codebase/src/api/users.py"
@@ -93,6 +100,7 @@ Each sub-agent gets tools that are scoped to specific directories:
 **Purpose:** Instructions for the main agent on how to analyze codebases and delegate tasks
 
 **Key elements to include:**
+
 - How to use `get_tree` or `list_directory` tools to understand codebase structure
 - How to read important files (README.md, main.py, package.json)
 - **Simplified approach:** For every first-level directory under `src/`, spawn one sub-agent with a standard task
@@ -101,6 +109,7 @@ Each sub-agent gets tools that are scoped to specific directories:
 - How to combine markdown files into final knowledge base
 
 **Example main agent logic:**
+
 ```
 1. Read codebase tree
 2. Find all first-level directories in src/
@@ -110,18 +119,19 @@ Each sub-agent gets tools that are scoped to specific directories:
 6. Combine into final knowledge base
 ```
 
-
 ### Task 2: Write Sub-Agent Prompts
 
 **Two approaches:**
 
 **Approach A: Generic prompt** (simpler)
+
 - Main agent defines entire task in tool call
 - Sub-agent just follows the task description
 - Easier to implement and debug
 - Perfect for prototypes
 
 **Approach B: Pre-built agent types** (better quality, optional upgrade)
+
 - Create specialized prompts: `ANALYZER_AGENT_PROMPT`, `SUMMARIZER_AGENT_PROMPT`
 - These prompts include detailed instructions on how to analyze, what format to use, what to include
 - Main agent just picks agent type + adds specific task
@@ -133,6 +143,7 @@ Each sub-agent gets tools that are scoped to specific directories:
 ### Task 3: Implement `spawn_sub_agents` Tool
 
 **Function signature:**
+
 ```
 Input:
   - number_of_subagents: int
@@ -144,11 +155,13 @@ Output:
 **What this tool must do:**
 
 1. Create workspace directory structure:
+
    - `sub_agents_workspace/sub_agent_0/`
    - `sub_agents_workspace/sub_agent_1/`
    - etc.
 
 2. For each sub-agent (in a loop):
+
    - Create dedicated workspace folder
    - Get task description from list
    - Create scoped tools for this sub-agent
@@ -169,17 +182,20 @@ Output:
 **Tools needed for each sub-agent:**
 
 1. **read_codebase_file(file_path: str) -> str**
+
    - Reads from codebase directory (read-only)
    - Validates path is within codebase
    - Returns file contents
 
 2. **write_workspace_file(file_path: str, content: str) -> str**
+
    - Writes to sub-agent's workspace directory
    - Validates path is within workspace
    - Creates directories as needed
    - Returns success message
 
 3. **list_codebase_directory(dir_path: str) -> List[str]**
+
    - Lists files in codebase directory
    - Validates path is within codebase
    - Returns list of filenames
@@ -208,9 +224,9 @@ project_root/
 
 **Access control matrix:**
 
-| Agent | Can Read | Can Write |
-|-------|----------|-----------|
-| Main Agent | Everywhere | `agent_workspace/` only |
+| Agent       | Can Read      | Can Write                                |
+| ----------- | ------------- | ---------------------------------------- |
+| Main Agent  | Everywhere    | `agent_workspace/` only                  |
 | Sub-Agent 0 | `my_project/` | `sub_agents_workspace/sub_agent_0/` only |
 | Sub-Agent 1 | `my_project/` | `sub_agents_workspace/sub_agent_1/` only |
 
@@ -225,6 +241,7 @@ project_root/
 **The danger:** A naive implementation like `os.path.join(workspace_path, file_path)` is vulnerable to path traversal attacks. An attacker (or confused sub-agent) could use `../../main_agent_workspace/evil.txt` to write outside their workspace.
 
 **What students must do:**
+
 - Use `os.path.abspath()` and `os.path.realpath()` to resolve paths to their canonical form
 - Always validate that the resolved path **starts with** the allowed base path
 - Test with deliberate attack patterns like `../`, `../../`, `/../`, etc.
@@ -235,6 +252,7 @@ project_root/
 ### Risk 2: Main Agent Planning Logic (Can Be Unreliable)
 
 **The challenge:** The main agent must decide which tasks to delegate to sub-agents. This requires:
+
 1. Reading codebase structure (easy)
 2. Reading key files like README.md (easy)
 3. **Deciding what sub-tasks to create** (hard - this is complex reasoning)
@@ -244,6 +262,7 @@ project_root/
 **Recommended simplification:**
 
 Instead of a "smart" planning agent, use a **simple, dumb rule:**
+
 ```
 For every first-level directory in src/:
   - Create one sub-agent
@@ -252,6 +271,7 @@ For every first-level directory in src/:
 
 **Example:**
 If the codebase has:
+
 ```
 src/
 ├── api/
@@ -261,12 +281,14 @@ src/
 ```
 
 Then spawn exactly 4 sub-agents:
+
 - Sub-agent 0: Analyze `src/api/`
 - Sub-agent 1: Analyze `src/models/`
 - Sub-agent 2: Analyze `src/utils/`
 - Sub-agent 3: Analyze `src/config/`
 
 **Why this works:**
+
 - No complex planning logic needed
 - Guaranteed to cover the codebase systematically
 - Easy to implement and debug
@@ -274,7 +296,6 @@ Then spawn exactly 4 sub-agents:
 - Students can upgrade to "smart" planning later if they want
 
 **Key insight:** **This project aims for a working prototype, not an elegant solution.** Simple and reliable beats complex and broken.
-
 
 ## Common Pitfalls and Solutions
 
@@ -313,27 +334,32 @@ Then spawn exactly 4 sub-agents:
 ### Recommended Order
 
 1. **Start with filesystem tools** (1-2 hours)
+
    - Implement basic read_file, write_file for main agent
    - Test with simple read/write operations
    - Add get_tree tool
 
 2. **Implement scoped tools** (2-4 hours)
+
    - Create scoped versions with path validation
    - Write unit tests for path traversal cases
    - Test with different path inputs
 
 3. **Implement spawn_sub_agents tool** (2-3 hours)
+
    - Start with spawning 1 sub-agent
    - Test that it creates workspace correctly
    - Test that it saves results
    - Expand to multiple sub-agents
 
 4. **Write agent prompts** (1-2 hours)
+
    - Start simple, iterate based on output quality
    - Test with small codebase
    - Refine based on results
 
 5. **Test full workflow** (2-3 hours)
+
    - Main agent analyzes small codebase
    - Spawns 2-3 sub-agents
    - Reads and combines results
@@ -346,12 +372,14 @@ Then spawn exactly 4 sub-agents:
 ### Testing Strategy
 
 **Use a small, well-structured test codebase:**
+
 - 20-30 Python files
 - Clear structure (api/, models/, utils/)
 - README.md and requirements.txt present
 - You can create one or use an existing small open-source project
 
 **Test incrementally:**
+
 - Single file read
 - Single sub-agent spawn
 - Two sub-agents spawn
@@ -365,6 +393,7 @@ Then spawn exactly 4 sub-agents:
 **Input:** Knowledge base markdown files
 
 **Process:**
+
 1. Main agent or simple LLM reads knowledge base files
 2. Generates beginner-friendly tutorial markdown files
 3. Includes code examples from codebase
@@ -375,36 +404,22 @@ Then spawn exactly 4 sub-agents:
 
 **Complexity:** Low - mostly prompt engineering
 
-### For "Final Proje" (Q&A Chatbot)
-
-**Input:** Knowledge base markdown files + codebase
-
-**Process:**
-1. Index knowledge base files (simple or with vector DB)
-2. User asks question via Gradio UI
-3. Agent retrieves relevant knowledge base sections
-4. Optionally: Use RAG to fetch code snippets from codebase
-5. Generate answer combining knowledge base + code
-
-**Output:** Gradio chatbot that answers questions
-
-**Complexity:** Medium - RAG adds complexity but is optional
-
-**Simplification:** Can start with just keyword search in knowledge base, add RAG later
-
 ## Technology Stack
 
 **Required:**
+
 - Smolagents (agent framework)
 - LiteLLM (LLM provider abstraction)
 - Python 3.13+
 - Basic file I/O
 
 **Optional:**
+
 - FAISS or ChromaDB (for RAG in chatbot)
 - OpenTelemetry + Phoenix (for tracing/debugging)
 
 **Already Provided in Template:**
+
 - Gradio UI
 - Basic agent setup
 - Example tools
@@ -413,15 +428,18 @@ Then spawn exactly 4 sub-agents:
 ## Key Resources for AI Assistant
 
 **Must read before implementation:**
+
 1. `docs/methodology_overview.md` - Understand why sub-agents architecture
 2. `docs/methodology_implementation.md` - Detailed implementation guide with pseudocode
 3. Existing codebase in `agents/` and `toolkits/` - See how current agents are structured
 
 **Deep Agents references:**
+
 - [Langchain Deep Agents Docs](https://docs.langchain.com/oss/python/deepagents/subagents)
 - [Deep Agents Blog](https://blog.langchain.dev/deep-agents/)
 
 **Smolagents documentation:**
+
 - [Official Smolagents Docs](https://huggingface.co/docs/smolagents)
 
 ## Success Criteria
@@ -437,22 +455,24 @@ Then spawn exactly 4 sub-agents:
 ✅ Downstream task works (tutorial generation OR chatbot)
 
 **Bonus points:**
+
 - Pre-built agent types for consistent output
 - Mermaid diagrams in documentation
 - RAG integration for chatbot
 - Error handling and retry logic
 - Cost tracking for LLM API calls
-- 
+-
 
 **Focus areas for student help:**
+
 1. **Path validation in scoped tools** (security critical - allocate 2-4 hours here)
 2. Implementing the spawn_sub_agents tool
 3. Writing effective main agent prompt
 4. Debugging when agents produce unexpected results
 5. Understanding the "why" behind sub-agents architecture
 
-
 **Avoid:**
+
 - ❌ Threading/async complexity (use sequential execution)
 - ❌ Over-engineering (simple prototype is fine)
 - ❌ Large codebases for testing (keep it small)
@@ -460,10 +480,9 @@ Then spawn exactly 4 sub-agents:
 - ❌ Intelligent planning logic (keep it dumb and reliable)
 
 **Remember:** The goal is learning the Deep Agents pattern and building a working prototype that demonstrates:
+
 1. How to securely scope filesystem access
 2. How to spawn multiple agents dynamically
 3. How to combine agent outputs into a cohesive knowledge base
 
 Elegance and optimization come later. Reliability and learning come first.
-
-

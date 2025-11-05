@@ -23,10 +23,12 @@ class ExampleToolCallingAgent(BaseAgent):
             description="A worker agent with a workspace and access to its files using filesystem tools.",
             tools=tools,
             model=LiteLLMModel(model_id=LITELLM_MODEL_ID, api_key=LITELLM_API_KEY),
-            instructions=prompts.EXAMPLE_TOOL_CALLING_AGENT
+            instructions=prompts.EXAMPLE_TOOL_CALLING_AGENT,
         )
 
         logger.info(f"Initialized {self.agent.name}.")
 
     def run(self, *args, **kwargs):
+        if self.agent is None:
+            raise RuntimeError("Agent is not initialized.")
         return self.agent.run(*args, **kwargs)

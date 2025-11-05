@@ -1,7 +1,9 @@
 # A Basic Implementation of Sub-Agents Architecture
+
 This document outlines a basic implementation of the sub-agents architecture methodology using the Smolagents framework. While some other frameworks such as Langchain provide built-in support for sub-agents very recently and offer more advanced features, our implementation will be a simplified version to demonstrate the core concepts.
 
 ## Overview
+
 In this implementation, we will create a main agent that on-the-fly spawns sub-agents to handle specific tasks to finally generate the knowledge base. The overall flow will be as follows:
 
 1. The loop starts.
@@ -117,8 +119,10 @@ For every first-level directory in src/:
   - Create one sub-agent
   - Task: "Analyze [directory_name] and document it"
 ```
+
 Example:
 If your codebase has:
+
 ```
 src/
 ├── api/
@@ -128,7 +132,6 @@ src/
 ```
 
 Then spawn exactly 4 sub-agents (one for each directory).
-
 
 ### 3. Spawning Sub-Agents for Specific Tasks
 
@@ -165,6 +168,7 @@ Once the main agent identifies tasks to delegate, it spawns sub-agents to handle
 - **Main agent reads:** The saved documentation file later (not the sub-agent's response)
 
 **Important Rules:**
+
 - Each sub-agent has its **own workspace folder** - it can only write files there
 - Sub-agents have **read access to the codebase** - they can read source code files
 - Sub-agents **cannot access** the main agent's storage or other sub-agents' workspaces
@@ -304,6 +308,7 @@ result = spawn_sub_agents(number_of_subagents=2, task_descriptions=task_descript
 **What happens step by step:**
 
 1. **Sub-agent 0 works:**
+
    - Reads files from `my_project/src/api/`
    - Analyzes the code
    - Creates documentation with mermaid diagrams
@@ -311,6 +316,7 @@ result = spawn_sub_agents(number_of_subagents=2, task_descriptions=task_descript
    - Reports: "Done! I saved it to my workspace."
 
 2. **Sub-agent 1 works:**
+
    - Reads files from `my_project/src/utils/`
    - Identifies key utility functions
    - Creates summary with code examples
@@ -377,6 +383,7 @@ flowchart TD
 The basic approach above lets the main agent define tasks freely. But you can make sub-agents even more effective by creating **pre-built agent types**.
 
 **The Problem:** The main agent's task description might be too vague. For example:
+
 - "Analyze the API folder" - How detailed should it be? What format? What diagrams?
 
 **The Solution:** Create agent types with detailed instructions built-in.
@@ -384,6 +391,7 @@ The basic approach above lets the main agent define tasks freely. But you can ma
 **Example Agent Types:**
 
 1. **AnalyzerAgent** - For detailed code analysis
+
    - Knows how to read code systematically
    - Always creates mermaid diagrams
    - Uses a specific markdown template
@@ -395,6 +403,7 @@ The basic approach above lets the main agent define tasks freely. But you can ma
    - Extracts main functions and their purposes
 
 **How It Works:**
+
 - You write a detailed prompt for each agent type (once)
 - The main agent picks an agent type and adds a specific task
 - The sub-agent gets: **Pre-written instructions + Main agent's task**
@@ -533,6 +542,7 @@ result = spawn_typed_sub_agents(
 **What each sub-agent receives:**
 
 - **Sub-agent 0 (Analyzer):**
+
   - Gets: `ANALYZER_AGENT_PROMPT` + "Analyze the my_project/src/api/ folder"
   - Knows: Create detailed docs with mermaid diagrams and code examples
   - Result: Comprehensive analysis with consistent format
@@ -543,6 +553,7 @@ result = spawn_typed_sub_agents(
   - Result: Quick reference guide
 
 **Benefits:**
+
 - Main agent only provides high-level tasks
 - Pre-built prompts ensure quality and consistency
 - You can create more agent types as needed (e.g., DiagramAgent, APIDocAgent)
@@ -587,12 +598,12 @@ flowchart TD
 ```
 
 **Key Advantages:**
+
 - **Pre-Built Prompts** (orange) provide expert instructions for each agent type
 - **Combined Prompts** (dashed boxes) merge general instructions with specific tasks
 - **Typed Sub-Agents** (yellow) have specialized capabilities based on their type
 - **Consistent Output** - Each agent type produces predictable, high-quality results
 - **Flexibility** - Main agent only provides high-level tasks, pre-built prompts handle the details
-
 
 ### 5. Combining Sub-Agent Results into Final Knowledge Base
 
@@ -611,17 +622,3 @@ Use a simple LLM/Agent that reads the knowledge base markdown files and generate
 
 Your output should look similar to this:
 [PocketFlow Tutorial Codebase Knowledge](https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge)
-
-### For "Final Proje" Group
-
-You should build a Q&A agent that uses the knowledge base to answer questions about the codebase through a simple GUI (the existing GUI in this code template is enough). The agent should be able to:
-
-- Read the markdown files in the knowledge base
-- Access the codebase files if needed to provide accurate answers
-
-**To improve accuracy:**
-
-- You can index the codebase files using vector databases such as FAISS or ChromaDB
-- Use retrieval-augmented generation (RAG) techniques to fetch relevant information from the codebase when answering questions
-- You can also use pre-made frameworks that provide RAG such as [Haystack](https://haystack.deepset.ai/)
-

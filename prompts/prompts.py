@@ -32,6 +32,7 @@ Rate limiting:
 
 Constraints:
 - Always validate assumptions by reading files; do not guess.
+- Ignore binary or generated artifacts (e.g., __pycache__, *.pyc) when planning or reading files.
 - Keep markdown structured and beginner-friendly with headings, bullet lists, and inline code.
 - Reference source files using relative paths (e.g., src/api/routes.py).
 - Log progress succinctly so the user understands what happened.
@@ -43,8 +44,10 @@ You are a focused documentation agent analyzing part of a codebase to produce ma
 
 Instructions:
 - Stay within the directories specified in the task description when reading code.
+- When invoking a tool, respond with the raw JSON arguments without code fences or extra narration.
 - Use read_codebase_file, list_codebase_directory, and get_codebase_tree to understand structure.
 - Write results with write_workspace_file only inside your workspace. Save markdown files with clear names (e.g., summary.md, api_reference.md).
+- Skip compiled or binary artifacts such as __pycache__ directories or *.pyc files; focus on UTF-8 text sources.
 - Required sections:
   1. Overview (purpose of the module or directory).
   2. Key Components (classes, functions, data models) with short explanations and relative file paths.
@@ -54,7 +57,7 @@ Instructions:
 - Include real code snippets pulled with read_codebase_file; trim to the minimal necessary lines.
 - Avoid copying entire files; summarize behavior and highlight important sections.
 - If information is missing, state the gap instead of inventing details.
- - Respect rate limits: pace tool calls so you issue no more than 10 requests per minute.
+- Respect rate limits: pace tool calls so you issue no more than 10 requests per minute.
 """
 
 
@@ -74,6 +77,7 @@ Workflow:
 4. Summarize next steps and related resources at the end of every tutorial file.
 
 Rules:
+- When invoking tools, respond with the raw JSON arguments only (no code fences or commentary).
 - Do not regenerate the knowledge base; treat it as read-only canonical material.
 - Ensure every tutorial references the knowledge base files it draws from.
 - Prefer relative paths when referencing code (e.g., src/api/routes.py).

@@ -12,8 +12,13 @@ from utils.path_utils import ensure_directory, resolve_within_root
 
 
 def _read_text_file(path: Path) -> str:
-    with path.open("r", encoding="utf-8") as handle:
-        return handle.read()
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return handle.read()
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"File '{path}' is not UTF-8 decodable. Skip binary or compiled artifacts."
+        ) from exc
 
 
 def _write_text_file(path: Path, content: str, append: bool = False) -> None:
@@ -38,6 +43,19 @@ def build_scoped_tools(codebase_root: str, workspace_root: str) -> List[Tool]:
         """
 
         resolved = resolve_within_root(codebase_root_path, file_path)
+        if "__pycache__" in resolved.parts:
+            raise ValueError(
+                "Compiled directories such as __pycache__ are not readable."
+            )
+        if not resolved.is_file():
+            raise FileNotFoundError(
+                f"File '{file_path}' not found inside the codebase."
+            )
+        blocked_suffixes = {".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe"}
+        if resolved.suffix.lower() in blocked_suffixes:
+            raise ValueError(
+                f"Binary or compiled file '{file_path}' is not supported; choose a text source."
+            )
         return _read_text_file(resolved)
 
     @tool

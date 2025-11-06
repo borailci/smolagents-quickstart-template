@@ -25,8 +25,10 @@ def parse_args() -> argparse.Namespace:
 
     kb_parser = subparsers.add_parser(
         "knowledge-base",
+        aliases=["build-kb", "kb"],
         help="Generate the knowledge base using sub-agents.",
     )
+    kb_parser.set_defaults(command="knowledge-base")
     kb_parser.add_argument(
         "codebase",
         nargs="?",
@@ -48,8 +50,10 @@ def parse_args() -> argparse.Namespace:
 
     tutorial_parser = subparsers.add_parser(
         "tutorials",
+        aliases=["build-tutorials", "tutorial"],
         help="Generate tutorials using the existing knowledge base.",
     )
+    tutorial_parser.set_defaults(command="tutorials")
     tutorial_parser.add_argument(
         "--codebase",
         dest="codebase",

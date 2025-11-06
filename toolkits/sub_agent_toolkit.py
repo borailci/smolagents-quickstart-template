@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import time
 from collections import deque
@@ -24,6 +25,14 @@ LITELLM_MODEL_ID = os.getenv("LITELLM_MODEL_ID")
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
 CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
 SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
+
+
+_RETRY_IN_PATTERN = re.compile(
+    r"retry\s+(?:in|after)\s+([0-9]+(?:\.[0-9]+)?)\s*s", re.IGNORECASE
+)
+_RETRY_DELAY_PATTERN = re.compile(
+    r"\"retryDelay\"\s*:\s*\"([0-9]+(?:\.[0-9]+)?)s\"", re.IGNORECASE
+)
 
 
 def _formatted_prompt(task_description: str) -> str:
@@ -53,14 +62,29 @@ def _build_model() -> LiteLLMModel:
     return LiteLLMModel(model_id=LITELLM_MODEL_ID, api_key=LITELLM_API_KEY)
 
 
+def _extract_retry_after_seconds(exc: Exception, default: float = 25.0) -> float:
+    """Best-effort parsing of provider retry hints from an exception message."""
+
+    message = str(exc)
+    for pattern in (_RETRY_DELAY_PATTERN, _RETRY_IN_PATTERN):
+        match = pattern.search(message)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                continue
+    return default
+
+
 def run_sub_agent_tasks(
     task_descriptions: List[str],
     *,
     codebase_root: Optional[str | Path] = None,
     sub_agents_root: Optional[str | Path] = None,
-    max_retries: int = 1,
+    max_retries: int = 3,
     window_seconds: float = 90.0,
     max_requests_per_window: int = 5,
+    min_interval_seconds: float = 7.0,
 ) -> List[Path]:
     """Execute sub-agents sequentially and return their workspace paths."""
 
@@ -125,6 +149,11 @@ def run_sub_agent_tasks(
                 continue
 
             try:
+                logger.info(
+                    "Waiting for %.1f seconds to respect API rate limits...",
+                    min_interval_seconds,
+                )
+                time.sleep(min_interval_seconds)
                 agent.run(description)
                 request_timestamps.append(time.monotonic())
                 workspaces.append(workspace)
@@ -137,12 +166,27 @@ def run_sub_agent_tasks(
                     or "quota" in str(exc).lower()
                 )
                 if is_rate_limit:
-                    logger.error(
-                        "Sub-agent %s hit provider quota: %s. Aborting further retries.",
-                        index,
-                        exc,
+                    if attempt >= max_retries:
+                        logger.error(
+                            "Sub-agent %s exhausted retries after quota errors: %s.",
+                            index,
+                            exc,
+                        )
+                        raise
+
+                    wait_seconds = max(
+                        min_interval_seconds,
+                        _extract_retry_after_seconds(exc),
                     )
-                    raise
+                    logger.warning(
+                        "Sub-agent %s hit provider quota. Waiting %.2fs before retry (%s/%s).",
+                        index,
+                        wait_seconds,
+                        attempt,
+                        max_retries,
+                    )
+                    time.sleep(wait_seconds)
+                    continue
 
                 if attempt >= max_retries:
                     raise

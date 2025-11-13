@@ -14,6 +14,7 @@ A minimal template for building AI agents with [Smolagents](https://huggingface.
 ## Quick Start
 
 1. **Install dependencies:**
+
    ```bash
    uv sync
    ```
@@ -22,7 +23,6 @@ A minimal template for building AI agents with [Smolagents](https://huggingface.
    ```bash
    cp env.example .env
    ```
-   
 1. **Configure API key:** See [API Key Setup Guide](docs/api_key.md) for detailed instructions
 
 1. **Run the application:**
@@ -33,6 +33,29 @@ A minimal template for building AI agents with [Smolagents](https://huggingface.
    ```
 
 Open the Gradio URL printed in your terminal to start chatting with the agent.
+
+### Pipeline CLI (Knowledge Base & Tutorials)
+
+Use the bundled CLI to generate knowledge-base docs, tutorials, and Q&A responses:
+
+```bash
+uv run pipelines/cli.py knowledge-base
+uv run pipelines/cli.py tutorials --code-search --rag --rag-max-snippets 3
+uv run pipelines/cli.py qa "How do background jobs work?"
+uv run pipelines/cli.py spawn-subagents "Analyze src/utils and document helper utilities"
+```
+
+You can also control these defaults with environment variables:
+
+| Feature           | CLI flag                             | Env var                            |
+| ----------------- | ------------------------------------ | ---------------------------------- |
+| Code search tools | `--code-search` / `--no-code-search` | `TUTORIAL_ENABLE_CODE_SEARCH=true` |
+| Retrieval helper  | `--rag` / `--no-rag`                 | `TUTORIAL_ENABLE_RAG=true`         |
+| Snippet cap       | `--rag-max-snippets N`               | `TUTORIAL_RAG_MAX_SNIPPETS=N`      |
+
+During knowledge-base generation the pipeline now writes a `scouting_report.md` snapshot (tree view plus README excerpts) before delegating to analyzer sub-agents, making the process easier to audit.
+
+When enabled, the tutorial agent instructions remind it to call these helpers before guessing, leading to more grounded guides that include inline code samples from the repo.
 
 ## Documentation
 
@@ -47,4 +70,3 @@ Open the Gradio URL printed in your terminal to start chatting with the agent.
 ## License
 
 MIT
-

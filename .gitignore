@@ -209,3 +209,9 @@ __marimo__/
 
 # gradio
 .gradio/
+
+# Project artifacts
+data/knowledge_base/
+data/tutorials/
+data/sub_agents_workspace/
+tmp-debug/

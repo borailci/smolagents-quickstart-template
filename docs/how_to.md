@@ -5,12 +5,14 @@ This guide walks you through everything you can do with this Smolagents template
 ## What's in This Project
 
 **Current Setup (Single Agent):**
+
 - `ExampleToolCallingAgent` - An agent with filesystem tools and a joke API tool
 - Gradio chat UI for talking to the agent
 - Example workspace with documents and code files
 - File management tools (read, write, search, list directories)
 
 **Optional Multi-Agent Setup:**
+
 - `ExampleManagerAgent` - Coordinates other agents
 - Shows how to delegate tasks between agents
 
@@ -38,6 +40,7 @@ smolagents-quickstart-template/
 Once your agent is running, try these examples:
 
 ### File Operations
+
 - "List files in my workspace"
 - "Read the Alan Turing document"
 - "Search for .c files"
@@ -46,11 +49,13 @@ Once your agent is running, try these examples:
 - "Write a shopping list to a file called groceries.txt"
 
 ### Fun Interactions
+
 - "Tell me a joke"
 - "Get me a joke and then save it to a file"
 - "Read the car.c file and explain what it does"
 
 ### Complex Tasks
+
 - "Find all files in my workspace, read the Alan Turing document, and create a summary file"
 - "Create a Python file that implements a simple calculator"
 
@@ -70,10 +75,10 @@ from typing import List
 def calculate(expression: str) -> float:
     """
     Evaluates a mathematical expression safely.
-    
+
     Args:
         expression (str): Math expression like "2 + 3 * 4"
-        
+
     Returns:
         float: Result of the calculation
     """
@@ -103,7 +108,7 @@ calc_tools = CalculatorToolkit.get_tools()
 tool_calling_agent = ExampleToolCallingAgent(tools=joke_tools + filesystem_tools + calc_tools)
 ```
 
-3. Now ask your agent: "Calculate 15 * 7 + 23"
+3. Now ask your agent: "Calculate 15 \* 7 + 23"
 
 ### Exercise 2: Modify Agent Prompts
 
@@ -112,7 +117,7 @@ tool_calling_agent = ExampleToolCallingAgent(tools=joke_tools + filesystem_tools
 
 ```python
 EXAMPLE_TOOL_CALLING_AGENT = """
-You are a helpful assistant with access to file management and calculator tools. 
+You are a helpful assistant with access to file management and calculator tools.
 You're friendly and explain things clearly. When doing calculations, show your work.
 Always be encouraging and educational in your responses.
 """
@@ -188,6 +193,25 @@ The manager will delegate the task to the worker agent!
 
 ## Advanced Exercises
 
+### Run the Documentation Pipelines
+
+Automate onboarding material with the CLI:
+
+```bash
+uv run pipelines/cli.py knowledge-base
+uv run pipelines/cli.py tutorials --code-search --rag --rag-max-snippets 4
+uv run pipelines/cli.py spawn-subagents "Analyze src/api for REST endpoints"
+```
+
+- `--code-search` gives the tutorial agent a `grep_codebase` tool so it can quote real code without manual copy/paste.
+- `--rag` enables `retrieve_relevant_context`, which pulls supporting snippets from the existing knowledge base and source files.
+- `--rag-max-snippets` limits how many snippets the retrieval helper returns (default `5`).
+- `spawn-subagents` runs ad-hoc analyzer tasks and tells you where the agent stored its markdown workspace.
+
+Tip: set `TUTORIAL_ENABLE_CODE_SEARCH=true` or `TUTORIAL_ENABLE_RAG=true` in `.env` to make these helpers opt-in by default.
+
+When you run the knowledge-base pipeline you will now see a `scouting_report.md` that captures the repository tree and README excerpts—use it as a quick sanity check before diving into the generated docs.
+
 ### Create a Web Search Tool
 
 Add a tool that searches the internet:
@@ -200,10 +224,10 @@ from smolagents import tool
 def web_search(query: str) -> str:
     """
     Searches DuckDuckGo for information (simple implementation).
-    
+
     Args:
         query (str): What to search for
-        
+
     Returns:
         str: Search results
     """
@@ -241,4 +265,3 @@ Create an agent that reads code files and provides feedback and suggestions.
 - Experiment with different agent personalities
 - Build a multi-agent system for a specific task
 - Share your creations with other students!
-

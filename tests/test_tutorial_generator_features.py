@@ -73,7 +73,7 @@ def test_optional_guidance_in_task(
     task = generator._build_tutorial_task(
         outline_item,
         kb_summary="KB",
-        template_guidance="Template",
+        style_guidance="Style",
         outline_brief="Brief",
     )
 
@@ -116,7 +116,7 @@ def test_disabled_helpers_omit_guidance(
     task = generator._build_tutorial_task(
         outline_item,
         kb_summary="KB",
-        template_guidance="Template",
+        style_guidance="Style",
         outline_brief="Brief",
     )
 

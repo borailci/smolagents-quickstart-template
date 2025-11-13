@@ -86,7 +86,7 @@ def _resolve_sub_agent_rpm() -> float:
         parsed = float(raw_value)
     except ValueError:
         logger.warning(
-            "Invalid %s value '%s'; using default %.1f",
+            "Invalid {} value '{}'; using default {:.1f}",
             SUB_AGENT_RPM_ENV,
             raw_value,
             DEFAULT_SUB_AGENT_RPM,
@@ -94,7 +94,7 @@ def _resolve_sub_agent_rpm() -> float:
         return DEFAULT_SUB_AGENT_RPM
     if parsed <= 0:
         logger.warning(
-            "Non-positive %s value '%s'; using default %.1f",
+            "Non-positive {} value '{}'; using default {:.1f}",
             SUB_AGENT_RPM_ENV,
             raw_value,
             DEFAULT_SUB_AGENT_RPM,
@@ -108,7 +108,7 @@ def _build_model() -> LiteLLMModel:
         raise RuntimeError("LITELLM_MODEL_ID and LITELLM_API_KEY must be configured.")
     requests_per_minute = _resolve_sub_agent_rpm()
     logger.info(
-        "Initializing sub-agent model %s with %.1f requests/minute limit",
+        "Initializing sub-agent model {} with {:.1f} requests/minute limit",
         LITELLM_MODEL_ID,
         requests_per_minute,
     )
@@ -167,7 +167,7 @@ def _execute_sub_agent_runs(
             return
         remaining = min_interval_seconds - elapsed
         logger.info(
-            "Step completed in %.2fs; sleeping %.2fs to satisfy cooldown.",
+            "Step completed in {:.2f}s; sleeping {:.2f}s to satisfy cooldown.",
             elapsed,
             remaining,
         )
@@ -224,7 +224,7 @@ def _execute_sub_agent_runs(
                 if time_since_last < min_interval_seconds:
                     wait_gap = min_interval_seconds - time_since_last
                     logger.info(
-                        "Previous step finished %.2fs ago; sleeping %.2fs to maintain cooldown.",
+                        "Previous step finished {:.2f}s ago; sleeping {:.2f}s to maintain cooldown.",
                         time_since_last,
                         wait_gap,
                     )
@@ -268,14 +268,14 @@ def _execute_sub_agent_runs(
                 if parse_error:
                     if STRICT_JSON_REMINDER not in current_instructions:
                         logger.warning(
-                            "Sub-agent %s produced invalid JSON tool call. Reinforcing instructions and retrying.",
+                            "Sub-agent {} produced invalid JSON tool call. Reinforcing instructions and retrying.",
                             index,
                         )
                         current_instructions = base_instructions + STRICT_JSON_REMINDER
                         agent = _build_agent(current_instructions)
                     else:
                         logger.warning(
-                            "Sub-agent %s still failing JSON format after reinforcement: %s",
+                            "Sub-agent {} still failing JSON format after reinforcement: {}",
                             index,
                             exc,
                         )

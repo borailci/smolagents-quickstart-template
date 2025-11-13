@@ -214,5 +214,6 @@ __marimo__/
 data/knowledge_base/
 data/tutorials/
 data/sub_agents_workspace/
+data/rag_vector_store/
 tmp-debug/
 data/tutorials/_polishers/

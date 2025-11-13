@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
+from loguru import logger
 from smolagents import Tool, tool
 
+from toolkits.rag_store import SimpleChromaRAGStore
 from utils.path_utils import ensure_directory, resolve_within_root
 
 _MAX_SEARCH_FILE_SIZE_BYTES = 200_000
@@ -84,6 +86,27 @@ def build_tutorial_tools(
     codebase_path = Path(codebase_root).expanduser().resolve()
     kb_path = Path(knowledge_base_root).expanduser().resolve()
     output_path = ensure_directory(tutorial_output_root)
+
+    rag_store: Optional[SimpleChromaRAGStore] = None
+    if enable_rag:
+        rag_storage_root = ensure_directory(
+            (output_path.parent if output_path.parent != output_path else output_path)
+            / "rag_vector_store"
+        )
+        try:
+            rag_store = SimpleChromaRAGStore(
+                codebase_root=codebase_path,
+                knowledge_base_root=kb_path,
+                persist_directory=rag_storage_root,
+            )
+            rag_store.ensure_index(
+                include_codebase=True,
+                include_knowledge_base=True,
+                force_rebuild=True,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to initialise RAG vector store: {}", exc)
+            rag_store = None
 
     max_snippets = max(1, rag_max_snippets)
 
@@ -296,87 +319,106 @@ def build_tutorial_tools(
             if not normalized_query:
                 return []
 
-            lowered_query = normalized_query.lower()
             limit = max(1, max_snippets)
-            snippets: List[Dict[str, str]] = []
-
-            def _append_snippet(
-                *,
-                source: str,
-                root: Path,
-                file_path: Path,
-                content: str,
-            ) -> None:
-                lowered_content = content.lower()
-                index = lowered_content.find(lowered_query)
-                if index == -1:
-                    return
-                start = max(0, index - _SNIPPET_PADDING_CHARS)
-                end = min(len(content), index + _SNIPPET_PADDING_CHARS)
-                snippet_text = content[start:end].strip()
-
-                line_number = content.count("\n", 0, start) + 1
-                entry = {
-                    "source": source,
-                    "path": str(file_path.relative_to(root)),
-                    "line": str(line_number),
-                    "snippet": snippet_text,
-                }
-                snippets.append(entry)
-
-            if include_knowledge_base:
-                for kb_file in sorted(kb_path.rglob("*.md")):
-                    try:
-                        if kb_file.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
-                            continue
-                    except FileNotFoundError:
-                        continue
-                    try:
-                        content = kb_file.read_text(encoding="utf-8")
-                    except (UnicodeDecodeError, OSError):
-                        continue
-                    _append_snippet(
-                        source="knowledge_base",
-                        root=kb_path,
-                        file_path=kb_file,
-                        content=content,
+            if rag_store is not None:
+                try:
+                    rag_results = rag_store.query(
+                        normalized_query,
+                        top_k=limit,
+                        include_codebase=include_codebase,
+                        include_knowledge_base=include_knowledge_base,
                     )
-                    if len(snippets) >= limit:
-                        return snippets[:limit]
+                    if rag_results:
+                        return rag_results[:limit]
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    logger.warning(
+                        "RAG query failed; falling back to substring search: {}", exc
+                    )
 
-            if include_codebase:
-                for candidate in sorted(
-                    path
-                    for path in codebase_path.rglob("*")
-                    if path.is_file() and not path.name.startswith(".")
-                ):
-                    if candidate.suffix.lower() in _CODE_SEARCH_SKIP_SUFFIXES:
-                        continue
-                    if (
-                        candidate.suffix
-                        and candidate.suffix.lower()
-                        not in _CODE_SEARCH_ALLOWED_SUFFIXES
+            lowered_query = normalized_query.lower()
+
+            def _fallback_search() -> List[Dict[str, str]]:
+                snippets: List[Dict[str, str]] = []
+
+                def _append_snippet(
+                    *,
+                    source: str,
+                    root: Path,
+                    file_path: Path,
+                    content: str,
+                ) -> None:
+                    lowered_content = content.lower()
+                    index = lowered_content.find(lowered_query)
+                    if index == -1:
+                        return
+                    start = max(0, index - _SNIPPET_PADDING_CHARS)
+                    end = min(len(content), index + _SNIPPET_PADDING_CHARS)
+                    snippet_text = content[start:end].strip()
+
+                    line_number = content.count("\n", 0, start) + 1
+                    entry = {
+                        "source": source,
+                        "path": str(file_path.relative_to(root)),
+                        "line": str(line_number),
+                        "snippet": snippet_text,
+                    }
+                    snippets.append(entry)
+
+                if include_knowledge_base:
+                    for kb_file in sorted(kb_path.rglob("*.md")):
+                        try:
+                            if kb_file.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
+                                continue
+                        except FileNotFoundError:
+                            continue
+                        try:
+                            content = kb_file.read_text(encoding="utf-8")
+                        except (UnicodeDecodeError, OSError):
+                            continue
+                        _append_snippet(
+                            source="knowledge_base",
+                            root=kb_path,
+                            file_path=kb_file,
+                            content=content,
+                        )
+                        if len(snippets) >= limit:
+                            return snippets[:limit]
+
+                if include_codebase:
+                    for candidate in sorted(
+                        path
+                        for path in codebase_path.rglob("*")
+                        if path.is_file() and not path.name.startswith(".")
                     ):
-                        continue
-                    try:
-                        if candidate.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
+                        if candidate.suffix.lower() in _CODE_SEARCH_SKIP_SUFFIXES:
                             continue
-                    except FileNotFoundError:
-                        continue
-                    try:
-                        content = candidate.read_text(encoding="utf-8")
-                    except (UnicodeDecodeError, OSError):
-                        continue
-                    _append_snippet(
-                        source="codebase",
-                        root=codebase_path,
-                        file_path=candidate,
-                        content=content,
-                    )
-                    if len(snippets) >= limit:
-                        return snippets[:limit]
+                        if (
+                            candidate.suffix
+                            and candidate.suffix.lower()
+                            not in _CODE_SEARCH_ALLOWED_SUFFIXES
+                        ):
+                            continue
+                        try:
+                            if candidate.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
+                                continue
+                        except FileNotFoundError:
+                            continue
+                        try:
+                            content = candidate.read_text(encoding="utf-8")
+                        except (UnicodeDecodeError, OSError):
+                            continue
+                        _append_snippet(
+                            source="codebase",
+                            root=codebase_path,
+                            file_path=candidate,
+                            content=content,
+                        )
+                        if len(snippets) >= limit:
+                            return snippets[:limit]
 
-            return snippets[:limit]
+                return snippets[:limit]
+
+            return _fallback_search()
 
         tools.append(retrieve_relevant_context)
 

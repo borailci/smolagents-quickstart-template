@@ -204,11 +204,11 @@ uv run pipelines/cli.py spawn-subagents "Analyze src/api for REST endpoints"
 ```
 
 - `--code-search` gives the tutorial agent a `grep_codebase` tool so it can quote real code without manual copy/paste.
-- `--rag` enables `retrieve_relevant_context`, which pulls supporting snippets from the existing knowledge base and source files.
+- `--rag` enables `retrieve_relevant_context`, which now builds a Chroma vector store using the knowledge base and selected source files so the agent can fetch semantically relevant snippets.
 - `--rag-max-snippets` limits how many snippets the retrieval helper returns (default `5`).
 - `spawn-subagents` runs ad-hoc analyzer tasks and tells you where the agent stored its markdown workspace.
 
-Tip: set `TUTORIAL_ENABLE_CODE_SEARCH=true` or `TUTORIAL_ENABLE_RAG=true` in `.env` to make these helpers opt-in by default.
+Tip: set `TUTORIAL_ENABLE_CODE_SEARCH=true` or `TUTORIAL_ENABLE_RAG=true` in `.env` (and optionally `LITELLM_EMBEDDING_MODEL_ID=text-embedding-3-small`) to make these helpers opt-in by default.
 
 When you run the knowledge-base pipeline you will now see a `scouting_report.md` that captures the repository tree and README excerpts—use it as a quick sanity check before diving into the generated docs.
 

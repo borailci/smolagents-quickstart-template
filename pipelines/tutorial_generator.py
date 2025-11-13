@@ -447,6 +447,7 @@ class TutorialGenerator:
         self._run_tutorial_polishers(paths)
         self._sanitize_tutorial_outputs(paths)
         self._normalize_heading_tokens(paths)
+        self._ensure_top_level_titles(paths)
         self._ensure_minimum_code_examples(paths)
         self._validate_tutorials(paths)
         self._enforce_distinct_structures(paths)
@@ -1067,6 +1068,33 @@ class TutorialGenerator:
             )
 
             path.write_text(content.rstrip() + snippet, encoding="utf-8")
+
+    def _ensure_top_level_titles(self, tutorial_paths: Iterable[Path]) -> None:
+        outline_titles: Dict[str, str] = {}
+        if self.outline:
+            outline_titles = {item.filename: item.title for item in self.outline}
+
+        for path in tutorial_paths:
+            content = path.read_text(encoding="utf-8")
+            stripped = content.lstrip()
+            if stripped.startswith("# "):
+                continue
+
+            title = outline_titles.get(path.name)
+            if not title:
+                title = _title_from_filename(path.stem)
+
+            logger.info(
+                "Tutorial {} missing top-level title; inserting '# {}'",
+                path.name,
+                title,
+            )
+
+            header = f"# {title}\n\n"
+
+            remaining = stripped if stripped else ""
+            updated = header + remaining
+            path.write_text(updated.rstrip() + "\n", encoding="utf-8")
 
     def _remove_empty_diagram_sections(self, content: str) -> str:
         pattern = re.compile(

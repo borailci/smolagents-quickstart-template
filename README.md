@@ -10,6 +10,7 @@ A minimal template for building AI agents with [Smolagents](https://huggingface.
 - Optional multi-agent coordination
 - Easy LLM provider integration via LiteLLM
 - OpenTelemetry tracing with Phoenix and OpenInference for agent observability
+- Optional retrieval-augmented generation backed by a local Chroma vector store
 
 ## Quick Start
 
@@ -52,6 +53,8 @@ You can also control these defaults with environment variables:
 | Code search tools | `--code-search` / `--no-code-search` | `TUTORIAL_ENABLE_CODE_SEARCH=true` |
 | Retrieval helper  | `--rag` / `--no-rag`                 | `TUTORIAL_ENABLE_RAG=true`         |
 | Snippet cap       | `--rag-max-snippets N`               | `TUTORIAL_RAG_MAX_SNIPPETS=N`      |
+
+With `--rag` enabled the tutorial toolkit rebuilds a persistent Chroma collection under `data/rag_vector_store`, embedding knowledge-base markdown and selected source files via LiteLLM. Subsequent queries are answered with semantic matches pulled from that vector store.
 
 During knowledge-base generation the pipeline now writes a `scouting_report.md` snapshot (tree view plus README excerpts) before delegating to analyzer sub-agents, making the process easier to audit.
 

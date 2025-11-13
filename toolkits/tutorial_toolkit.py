@@ -2,12 +2,57 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 from smolagents import Tool, tool
 
 from utils.path_utils import ensure_directory, resolve_within_root
+
+_MAX_SEARCH_FILE_SIZE_BYTES = 200_000
+_DEFAULT_RAG_MAX_SNIPPETS = 5
+_SNIPPET_PADDING_CHARS = 240
+_CODE_SEARCH_SKIP_SUFFIXES = {
+    ".pyc",
+    ".pyo",
+    ".pyd",
+    ".so",
+    ".dll",
+    ".exe",
+    ".class",
+    ".zip",
+    ".tar",
+    ".gz",
+}
+_CODE_SEARCH_ALLOWED_SUFFIXES = {
+    ".py",
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".java",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".swift",
+    ".kt",
+    "",
+}
 
 
 def _read_text_file(path: Path) -> str:
@@ -32,10 +77,15 @@ def build_tutorial_tools(
     codebase_root: str,
     knowledge_base_root: str,
     tutorial_output_root: str,
+    enable_code_search: bool = False,
+    enable_rag: bool = False,
+    rag_max_snippets: int = _DEFAULT_RAG_MAX_SNIPPETS,
 ) -> List[Tool]:
     codebase_path = Path(codebase_root).expanduser().resolve()
     kb_path = Path(knowledge_base_root).expanduser().resolve()
     output_path = ensure_directory(tutorial_output_root)
+
+    max_snippets = max(1, rag_max_snippets)
 
     @tool
     def list_knowledge_base(dir_path: str = ".") -> List[str]:
@@ -146,5 +196,188 @@ def build_tutorial_tools(
         write_tutorial_file,
         get_codebase_tree,
     ]
+
+    if enable_code_search:
+
+        @tool
+        def grep_codebase(
+            pattern: str,
+            dir_path: str = ".",
+            ignore_case: bool = True,
+            max_matches: int = 20,
+        ) -> List[str]:
+            """Search codebase files for lines matching a regular expression.
+
+            Args:
+                pattern: Regular expression to search for within files.
+                dir_path: Relative directory or file path to scope the search (defaults to the repo root).
+                ignore_case: Perform case-insensitive matching when True.
+                max_matches: Maximum number of line hits to return.
+            """
+
+            if not pattern:
+                return []
+
+            try:
+                resolved = resolve_within_root(codebase_path, dir_path)
+            except ValueError:
+                return []
+
+            flags = re.IGNORECASE if ignore_case else 0
+            try:
+                regex = re.compile(pattern, flags)
+            except re.error as exc:  # pragma: no cover - invalid user regex
+                return [f"Invalid regular expression: {exc}"]
+
+            matches: List[str] = []
+
+            def _search_file(file_path: Path) -> None:
+                if file_path.suffix.lower() in _CODE_SEARCH_SKIP_SUFFIXES:
+                    return
+                if (
+                    file_path.suffix
+                    and file_path.suffix.lower() not in _CODE_SEARCH_ALLOWED_SUFFIXES
+                ):
+                    return
+                try:
+                    if file_path.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
+                        return
+                except FileNotFoundError:
+                    return
+
+                try:
+                    content = file_path.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, OSError):
+                    return
+
+                for line_number, line in enumerate(content.splitlines(), start=1):
+                    if regex.search(line):
+                        relative = file_path.relative_to(codebase_path)
+                        snippet = line.strip()
+                        matches.append(f"{relative}:{line_number}: {snippet}")
+                        if len(matches) >= max_matches:
+                            return
+
+            if resolved.is_file():
+                _search_file(resolved)
+            else:
+                for candidate in sorted(
+                    p
+                    for p in resolved.rglob("*")
+                    if p.is_file() and not p.name.startswith(".")
+                ):
+                    _search_file(candidate)
+                    if len(matches) >= max_matches:
+                        break
+
+            return matches
+
+        tools.append(grep_codebase)
+
+    if enable_rag:
+
+        @tool
+        def retrieve_relevant_context(
+            query: str,
+            max_snippets: int = max_snippets,
+            include_codebase: bool = True,
+            include_knowledge_base: bool = True,
+        ) -> List[Dict[str, str]]:
+            """Return contextual snippets related to the query from docs and source.
+
+            Args:
+                query: Free-text query to match against files.
+                max_snippets: Maximum number of snippets to return in total.
+                include_codebase: Search source files when True.
+                include_knowledge_base: Search knowledge base markdown when True.
+            """
+
+            normalized_query = query.strip()
+            if not normalized_query:
+                return []
+
+            lowered_query = normalized_query.lower()
+            limit = max(1, max_snippets)
+            snippets: List[Dict[str, str]] = []
+
+            def _append_snippet(
+                *,
+                source: str,
+                root: Path,
+                file_path: Path,
+                content: str,
+            ) -> None:
+                lowered_content = content.lower()
+                index = lowered_content.find(lowered_query)
+                if index == -1:
+                    return
+                start = max(0, index - _SNIPPET_PADDING_CHARS)
+                end = min(len(content), index + _SNIPPET_PADDING_CHARS)
+                snippet_text = content[start:end].strip()
+
+                line_number = content.count("\n", 0, start) + 1
+                entry = {
+                    "source": source,
+                    "path": str(file_path.relative_to(root)),
+                    "line": str(line_number),
+                    "snippet": snippet_text,
+                }
+                snippets.append(entry)
+
+            if include_knowledge_base:
+                for kb_file in sorted(kb_path.rglob("*.md")):
+                    try:
+                        if kb_file.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
+                            continue
+                    except FileNotFoundError:
+                        continue
+                    try:
+                        content = kb_file.read_text(encoding="utf-8")
+                    except (UnicodeDecodeError, OSError):
+                        continue
+                    _append_snippet(
+                        source="knowledge_base",
+                        root=kb_path,
+                        file_path=kb_file,
+                        content=content,
+                    )
+                    if len(snippets) >= limit:
+                        return snippets[:limit]
+
+            if include_codebase:
+                for candidate in sorted(
+                    path
+                    for path in codebase_path.rglob("*")
+                    if path.is_file() and not path.name.startswith(".")
+                ):
+                    if candidate.suffix.lower() in _CODE_SEARCH_SKIP_SUFFIXES:
+                        continue
+                    if (
+                        candidate.suffix
+                        and candidate.suffix.lower()
+                        not in _CODE_SEARCH_ALLOWED_SUFFIXES
+                    ):
+                        continue
+                    try:
+                        if candidate.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
+                            continue
+                    except FileNotFoundError:
+                        continue
+                    try:
+                        content = candidate.read_text(encoding="utf-8")
+                    except (UnicodeDecodeError, OSError):
+                        continue
+                    _append_snippet(
+                        source="codebase",
+                        root=codebase_path,
+                        file_path=candidate,
+                        content=content,
+                    )
+                    if len(snippets) >= limit:
+                        return snippets[:limit]
+
+            return snippets[:limit]
+
+        tools.append(retrieve_relevant_context)
 
     return tools

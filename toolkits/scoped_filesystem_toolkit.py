@@ -109,9 +109,56 @@ def build_scoped_tools(codebase_root: str, workspace_root: str) -> List[Tool]:
         lines = ["."] + tree(codebase_root_path)
         return "```markdown\n" + "\n".join(lines) + "\n```"
 
+    @tool
+    def get_directory_mermaid(dir_path: str = ".", max_depth: int = 3) -> str:
+        """Return a Mermaid diagram representing the structure under a directory.
+
+        Args:
+            dir_path: Relative directory path whose structure should be visualised.
+            max_depth: Recursion depth for traversing children. Defaults to 3.
+        """
+
+        resolved = resolve_within_root(codebase_root_path, dir_path)
+        if not resolved.exists():
+            raise FileNotFoundError(
+                f"Directory '{dir_path}' not found inside the codebase."
+            )
+
+        if resolved.is_file():
+            node_id = "root"
+            label = resolved.name
+            return "```mermaid\ngraph TD\n    {0}[{1}]\n```".format(node_id, label)
+
+        mapping: dict[Path, str] = {}
+
+        def assign_id(path: Path) -> str:
+            if path not in mapping:
+                mapping[path] = f"n{len(mapping)}"
+            return mapping[path]
+
+        lines: List[str] = ["graph TD"]
+
+        def walk(path: Path, depth: int = 0) -> None:
+            node = assign_id(path)
+            label = path.name + ("/" if path.is_dir() else "")
+            lines.append(f"    {node}[{label}]")
+            if path.is_dir() and depth < max_depth:
+                for child in sorted(
+                    child
+                    for child in path.iterdir()
+                    if not child.name.startswith(".") and child.name != "__pycache__"
+                ):
+                    child_node = assign_id(child)
+                    lines.append(f"    {node} --> {child_node}")
+                    walk(child, depth + 1)
+
+        walk(resolved)
+        return "```mermaid\n" + "\n".join(lines) + "\n```"
+
     return [
         read_codebase_file,
         list_codebase_directory,
         write_workspace_file,
         get_codebase_tree,
+        get_directory_mermaid,
     ]

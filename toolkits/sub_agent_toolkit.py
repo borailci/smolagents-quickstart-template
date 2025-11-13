@@ -7,8 +7,10 @@ import re
 import shutil
 import time
 from collections import deque
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Deque, List, Optional
+from typing import Deque, Dict, List, Optional, Sequence, Tuple
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -25,6 +27,8 @@ LITELLM_MODEL_ID = os.getenv("LITELLM_MODEL_ID")
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
 CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
 SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
+SUB_AGENT_RPM_ENV = "SUB_AGENT_REQUESTS_PER_MINUTE"
+DEFAULT_SUB_AGENT_RPM = 8.0
 
 
 _RETRY_IN_PATTERN = re.compile(
@@ -35,8 +39,26 @@ _RETRY_DELAY_PATTERN = re.compile(
 )
 
 
-def _formatted_prompt(task_description: str) -> str:
-    return f"{prompts.SUB_AGENT_KB_PROMPT.strip()}\n\nTask details:\n{task_description.strip()}"
+class SubAgentRole(str, Enum):
+    ANALYZER = "analyzer"
+    SUMMARIZER = "summarizer"
+
+
+@dataclass(frozen=True)
+class SubAgentTaskSpec:
+    description: str
+    role: SubAgentRole = SubAgentRole.ANALYZER
+    instructions: Optional[str] = None
+
+
+DEFAULT_ROLE_PROMPTS: Dict[SubAgentRole, str] = {
+    SubAgentRole.ANALYZER: prompts.SUB_AGENT_KB_PROMPT,
+    SubAgentRole.SUMMARIZER: prompts.SUMMARIZER_KB_PROMPT,
+}
+
+
+def _formatted_prompt(task_description: str, agent_prompt: str) -> str:
+    return f"{agent_prompt.strip()}\n\nTask details:\n{task_description.strip()}"
 
 
 def _resolve_paths(
@@ -56,15 +78,48 @@ def _resolve_paths(
     return codebase_path, sub_agents_path
 
 
+def _resolve_sub_agent_rpm() -> float:
+    raw_value = os.getenv(SUB_AGENT_RPM_ENV)
+    if raw_value is None:
+        return DEFAULT_SUB_AGENT_RPM
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid %s value '%s'; using default %.1f",
+            SUB_AGENT_RPM_ENV,
+            raw_value,
+            DEFAULT_SUB_AGENT_RPM,
+        )
+        return DEFAULT_SUB_AGENT_RPM
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive %s value '%s'; using default %.1f",
+            SUB_AGENT_RPM_ENV,
+            raw_value,
+            DEFAULT_SUB_AGENT_RPM,
+        )
+        return DEFAULT_SUB_AGENT_RPM
+    return parsed
+
+
 def _build_model() -> LiteLLMModel:
     if not LITELLM_MODEL_ID or not LITELLM_API_KEY:
         raise RuntimeError("LITELLM_MODEL_ID and LITELLM_API_KEY must be configured.")
-    return LiteLLMModel(model_id=LITELLM_MODEL_ID, api_key=LITELLM_API_KEY)
+    requests_per_minute = _resolve_sub_agent_rpm()
+    logger.info(
+        "Initializing sub-agent model %s with %.1f requests/minute limit",
+        LITELLM_MODEL_ID,
+        requests_per_minute,
+    )
+    return LiteLLMModel(
+        model_id=LITELLM_MODEL_ID,
+        api_key=LITELLM_API_KEY,
+        requests_per_minute=requests_per_minute,
+    )
 
 
 def _extract_retry_after_seconds(exc: Exception, default: float = 25.0) -> float:
-    """Best-effort parsing of provider retry hints from an exception message."""
-
     message = str(exc)
     for pattern in (_RETRY_DELAY_PATTERN, _RETRY_IN_PATTERN):
         match = pattern.search(message)
@@ -76,29 +131,49 @@ def _extract_retry_after_seconds(exc: Exception, default: float = 25.0) -> float
     return default
 
 
-def run_sub_agent_tasks(
-    task_descriptions: List[str],
+STRICT_JSON_REMINDER = (
+    "\n\nSTRICT TOOL-CALL FORMAT REMINDER:\n"
+    '- Every tool call response must be ONLY the JSON arguments (e.g., {"file_path": "src/api/routes.py"}).\n'
+    "- Do not wrap JSON in backticks or add prose before or after.\n"
+    "- If you need to provide narration, wait until after the tool has returned.\n"
+)
+
+
+def _execute_sub_agent_runs(
+    task_payloads: Sequence[Tuple[str, str]],
     *,
     codebase_root: Optional[str | Path] = None,
     sub_agents_root: Optional[str | Path] = None,
     max_retries: int = 3,
     window_seconds: float = 90.0,
-    max_requests_per_window: int = 5,
-    min_interval_seconds: float = 7.0,
+    max_requests_per_window: int = 4,
+    min_interval_seconds: float = 5.0,
 ) -> List[Path]:
-    """Execute sub-agents sequentially and return their workspace paths."""
-
-    if not isinstance(task_descriptions, list) or not task_descriptions:
+    if not task_payloads:
         return []
 
     codebase_path, sub_agents_path = _resolve_paths(codebase_root, sub_agents_root)
     model = _build_model()
 
     workspaces: List[Path] = []
-
     request_timestamps: Deque[float] = deque()
 
-    for index, description in enumerate(task_descriptions):
+    def _prune_timestamps(now: float) -> None:
+        while request_timestamps and now - request_timestamps[0] >= window_seconds:
+            request_timestamps.popleft()
+
+    def _enforce_min_step_duration(elapsed: float) -> None:
+        if elapsed >= min_interval_seconds:
+            return
+        remaining = min_interval_seconds - elapsed
+        logger.info(
+            "Step completed in %.2fs; sleeping %.2fs to satisfy cooldown.",
+            elapsed,
+            remaining,
+        )
+        time.sleep(remaining)
+
+    for index, (description, instruction_prompt) in enumerate(task_payloads):
         workspace_dir = sub_agents_path / f"sub_agent_{index}"
         workspace_exists = workspace_dir.exists()
         workspace = ensure_directory(workspace_dir)
@@ -106,7 +181,7 @@ def run_sub_agent_tasks(
         existing_summary = workspace / "summary.md"
         if workspace_exists and existing_summary.exists():
             logger.info(
-                "Skipping sub-agent %s; existing output detected at %s.",
+                "Skipping sub-agent {}; existing output detected at {}.",
                 index,
                 existing_summary,
             )
@@ -117,89 +192,202 @@ def run_sub_agent_tasks(
             shutil.rmtree(workspace_dir)
             workspace = ensure_directory(workspace_dir)
 
-        logger.info("Launching sub-agent %s in %s", index, workspace)
+        logger.info("Launching sub-agent {} in {}", index, workspace)
 
         scoped_tools = build_scoped_tools(
             codebase_root=str(codebase_path),
             workspace_root=str(workspace),
         )
 
-        agent = ToolCallingAgent(
-            name=f"sub_agent_{index}",
-            description=f"Knowledge-base analyzer for task {index}",
-            tools=scoped_tools,
-            model=model,
-            instructions=_formatted_prompt(description),
-        )
+        base_instructions = _formatted_prompt(description, instruction_prompt)
+        current_instructions = base_instructions
+
+        def _build_agent(instructions: str) -> ToolCallingAgent:
+            return ToolCallingAgent(
+                name=f"sub_agent_{index}",
+                description=f"Knowledge-base agent for task {index}",
+                tools=scoped_tools,
+                model=model,
+                instructions=instructions,
+            )
+
+        agent = _build_agent(current_instructions)
 
         attempt = 0
         while True:
             attempt += 1
             now = time.monotonic()
-            while request_timestamps and now - request_timestamps[0] >= window_seconds:
-                request_timestamps.popleft()
+            _prune_timestamps(now)
+
+            if request_timestamps:
+                time_since_last = now - request_timestamps[-1]
+                if time_since_last < min_interval_seconds:
+                    wait_gap = min_interval_seconds - time_since_last
+                    logger.info(
+                        "Previous step finished %.2fs ago; sleeping %.2fs to maintain cooldown.",
+                        time_since_last,
+                        wait_gap,
+                    )
+                    time.sleep(wait_gap)
+                    now = time.monotonic()
+                    _prune_timestamps(now)
 
             if len(request_timestamps) >= max_requests_per_window:
                 wait_time = window_seconds - (now - request_timestamps[0])
                 logger.debug(
-                    "Rate limiting active. Sleeping %.2fs before next request.",
+                    "Rate limiting active. Sleeping {:.2f}s before next request.",
                     wait_time,
                 )
                 time.sleep(max(wait_time, 0.1))
                 continue
 
             try:
-                logger.info(
-                    "Waiting for %.1f seconds to respect API rate limits...",
-                    min_interval_seconds,
-                )
-                time.sleep(min_interval_seconds)
+                step_start = time.monotonic()
                 agent.run(description)
-                request_timestamps.append(time.monotonic())
+                step_end = time.monotonic()
+                request_timestamps.append(step_end)
+                elapsed = step_end - step_start
+                _enforce_min_step_duration(elapsed)
                 workspaces.append(workspace)
                 break
             except Exception as exc:
+                step_end = time.monotonic()
+                request_timestamps.append(step_end)
+                elapsed = step_end - step_start
                 is_rate_limit = (
                     getattr(exc, "__class__", type(exc))
                     .__name__.lower()
                     .startswith("ratelimit")
                     or "quota" in str(exc).lower()
                 )
+                parse_error = (
+                    "Expecting property name enclosed in double quotes" in str(exc)
+                    or "Message contains no content" in str(exc)
+                )
+
+                if parse_error:
+                    if STRICT_JSON_REMINDER not in current_instructions:
+                        logger.warning(
+                            "Sub-agent %s produced invalid JSON tool call. Reinforcing instructions and retrying.",
+                            index,
+                        )
+                        current_instructions = base_instructions + STRICT_JSON_REMINDER
+                        agent = _build_agent(current_instructions)
+                    else:
+                        logger.warning(
+                            "Sub-agent %s still failing JSON format after reinforcement: %s",
+                            index,
+                            exc,
+                        )
+                    if attempt >= max_retries:
+                        raise
+                    _enforce_min_step_duration(elapsed)
+                    continue
+
                 if is_rate_limit:
                     if attempt >= max_retries:
                         logger.error(
-                            "Sub-agent %s exhausted retries after quota errors: %s.",
+                            "Sub-agent {} exhausted retries after quota errors: {}.",
                             index,
                             exc,
                         )
                         raise
-
-                    wait_seconds = max(
+                    wait_target = max(
                         min_interval_seconds,
                         _extract_retry_after_seconds(exc),
                     )
+                    wait_seconds = max(wait_target - elapsed, 0.0)
                     logger.warning(
-                        "Sub-agent %s hit provider quota. Waiting %.2fs before retry (%s/%s).",
+                        "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry ({}/{}).",
                         index,
                         wait_seconds,
                         attempt,
                         max_retries,
                     )
-                    time.sleep(wait_seconds)
+                    if wait_seconds > 0:
+                        time.sleep(wait_seconds)
                     continue
 
                 if attempt >= max_retries:
                     raise
                 logger.warning(
-                    "Sub-agent %s failed on attempt %s/%s: %s. Retrying...",
+                    "Sub-agent {} failed on attempt {}/{}: {}. Retrying...",
                     index,
                     attempt,
                     max_retries,
                     exc,
                 )
-                time.sleep(2.0)
+                _enforce_min_step_duration(elapsed)
 
     return workspaces
+
+
+def run_sub_agent_tasks(
+    task_descriptions: List[str],
+    *,
+    codebase_root: Optional[str | Path] = None,
+    sub_agents_root: Optional[str | Path] = None,
+    max_retries: int = 3,
+    window_seconds: float = 90.0,
+    max_requests_per_window: int = 5,
+    min_interval_seconds: float = 5.0,
+    instruction_prompt: str = prompts.SUB_AGENT_KB_PROMPT,
+) -> List[Path]:
+    """Execute analyzer-style sub-agents and return their workspace paths."""
+
+    if not isinstance(task_descriptions, list) or not task_descriptions:
+        return []
+
+    payloads = [(description, instruction_prompt) for description in task_descriptions]
+    return _execute_sub_agent_runs(
+        payloads,
+        codebase_root=codebase_root,
+        sub_agents_root=sub_agents_root,
+        max_retries=max_retries,
+        window_seconds=window_seconds,
+        max_requests_per_window=max_requests_per_window,
+        min_interval_seconds=min_interval_seconds,
+    )
+
+
+def run_typed_sub_agent_tasks(
+    task_specs: Sequence[SubAgentTaskSpec],
+    *,
+    codebase_root: Optional[str | Path] = None,
+    sub_agents_root: Optional[str | Path] = None,
+    max_retries: int = 3,
+    window_seconds: float = 90.0,
+    max_requests_per_window: int = 5,
+    min_interval_seconds: float = 5.0,
+    role_prompts: Optional[Dict[SubAgentRole, str]] = None,
+) -> List[Path]:
+    """Execute sub-agents with explicit roles and return their workspace paths."""
+
+    if not task_specs:
+        return []
+
+    prompt_map = dict(DEFAULT_ROLE_PROMPTS)
+    if role_prompts:
+        prompt_map.update(role_prompts)
+
+    payloads: List[Tuple[str, str]] = []
+    for spec in task_specs:
+        prompt_text = spec.instructions or prompt_map.get(spec.role)
+        if not prompt_text:
+            raise RuntimeError(
+                f"No instruction prompt configured for role '{spec.role}'."
+            )
+        payloads.append((spec.description, prompt_text))
+
+    return _execute_sub_agent_runs(
+        payloads,
+        codebase_root=codebase_root,
+        sub_agents_root=sub_agents_root,
+        max_retries=max_retries,
+        window_seconds=window_seconds,
+        max_requests_per_window=max_requests_per_window,
+        min_interval_seconds=min_interval_seconds,
+    )
 
 
 def get_sub_agent_tools() -> List[Tool]:

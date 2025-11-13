@@ -6,12 +6,16 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, cast
+from typing import Any, Dict, List, Sequence, cast
 
 from dotenv import load_dotenv
 from loguru import logger
 
-from toolkits.sub_agent_toolkit import run_sub_agent_tasks
+from toolkits.sub_agent_toolkit import (
+    SubAgentRole,
+    SubAgentTaskSpec,
+    run_typed_sub_agent_tasks,
+)
 from utils.path_utils import ensure_directory
 
 load_dotenv()
@@ -19,6 +23,15 @@ load_dotenv()
 CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
 KNOWLEDGE_BASE_OUTPUT_PATH = os.getenv("KNOWLEDGE_BASE_OUTPUT_PATH")
 SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
+TARGET_WHITELIST_ENV = "KNOWLEDGE_BASE_TARGET_WHITELIST"
+DEFAULT_TARGET_IDENTIFIERS: tuple[str, ...] = (
+    "README.md",
+    "src/api",
+    "src/config",
+    "src/models",
+    "src/utils",
+    "tests",
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +45,14 @@ class DocumentationTarget:
         return safe if safe else "root"
 
 
+@dataclass(frozen=True)
+class AgentWorkspaceResult:
+    index: int
+    target: DocumentationTarget
+    workspace: Path | None
+    error: str | None = None
+
+
 class KnowledgeBaseBuilder:
     def __init__(
         self,
@@ -39,98 +60,175 @@ class KnowledgeBaseBuilder:
         output_root: str | Path | None = None,
         sub_agents_root: str | Path | None = None,
     ):
-        if not (codebase_root or CODEBASE_ROOT_PATH):
+        env_codebase = codebase_root or os.getenv("CODEBASE_ROOT_PATH")
+        env_output = output_root or os.getenv("KNOWLEDGE_BASE_OUTPUT_PATH")
+        env_sub_agents = sub_agents_root or os.getenv("SUB_AGENTS_ROOT_PATH")
+
+        if not env_codebase:
             raise RuntimeError("CODEBASE_ROOT_PATH is not configured.")
-        if not (output_root or KNOWLEDGE_BASE_OUTPUT_PATH):
+        if not env_output:
             raise RuntimeError("KNOWLEDGE_BASE_OUTPUT_PATH is not configured.")
-        if not (sub_agents_root or SUB_AGENTS_ROOT_PATH):
+        if not env_sub_agents:
             raise RuntimeError("SUB_AGENTS_ROOT_PATH is not configured.")
 
-        root_value = cast(str | Path, codebase_root or CODEBASE_ROOT_PATH)
-        output_value = cast(str | Path, output_root or KNOWLEDGE_BASE_OUTPUT_PATH)
-        sub_agents_value = cast(str | Path, sub_agents_root or SUB_AGENTS_ROOT_PATH)
+        root_value = cast(str | Path, env_codebase)
+        output_value = cast(str | Path, env_output)
+        sub_agents_value = cast(str | Path, env_sub_agents)
 
         self.codebase_root = Path(root_value).expanduser().resolve()
         self.output_root = ensure_directory(output_value)
         self.sub_agents_root = ensure_directory(sub_agents_value)
+        self.plan_path = self.output_root / "plan.md"
+        self._plan_state: Dict[str, Dict[str, str]] = {}
 
     def generate(self) -> List[Path]:
-        logger.info("Starting knowledge base generation from %s", self.codebase_root)
+        logger.info("Starting knowledge base generation from {}", self.codebase_root)
 
         self._reset_directory(self.sub_agents_root)
         self._reset_directory(self.output_root)
+
+        exploratory_path = self._run_exploratory_pass()
 
         targets = self._discover_targets()
         if not targets:
             raise RuntimeError("No documentation targets found in the codebase.")
 
-        task_descriptions = [self._build_task_description(target) for target in targets]
-        workspaces = run_sub_agent_tasks(
-            task_descriptions,
-            codebase_root=self.codebase_root,
-            sub_agents_root=self.sub_agents_root,
-        )
+        self._initialize_plan(targets)
 
-        if not workspaces:
+        results: List[AgentWorkspaceResult] = []
+        for index, target in enumerate(targets):
+            try:
+                workspace = self._run_single_target_agent(target)
+                results.append(
+                    AgentWorkspaceResult(
+                        index=index,
+                        target=target,
+                        workspace=workspace,
+                        error=None,
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.exception("Analyzer failed for %s: %s", target.path, exc)
+                results.append(
+                    AgentWorkspaceResult(
+                        index=index,
+                        target=target,
+                        workspace=None,
+                        error=str(exc),
+                    )
+                )
+
+        if not results:
             raise RuntimeError("Sub-agents did not produce any workspaces.")
 
-        output_files = self._collect_outputs(targets, workspaces)
-        self._write_overview(targets, output_files)
-        self._write_table_of_contents(output_files)
+        output_files: List[Path] = []
 
-        logger.info("Knowledge base generated with %s files", len(output_files) + 2)
-        return output_files
+        if exploratory_path:
+            output_files.append(exploratory_path)
+
+        output_files.extend(self._collect_outputs(results))
+
+        if self.plan_path.exists():
+            output_files.append(self.plan_path)
+
+        overview_path = self._write_overview(targets, output_files)
+        output_files.append(overview_path)
+
+        toc_path = self._write_table_of_contents(output_files)
+        output_files.append(toc_path)
+
+        summary_path = self._run_summary_agent(output_files)
+        if summary_path:
+            output_files.append(summary_path)
+            # Regenerate the table of contents so the summary is included.
+            toc_path = self._write_table_of_contents(output_files)
+            if toc_path not in output_files:
+                output_files.append(toc_path)
+
+        logger.info("Knowledge base generated with {} files", len(output_files))
+        return sorted(set(output_files), key=lambda path: path.name)
 
     # ----- Target discovery -------------------------------------------------
 
+    def _run_exploratory_pass(self) -> Path | None:
+        logger.info("Running exploratory pass for codebase snapshot")
+
+        report_path = self.output_root / "scouting_report.md"
+
+        try:
+            tree = self._build_directory_tree(self.codebase_root, max_depth=2)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to build directory tree: %s", exc)
+            tree = "(unable to generate tree view)"
+
+        top_level_summary = self._summarize_top_level_directories()
+        readme_excerpt = self._read_file_excerpt(self.codebase_root / "README.md")
+        requirements_excerpt = self._read_file_excerpt(
+            self.codebase_root / "requirements.txt"
+        )
+
+        lines = [
+            "# Exploratory Scouting Report",
+            "",
+            "Generated before launching analyzer sub-agents to capture a high-level snapshot of the repository.",
+            "",
+            "## Top-Level Structure",
+            "```markdown",
+            tree.strip(),
+            "```",
+        ]
+
+        if top_level_summary:
+            lines.extend(["", "## First-Level Directories of `src/`", ""])
+            lines.extend(f"- {entry}" for entry in top_level_summary)
+
+        if readme_excerpt:
+            lines.extend(
+                [
+                    "",
+                    "## README.md (excerpt)",
+                    "",
+                    "```markdown",
+                    readme_excerpt,
+                    "```",
+                ]
+            )
+
+        if requirements_excerpt:
+            lines.extend(
+                [
+                    "",
+                    "## requirements.txt (excerpt)",
+                    "",
+                    "```text",
+                    requirements_excerpt,
+                    "```",
+                ]
+            )
+
+        lines.append("")
+
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        return report_path
+
     def _discover_targets(self) -> List[DocumentationTarget]:
-        src_dir = self.codebase_root / "src"
+        identifiers = self._resolve_target_identifiers()
         targets: List[DocumentationTarget] = []
 
-        if src_dir.is_dir():
-            targets.extend(self._targets_from_directory(src_dir, prefix="src"))
-        else:
-            targets.extend(self._targets_from_directory(self.codebase_root))
-
-        # Prioritise important top-level files if they exist
-        special_files = ["README.md", "pyproject.toml", "requirements.txt"]
-        for name in special_files:
-            file_path = self.codebase_root / name
-            if file_path.exists():
-                targets.insert(0, DocumentationTarget(path=Path(name), label=name))
-
-        # Include tests directory if present and not already included
-        tests_path = Path("tests")
-        if (self.codebase_root / tests_path).is_dir():
-            targets.append(DocumentationTarget(path=tests_path, label="tests"))
-
-        # Deduplicate while preserving order
-        seen = set()
-        unique_targets: List[DocumentationTarget] = []
-        for target in targets:
-            key = target.path.as_posix()
-            if key not in seen:
-                seen.add(key)
-                unique_targets.append(target)
-
-        return unique_targets
-
-    def _targets_from_directory(
-        self, directory: Path, prefix: str | None = None
-    ) -> List[DocumentationTarget]:
-        base = []
-        for entry in sorted(directory.iterdir()):
-            if entry.name.startswith("."):
+        for identifier in identifiers:
+            relative_path = Path(identifier)
+            absolute_path = self.codebase_root / relative_path
+            if not absolute_path.exists():
+                logger.info(
+                    "Skipping knowledge-base target %s because it does not exist.",
+                    identifier,
+                )
                 continue
-            relative = entry.relative_to(self.codebase_root)
-            if prefix and not str(relative).startswith(f"{prefix}/"):
-                relative = Path(prefix) / entry.relative_to(directory)
 
-            if entry.is_dir():
-                base.append(DocumentationTarget(path=relative, label=relative.name))
-            elif entry.suffix in {".py", ".md", ".json", ".yaml", ".yml"}:
-                base.append(DocumentationTarget(path=relative, label=relative.name))
-        return base
+            label = relative_path.name or relative_path.as_posix()
+            targets.append(DocumentationTarget(path=relative_path, label=label))
+
+        return targets
 
     # ----- Task construction ------------------------------------------------
 
@@ -147,6 +245,7 @@ class KnowledgeBaseBuilder:
             "- Document configuration or dependencies this area relies on.",
             "- Explain control flow and interactions with other modules.",
             "- Include noteworthy code snippets (keep them concise).",
+            "- Produce at least one Mermaid diagram capturing structure or data flow (use get_directory_mermaid as a starting point).",
             "- Highlight extension points and related tests.",
         ]
 
@@ -164,30 +263,79 @@ class KnowledgeBaseBuilder:
 
     def _collect_outputs(
         self,
-        targets: Sequence[DocumentationTarget],
-        workspaces: Sequence[Path],
+        results: Sequence[AgentWorkspaceResult],
     ) -> List[Path]:
         output_files: List[Path] = []
 
-        for target, workspace in zip(targets, workspaces):
-            markdown_files = sorted(workspace.rglob("*.md"))
-            if not markdown_files:
-                logger.warning("No markdown outputs found for %s", target.path)
+        for result in results:
+            target = result.target
+            workspace = (
+                result.workspace
+                if result.workspace and result.workspace.exists()
+                else None
+            )
+
+            exported: List[Path] = []
+            if workspace is not None:
+                exported = self._export_workspace_markdown(target, workspace)
+
+            if exported:
+                output_files.extend(exported)
+                self._mark_task_complete(target, len(exported))
                 continue
 
-            for index, file_path in enumerate(markdown_files):
-                content = file_path.read_text(encoding="utf-8")
-                suffix = f"_{index}" if index else ""
-                output_name = f"{target.identifier}{suffix}.md"
-                output_path = self.output_root / output_name
-                output_path.write_text(content, encoding="utf-8")
-                output_files.append(output_path)
+            error_detail = result.error or "Markdown outputs were empty or missing."
+            logger.warning(
+                "%s produced no usable markdown; retrying with reinforced instructions | detail=%s",
+                target.path,
+                error_detail,
+            )
+            retry_workspace = self._retry_target_workspace(target)
+            if retry_workspace is None:
+                self._mark_task_attention(
+                    target,
+                    f"Retry failed to produce markdown. {error_detail}",
+                )
+                continue
+
+            exported_retry = self._export_workspace_markdown(target, retry_workspace)
+            if exported_retry:
+                output_files.extend(exported_retry)
+                self._mark_task_complete(target, len(exported_retry))
+            else:
+                self._mark_task_attention(
+                    target,
+                    f"Markdown outputs were empty even after retry. {error_detail}",
+                )
 
         return output_files
 
+    def _run_single_target_agent(self, target: DocumentationTarget) -> Path | None:
+        workspace_root = self.sub_agents_root / target.identifier
+        self._reset_directory(workspace_root)
+
+        spec = SubAgentTaskSpec(
+            description=self._build_task_description(target),
+            role=SubAgentRole.ANALYZER,
+        )
+
+        workspaces = run_typed_sub_agent_tasks(
+            [spec],
+            codebase_root=self.codebase_root,
+            sub_agents_root=workspace_root,
+        )
+
+        if not workspaces:
+            logger.warning(
+                "Analyzer agent for %s did not produce a workspace.", target.path
+            )
+            return None
+
+        return workspaces[0]
+
     def _write_overview(
         self, targets: Sequence[DocumentationTarget], output_files: Sequence[Path]
-    ) -> None:
+    ) -> Path:
         overview_path = self.output_root / "overview.md"
         lines = [
             "# Codebase Overview",
@@ -204,13 +352,175 @@ class KnowledgeBaseBuilder:
             for path in output_files:
                 lines.append(f"- `{path.name}`")
         overview_path.write_text("\n".join(lines), encoding="utf-8")
+        return overview_path
 
-    def _write_table_of_contents(self, output_files: Sequence[Path]) -> None:
+    def _write_table_of_contents(self, output_files: Sequence[Path]) -> Path:
         toc_path = self.output_root / "toc.md"
         lines = ["# Knowledge Base Table of Contents", ""]
         for file_path in sorted(output_files, key=lambda p: p.name):
+            if file_path.name == "toc.md":
+                continue
             lines.append(f"- [{file_path.stem}]({file_path.name})")
         toc_path.write_text("\n".join(lines), encoding="utf-8")
+        return toc_path
+
+    def _export_workspace_markdown(
+        self, target: DocumentationTarget, workspace: Path
+    ) -> List[Path]:
+        markdown_files = sorted(workspace.rglob("*.md"))
+        if not markdown_files:
+            return []
+
+        exported: List[Path] = []
+        for index, file_path in enumerate(markdown_files):
+            content = file_path.read_text(encoding="utf-8")
+            if not self._has_meaningful_content(content):
+                logger.warning(
+                    "Discarding empty markdown output for %s from %s",
+                    target.path,
+                    file_path,
+                )
+                continue
+
+            suffix = f"_{index}" if index else ""
+            output_name = f"{target.identifier}{suffix}.md"
+            output_path = self.output_root / output_name
+            output_path.write_text(content, encoding="utf-8")
+            exported.append(output_path)
+
+        return exported
+
+    def _retry_target_workspace(self, target: DocumentationTarget) -> Path | None:
+        retry_root = self.sub_agents_root / f"retry_{target.identifier}"
+        self._reset_directory(retry_root)
+
+        augmented_description = (
+            f"{self._build_task_description(target)}\n\n"
+            "Previous attempt produced empty or placeholder output. "
+            "Regenerate the summary with concrete analysis: provide detailed paragraphs, "
+            "specific file references, and actionable insights under every required heading. "
+            "If information is limited, explicitly describe the limitations instead of leaving sections blank."
+        )
+
+        specs = [
+            SubAgentTaskSpec(
+                description=augmented_description,
+                role=SubAgentRole.ANALYZER,
+            )
+        ]
+
+        workspaces = run_typed_sub_agent_tasks(
+            specs,
+            codebase_root=self.codebase_root,
+            sub_agents_root=retry_root,
+        )
+
+        if not workspaces:
+            logger.warning(
+                "Retry sub-agent for %s did not yield any workspace.", target.path
+            )
+            return None
+
+        return workspaces[0]
+
+    def _run_summary_agent(self, artifact_paths: Sequence[Path]) -> Path | None:
+        if not artifact_paths:
+            logger.warning("Skipping summarizer agent because there are no artifacts.")
+            return None
+
+        summary_root = self.sub_agents_root / "summary_agent"
+        self._reset_directory(summary_root)
+
+        description = self._build_summary_task_description(artifact_paths)
+        summary_spec = SubAgentTaskSpec(
+            description=description, role=SubAgentRole.SUMMARIZER
+        )
+        workspaces = run_typed_sub_agent_tasks(
+            [summary_spec],
+            codebase_root=self.output_root,
+            sub_agents_root=summary_root,
+        )
+
+        if not workspaces:
+            logger.warning("Summarizer agent did not produce a workspace.")
+            return None
+
+        workspace = workspaces[0]
+        summary_file = workspace / "summary.md"
+        if not summary_file.exists():
+            logger.warning(
+                "Summarizer agent workspace at {} is missing summary.md.", workspace
+            )
+            return None
+
+        destination = self.output_root / "executive_summary.md"
+        content = summary_file.read_text(encoding="utf-8")
+        destination.write_text(content, encoding="utf-8")
+
+        logger.info("Summarizer agent produced {}", destination)
+        return destination
+
+    def _build_summary_task_description(self, artifact_paths: Sequence[Path]) -> str:
+        relative_paths: List[str] = []
+        for path in artifact_paths:
+            try:
+                relative_paths.append(path.relative_to(self.output_root).as_posix())
+            except ValueError:
+                relative_paths.append(path.name)
+        artifact_listing = "\n".join(f"- {name}" for name in sorted(relative_paths))
+
+        return (
+            "You are preparing the final executive summary for the completed knowledge base.\n"
+            "Review the following markdown artifacts located in the knowledge base directory:\n"
+            f"{artifact_listing}\n\n"
+            "Identify the most important takeaways, diagrams, risks, and recommended actions."
+        )
+
+    def _initialize_plan(self, targets: Sequence[DocumentationTarget]) -> None:
+        self._plan_state.clear()
+        for target in targets:
+            self._plan_state[target.identifier] = {
+                "path": target.path.as_posix(),
+                "label": target.label,
+                "status": " ",
+                "note": "",
+            }
+        self._write_plan_file()
+
+    def _mark_task_complete(self, target: DocumentationTarget, artifacts: int) -> None:
+        entry = self._plan_state.get(target.identifier)
+        if not entry:
+            return
+        entry["status"] = "x"
+        entry["note"] = f"Completed with {artifacts} artifact(s)."
+        self._write_plan_file()
+
+    def _mark_task_attention(self, target: DocumentationTarget, note: str) -> None:
+        entry = self._plan_state.get(target.identifier)
+        if not entry:
+            return
+        entry["status"] = "!"
+        entry["note"] = note
+        self._write_plan_file()
+
+    def _write_plan_file(self) -> None:
+        lines = [
+            "# Knowledge Base TODO",
+            "",
+            "Checklist maintained automatically while building the knowledge base.",
+            "Legend: [ ] pending / [x] completed / [!] needs follow-up.",
+            "",
+        ]
+
+        for identifier, data in self._plan_state.items():
+            description = data["path"] or "."
+            label = data["label"]
+            if label and label != description:
+                description = f"{description} ({label})"
+            note = f" — {data['note']}" if data.get("note") else ""
+            lines.append(f"- [{data['status']}] `{identifier}` — {description}{note}")
+
+        self.plan_path.write_text("\n".join(lines), encoding="utf-8")
 
     @staticmethod
     def _reset_directory(path: Path) -> None:
@@ -222,6 +532,84 @@ class KnowledgeBaseBuilder:
                 shutil.rmtree(entry)
             else:
                 entry.unlink()
+
+    @staticmethod
+    def _has_meaningful_content(content: str) -> bool:
+        stripped = content.strip()
+        if not stripped:
+            return False
+        non_empty_lines = [line for line in stripped.splitlines() if line.strip()]
+        if len(non_empty_lines) <= 1:
+            return False
+        if all(line.startswith("#") for line in non_empty_lines):
+            return False
+        return True
+
+    @staticmethod
+    def _resolve_target_identifiers() -> List[str]:
+        env_value = os.getenv(TARGET_WHITELIST_ENV)
+        if env_value:
+            configured = [part.strip() for part in env_value.split(",") if part.strip()]
+            if configured:
+                logger.info(
+                    "Using knowledge base target whitelist from %s with %d entries",
+                    TARGET_WHITELIST_ENV,
+                    len(configured),
+                )
+                return configured
+
+        logger.info(
+            "Using default knowledge base targets (%d entries).",
+            len(DEFAULT_TARGET_IDENTIFIERS),
+        )
+        return list(DEFAULT_TARGET_IDENTIFIERS)
+
+    def _build_directory_tree(self, root: Path, max_depth: int = 2) -> str:
+        def tree(directory: Path, prefix: str = "", depth: int = 0) -> List[str]:
+            if depth > max_depth:
+                return []
+            entries = sorted(
+                child
+                for child in directory.iterdir()
+                if not child.name.startswith(".") and child.name != "__pycache__"
+            )
+            lines: List[str] = []
+            for index, entry in enumerate(entries):
+                connector = "└── " if index == len(entries) - 1 else "├── "
+                child_prefix = "    " if index == len(entries) - 1 else "│   "
+                label = entry.name + ("/" if entry.is_dir() else "")
+                lines.append(f"{prefix}{connector}{label}")
+                if entry.is_dir():
+                    lines.extend(tree(entry, prefix + child_prefix, depth=depth + 1))
+            return lines
+
+        lines = ["."] + tree(root)
+        return "\n".join(lines)
+
+    def _summarize_top_level_directories(self) -> List[str]:
+        src_root = self.codebase_root / "src"
+        if not src_root.exists() or not src_root.is_dir():
+            return []
+        entries = []
+        for child in sorted(src_root.iterdir()):
+            if child.name.startswith(".") or child.name == "__pycache__":
+                continue
+            label = child.name + ("/" if child.is_dir() else "")
+            entries.append(label)
+        return entries
+
+    @staticmethod
+    def _read_file_excerpt(path: Path, max_chars: int = 2000) -> str | None:
+        if not path.exists() or not path.is_file():
+            return None
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):  # pragma: no cover - defensive logging
+            return None
+        snippet = content.strip()
+        if len(snippet) > max_chars:
+            snippet = snippet[: max_chars - 3].rstrip() + "..."
+        return snippet
 
 
 __all__ = ["KnowledgeBaseBuilder"]

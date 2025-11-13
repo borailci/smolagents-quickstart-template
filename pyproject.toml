@@ -9,6 +9,7 @@ dependencies = [
     "langchain-community>=0.3.30",
     "loguru>=0.7.3",
     "openai<1.100.0",
+    "chromadb>=0.5.20",
     "smolagents[extra1,extra2,gradio,litellm,mcp,telemetry,toolkit]>=1.21.1",
     "pytest>=8.3",
     "flask>=3.1.2",

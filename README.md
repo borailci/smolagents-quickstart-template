@@ -4,12 +4,11 @@ A minimal template for building AI agents with [Smolagents](https://huggingface.
 
 ## Features
 
-- Tool-calling agent with filesystem and web API tools
-- Gradio chat interface
-- File workspace for agent operations
-- Optional multi-agent coordination
+- Knowledge-base pipeline that orchestrates typed analyzer sub-agents
+- Tutorial generation pipeline with optional code search and RAG helpers
+- CLI utilities for question-answering and ad-hoc sub-agent runs
 - Easy LLM provider integration via LiteLLM
-- OpenTelemetry tracing with Phoenix and OpenInference for agent observability
+- OpenTelemetry tracing with Phoenix and OpenInference for pipeline observability
 - Optional retrieval-augmented generation backed by a local Chroma vector store
 
 ## Quick Start
@@ -26,14 +25,16 @@ A minimal template for building AI agents with [Smolagents](https://huggingface.
    ```
 1. **Configure API key:** See [API Key Setup Guide](docs/api_key.md) for detailed instructions
 
-1. **Run the application:**
+1. **Run a pipeline:**
    ```bash
-   ./run.sh
-   # or
-   uv run main.py
+   ./run.sh knowledge-base
+   # or run directly
+   uv run pipelines/cli.py knowledge-base
    ```
-
-Open the Gradio URL printed in your terminal to start chatting with the agent.
+   Follow up with tutorials once the knowledge base is ready:
+   ```bash
+   ./run.sh tutorials --rag --code-search
+   ```
 
 ### Pipeline CLI (Knowledge Base & Tutorials)
 

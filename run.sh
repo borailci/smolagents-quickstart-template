@@ -8,5 +8,11 @@ if [ -f .env ]; then
   export $(grep -v '^#' .env | xargs)
 fi
 
-# Run main.py using uv
-uv run main.py
+if [ $# -eq 0 ]; then
+  echo "Usage: $0 <command> [options]"
+  echo "Commands: knowledge-base | tutorials | qa | spawn-subagents"
+  exit 1
+fi
+
+# Run pipeline CLI with forwarded arguments
+uv run pipelines/cli.py "$@"

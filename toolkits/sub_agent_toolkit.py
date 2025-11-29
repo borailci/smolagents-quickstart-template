@@ -37,6 +37,9 @@ _RETRY_IN_PATTERN = re.compile(
 _RETRY_DELAY_PATTERN = re.compile(
     r"\"retryDelay\"\s*:\s*\"([0-9]+(?:\.[0-9]+)?)s\"", re.IGNORECASE
 )
+_QUOTA_RESET_PATTERN = re.compile(
+    r"Please retry in ([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE
+)
 
 
 class SubAgentRole(str, Enum):
@@ -107,8 +110,11 @@ def _build_model() -> LiteLLMModel:
     if not LITELLM_MODEL_ID or not LITELLM_API_KEY:
         raise RuntimeError("LITELLM_MODEL_ID and LITELLM_API_KEY must be configured.")
     requests_per_minute = _resolve_sub_agent_rpm()
+    # Configure automatic retries for rate limits
+    os.environ["LITELLM_NUM_RETRIES"] = "10"
+    
     logger.info(
-        "Initializing sub-agent model {} with {:.1f} requests/minute limit",
+        "Initializing sub-agent model {} with {:.1f} requests/minute limit and 10 retries",
         LITELLM_MODEL_ID,
         requests_per_minute,
     )
@@ -116,12 +122,13 @@ def _build_model() -> LiteLLMModel:
         model_id=LITELLM_MODEL_ID,
         api_key=LITELLM_API_KEY,
         requests_per_minute=requests_per_minute,
+        num_retries=10,
     )
 
 
 def _extract_retry_after_seconds(exc: Exception, default: float = 25.0) -> float:
     message = str(exc)
-    for pattern in (_RETRY_DELAY_PATTERN, _RETRY_IN_PATTERN):
+    for pattern in (_RETRY_DELAY_PATTERN, _RETRY_IN_PATTERN, _QUOTA_RESET_PATTERN):
         match = pattern.search(message)
         if match:
             try:
@@ -251,6 +258,7 @@ def _execute_sub_agent_runs(
                 workspaces.append(workspace)
                 break
             except Exception as exc:
+                last_exc = exc
                 step_end = time.monotonic()
                 request_timestamps.append(step_end)
                 elapsed = step_end - step_start
@@ -284,19 +292,19 @@ def _execute_sub_agent_runs(
                     _enforce_min_step_duration(elapsed)
                     continue
 
-                if is_rate_limit:
+            if is_rate_limit:
                     if attempt >= max_retries:
                         logger.error(
                             "Sub-agent {} exhausted retries after quota errors: {}.",
                             index,
-                            exc,
+                            last_exc,
                         )
                         raise
-                    wait_target = max(
-                        min_interval_seconds,
-                        _extract_retry_after_seconds(exc),
-                    )
-                    wait_seconds = max(wait_target - elapsed, 0.0)
+                    
+                    # Exponential backoff for rate limits
+                    base_delay = _extract_retry_after_seconds(last_exc, default=min_interval_seconds * 2)
+                    wait_seconds = max(base_delay, min_interval_seconds * (2 ** (attempt - 1)))
+                    
                     logger.warning(
                         "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry ({}/{}).",
                         index,
@@ -304,20 +312,24 @@ def _execute_sub_agent_runs(
                         attempt,
                         max_retries,
                     )
-                    if wait_seconds > 0:
-                        time.sleep(wait_seconds)
+                    time.sleep(wait_seconds)
                     continue
 
-                if attempt >= max_retries:
-                    raise
-                logger.warning(
-                    "Sub-agent {} failed on attempt {}/{}: {}. Retrying...",
-                    index,
-                    attempt,
-                    max_retries,
-                    exc,
-                )
-                _enforce_min_step_duration(elapsed)
+            if attempt >= max_retries:
+                raise
+            
+            # Generic error backoff
+            wait_seconds = min_interval_seconds * (2 ** (attempt - 1))
+            logger.warning(
+                "Sub-agent {} failed on attempt {}/{}: {}. Retrying in {:.1f}s...",
+                index,
+                attempt,
+                max_retries,
+                last_exc,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+            _enforce_min_step_duration(elapsed)
 
     return workspaces
 

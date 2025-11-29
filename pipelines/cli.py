@@ -57,6 +57,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Workspace root where sub-agent artifacts are stored.",
     )
+    kb_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate the process without running expensive agents.",
+    )
 
     tutorial_parser = subparsers.add_parser(
         "tutorials",
@@ -102,6 +107,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Override the maximum number of snippets returned by the retrieval helper.",
+    )
+    tutorial_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate the process without running expensive agents.",
     )
 
     qa_parser = subparsers.add_parser(
@@ -166,11 +176,13 @@ def generate_knowledge_base(
     codebase: str | Path | None = None,
     output: str | Path | None = None,
     sub_agents_root: str | Path | None = None,
+    dry_run: bool = False,
 ) -> list[Path]:
     builder = KnowledgeBaseBuilder(
         codebase_root=codebase,
         output_root=output,
         sub_agents_root=sub_agents_root,
+        dry_run=dry_run,
     )
     return builder.generate()
 
@@ -183,6 +195,7 @@ def generate_tutorials(
     enable_code_search: bool | None = None,
     enable_rag: bool | None = None,
     rag_max_snippets: int | None = None,
+    dry_run: bool = False,
 ) -> list[Path]:
     generator = TutorialGenerator(
         codebase_root=codebase,
@@ -191,6 +204,7 @@ def generate_tutorials(
         enable_code_search=enable_code_search,
         enable_rag=enable_rag,
         rag_max_snippets=rag_max_snippets,
+        dry_run=dry_run,
     )
     return generator.generate()
 
@@ -232,6 +246,7 @@ def main() -> None:
             codebase_root=args.codebase,
             output_root=args.output,
             sub_agents_root=args.sub_agents_root,
+            dry_run=args.dry_run,
         )
         outputs = builder.generate()
         logger.info("Knowledge base written to:\n{}", _format_paths(outputs))
@@ -243,6 +258,7 @@ def main() -> None:
             enable_code_search=args.code_search,
             enable_rag=args.rag,
             rag_max_snippets=args.rag_max_snippets,
+            dry_run=args.dry_run,
         )
         outputs = generator.generate()
         logger.info("Tutorials written to:\n{}", _format_paths(outputs))

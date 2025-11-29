@@ -155,10 +155,55 @@ def build_scoped_tools(codebase_root: str, workspace_root: str) -> List[Tool]:
         walk(resolved)
         return "```mermaid\n" + "\n".join(lines) + "\n```"
 
+    @tool
+    def view_file_outline(file_path: str) -> str:
+        """View the outline (classes, functions, docstrings) of a Python file.
+
+        Args:
+            file_path: Relative path to the file.
+        """
+        resolved = resolve_within_root(codebase_root_path, file_path)
+        if not resolved.exists():
+            raise FileNotFoundError(f"File '{file_path}' not found.")
+
+        if resolved.suffix != ".py":
+            return "Outline only supported for Python files. Use read_codebase_file to read content."
+
+        try:
+            content = _read_text_file(resolved)
+            import ast
+
+            tree = ast.parse(content)
+
+            lines = []
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    args = [arg.arg for arg in node.args.args]
+                    lines.append(f"Function: {node.name}({', '.join(args)})")
+                    if ast.get_docstring(node):
+                        doc = ast.get_docstring(node).splitlines()[0]
+                        lines.append(f"  Docstring: {doc}...")
+                elif isinstance(node, ast.ClassDef):
+                    lines.append(f"Class: {node.name}")
+                    if ast.get_docstring(node):
+                        doc = ast.get_docstring(node).splitlines()[0]
+                        lines.append(f"  Docstring: {doc}...")
+                    for item in node.body:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            args = [arg.arg for arg in item.args.args]
+                            lines.append(f"  Method: {item.name}({', '.join(args)})")
+
+            if not lines:
+                return "No classes or functions found."
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Failed to parse outline: {e}"
+
     return [
         read_codebase_file,
         list_codebase_directory,
         write_workspace_file,
         get_codebase_tree,
         get_directory_mermaid,
+        view_file_outline,
     ]

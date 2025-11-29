@@ -59,10 +59,13 @@ class KnowledgeBaseBuilder:
         codebase_root: str | Path | None = None,
         output_root: str | Path | None = None,
         sub_agents_root: str | Path | None = None,
+        dry_run: bool = False,
     ):
         env_codebase = codebase_root or os.getenv("CODEBASE_ROOT_PATH")
         env_output = output_root or os.getenv("KNOWLEDGE_BASE_OUTPUT_PATH")
         env_sub_agents = sub_agents_root or os.getenv("SUB_AGENTS_ROOT_PATH")
+
+        self.dry_run = dry_run
 
         if not env_codebase:
             raise RuntimeError("CODEBASE_ROOT_PATH is not configured.")
@@ -87,7 +90,9 @@ class KnowledgeBaseBuilder:
         self._reset_directory(self.sub_agents_root)
         self._reset_directory(self.output_root)
 
-        exploratory_path = self._run_exploratory_pass()
+        self._reset_directory(self.output_root)
+
+        exploratory_path, context_summary = self._run_exploratory_pass()
 
         targets = self._discover_targets()
         if not targets:
@@ -96,9 +101,15 @@ class KnowledgeBaseBuilder:
         self._initialize_plan(targets)
 
         results: List[AgentWorkspaceResult] = []
+        results: List[AgentWorkspaceResult] = []
         for index, target in enumerate(targets):
+            if self.dry_run:
+                logger.info("[DRY RUN] Would spawn analyzer agent for target: {}", target.path)
+                # In dry run, we don't spawn agents.
+                continue
+
             try:
-                workspace = self._run_single_target_agent(target)
+                workspace = self._run_single_target_agent(target, context_summary)
                 results.append(
                     AgentWorkspaceResult(
                         index=index,
@@ -117,6 +128,13 @@ class KnowledgeBaseBuilder:
                         error=str(exc),
                     )
                 )
+
+        if self.dry_run:
+            logger.info("[DRY RUN] Skipping result collection and summarization.")
+            output_files: List[Path] = []
+            if exploratory_path:
+                output_files.append(exploratory_path)
+            return output_files
 
         if not results:
             raise RuntimeError("Sub-agents did not produce any workspaces.")
@@ -150,7 +168,7 @@ class KnowledgeBaseBuilder:
 
     # ----- Target discovery -------------------------------------------------
 
-    def _run_exploratory_pass(self) -> Path | None:
+    def _run_exploratory_pass(self) -> tuple[Path | None, str]:
         logger.info("Running exploratory pass for codebase snapshot")
 
         report_path = self.output_root / "scouting_report.md"
@@ -209,10 +227,27 @@ class KnowledgeBaseBuilder:
         lines.append("")
 
         report_path.write_text("\n".join(lines), encoding="utf-8")
-        return report_path
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        
+        # Create a concise summary for context injection
+        context_summary = (
+            f"Codebase Structure:\n{tree}\n\n"
+            f"Top-level directories: {', '.join(top_level_summary) if top_level_summary else 'None'}\n"
+        )
+        if readme_excerpt:
+            context_summary += f"\nREADME excerpt:\n{readme_excerpt[:500]}...\n"
+            
+        return report_path, context_summary
 
     def _discover_targets(self) -> List[DocumentationTarget]:
         identifiers = self._resolve_target_identifiers()
+        
+        # If no identifiers returned (meaning no whitelist and defaults were skipped/empty),
+        # perform dynamic discovery.
+        if not identifiers:
+             identifiers = self._scan_for_targets()
+             logger.info("Discovered {} targets dynamically.", len(identifiers))
+
         targets: List[DocumentationTarget] = []
 
         for identifier in identifiers:
@@ -230,9 +265,42 @@ class KnowledgeBaseBuilder:
 
         return targets
 
+    def _scan_for_targets(self) -> List[str]:
+        src_root = self.codebase_root / "src"
+        if not src_root.exists():
+            # Fallback to scanning root if src doesn't exist
+            scan_root = self.codebase_root
+        else:
+            scan_root = src_root
+
+        targets = []
+        # Always include README if it exists
+        if (self.codebase_root / "README.md").exists():
+            targets.append("README.md")
+
+        for item in scan_root.iterdir():
+            if item.is_dir():
+                if item.name.startswith(".") or item.name.startswith("_"):
+                    continue
+                if item.name in {"node_modules", "venv", "env", "tests", "docs", "site-packages"}:
+                    continue
+                
+                # Use relative path from codebase root
+                try:
+                    rel_path = item.relative_to(self.codebase_root).as_posix()
+                    targets.append(rel_path)
+                except ValueError:
+                    continue
+        
+        # Explicitly add tests if it exists at root
+        if (self.codebase_root / "tests").exists():
+            targets.append("tests")
+            
+        return sorted(targets)
+
     # ----- Task construction ------------------------------------------------
 
-    def _build_task_description(self, target: DocumentationTarget) -> str:
+    def _build_task_description(self, target: DocumentationTarget, context_summary: str = "") -> str:
         relative = target.path.as_posix()
         directory_hint = (
             relative if target.path.suffix == "" else target.path.parent.as_posix()
@@ -245,7 +313,6 @@ class KnowledgeBaseBuilder:
             "- Document configuration or dependencies this area relies on.",
             "- Explain control flow and interactions with other modules.",
             "- Include noteworthy code snippets (keep them concise).",
-            "- Produce at least one Mermaid diagram capturing structure or data flow (use get_directory_mermaid as a starting point).",
             "- Highlight extension points and related tests.",
         ]
 
@@ -256,6 +323,7 @@ class KnowledgeBaseBuilder:
             " Save your main report as `summary.md` inside your workspace.\n"
             f"Directory hints: {directory_hint}.\n"
             f"Module label: {target.label}.\n"
+            f"Global Context:\n{context_summary}\n"
             f"Checklist:\n{instructions}"
         )
 
@@ -310,12 +378,12 @@ class KnowledgeBaseBuilder:
 
         return output_files
 
-    def _run_single_target_agent(self, target: DocumentationTarget) -> Path | None:
+    def _run_single_target_agent(self, target: DocumentationTarget, context_summary: str = "") -> Path | None:
         workspace_root = self.sub_agents_root / target.identifier
         self._reset_directory(workspace_root)
 
         spec = SubAgentTaskSpec(
-            description=self._build_task_description(target),
+            description=self._build_task_description(target, context_summary),
             role=SubAgentRole.ANALYZER,
         )
 
@@ -383,7 +451,10 @@ class KnowledgeBaseBuilder:
                 continue
 
             suffix = f"_{index}" if index else ""
-            output_name = f"{target.identifier}{suffix}.md"
+            base_name = target.identifier
+            if base_name.lower().endswith(".md"):
+                base_name = base_name[:-3]
+            output_name = f"{base_name}{suffix}.md"
             output_path = self.output_root / output_name
             output_path.write_text(content, encoding="utf-8")
             exported.append(output_path)
@@ -557,12 +628,9 @@ class KnowledgeBaseBuilder:
                     len(configured),
                 )
                 return configured
-
-        logger.info(
-            "Using default knowledge base targets (%d entries).",
-            len(DEFAULT_TARGET_IDENTIFIERS),
-        )
-        return list(DEFAULT_TARGET_IDENTIFIERS)
+        
+        # Return empty list to signal dynamic discovery should be used
+        return []
 
     def _build_directory_tree(self, root: Path, max_depth: int = 2) -> str:
         def tree(directory: Path, prefix: str = "", depth: int = 0) -> List[str]:

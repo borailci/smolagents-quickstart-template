@@ -2,7 +2,7 @@
 
 ## Overview
 
-This plan translates the project methodologies (`docs/how_to.md`, `docs/methodology_overview.md`, `docs/methodology_vibe_coding.md`) into concrete implementation steps for the Ara Proje (tutorial generation) deliverable. The system operates in two major phases: a pre-processing phase that builds a markdown knowledge base via sub-agents, and a downstream phase that uses the knowledge base to produce beginner-friendly tutorials.
+This plan translates the project methodologies (`docs/how_to.md`, `docs/methodology_overview.md`, `docs/methodology_vibe_coding.md`) into concrete implementation steps for the Ara Proje (tutorial generation). The system operates in two major phases: a pre-processing phase that builds a markdown knowledge base via sub-agents, and a downstream phase that uses the knowledge base to produce beginner-friendly tutorials.
 
 ```
 Codebase -> Sub-Agent Pipeline -> Knowledge Base (markdown) -> Tutorial Generator -> Tutorials (markdown)

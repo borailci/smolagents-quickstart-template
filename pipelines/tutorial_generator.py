@@ -131,9 +131,12 @@ class TutorialGenerator:
         enable_code_search: bool | None = None,
         enable_rag: bool | None = None,
         rag_max_snippets: int | None = None,
+        dry_run: bool = False,
     ) -> None:
         model_id = _require_env("LITELLM_MODEL_ID", LITELLM_MODEL_ID)
         api_key = _require_env("LITELLM_API_KEY", LITELLM_API_KEY)
+
+        self.dry_run = dry_run
 
         self.codebase_root = (
             Path(
@@ -222,6 +225,10 @@ class TutorialGenerator:
 
         if not tutorial_paths:
             raise RuntimeError("Tutorial generation produced no markdown files.")
+
+        if self.dry_run:
+            logger.info("Dry run enabled; skipping finalization and polishing.")
+            return tutorial_paths
 
         finalized_paths = self._finalize_outputs(tutorial_paths)
 
@@ -333,6 +340,14 @@ class TutorialGenerator:
             )
 
             produced_path = self.output_root / item.filename
+            if self.dry_run:
+                logger.info("[DRY RUN] Would write tutorial to {}", produced_path)
+                # Create a placeholder file so downstream steps (like finalization) have something to work with if needed,
+                # though we skip finalization in dry_run mode.
+                # For the return value of generate(), we just return the path.
+                tutorial_paths.append(produced_path)
+                continue
+
             if produced_path.exists():
                 tutorial_paths.append(produced_path)
             else:
@@ -486,21 +501,15 @@ class TutorialGenerator:
     def _generate_dynamic_outline(
         self, kb_summary: str
     ) -> Sequence[TutorialOutlineItem]:
-        system_prompt = (
-            "You are a senior technical educator designing hands-on tutorials for a repository. "
-            "Craft an outline that feels specific to the project while staying teacherly and approachable. "
-            "Return a raw JSON array (no markdown fences, no commentary) where each item has keys 'filename', 'title', and 'description'. "
-            f"Produce between {MIN_DYNAMIC_TUTORIALS} and {MAX_DYNAMIC_TUTORIALS} tutorials. "
-            "Keep descriptions to one or two sentences highlighting distinctive aspects of the codebase. "
-            "Filenames must be zero-padded (e.g., 01_intro.md) and reflect the topic."
+        system_prompt = prompts.DYNAMIC_OUTLINE_SYSTEM_PROMPT.format(
+            min_tutorials=MIN_DYNAMIC_TUTORIALS,
+            max_tutorials=MAX_DYNAMIC_TUTORIALS,
         )
 
         repo_name = self.codebase_root.name
-        user_prompt = (
-            f"Repository name: {repo_name}\n"
-            "Use the knowledge base summary to infer which concepts deserve focused tutorials.\n\n"
-            f"Knowledge base summary:\n{kb_summary}\n\n"
-            "Only respond with the JSON array."
+        user_prompt = prompts.DYNAMIC_OUTLINE_USER_PROMPT.format(
+            repo_name=repo_name,
+            kb_summary=kb_summary,
         )
 
         messages: list[dict[str, Any]] = [

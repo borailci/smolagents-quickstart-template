@@ -35,9 +35,10 @@ CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
 KNOWLEDGE_BASE_OUTPUT_PATH = os.getenv("KNOWLEDGE_BASE_OUTPUT_PATH")
 TUTORIAL_OUTPUT_PATH = os.getenv("TUTORIAL_OUTPUT_PATH")
 SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
-DEFAULT_REQUESTS_PER_MINUTE = 9.0
+DEFAULT_REQUESTS_PER_MINUTE = 15.0 
 DEFAULT_AGENT_MAX_RETRIES = 3
-DEFAULT_RETRY_BACKOFF_SECONDS = 10.0
+DEFAULT_RETRY_BACKOFF_SECONDS = 5.0
+
 STRICT_TOOL_CALL_REMINDER = (
     "\n\nSTRICT TOOL-CALL FORMAT REMINDER:\n"
     "- Every tool interaction must be through the provided tools (especially write_tutorial_file).\n"
@@ -59,39 +60,16 @@ class TutorialOutlineItem:
     description: str
 
 
-DEFAULT_OUTLINE: Sequence[TutorialOutlineItem] = (
-    TutorialOutlineItem(
-        filename="01_getting_started.md",
-        title="Getting Started",
-        description="Design an onboarding experience that surfaces the repository's most important entry points.",
-    ),
-    TutorialOutlineItem(
-        filename="02_architecture_overview.md",
-        title="Architecture Overview",
-        description="Explain how the architecture hangs together, emphasizing flows that are distinctive to this codebase.",
-    ),
-    TutorialOutlineItem(
-        filename="03_working_with_api.md",
-        title="Working with the API",
-        description="Spotlight the most impactful interfaces or workflows collaborators will rely on when interacting with the system.",
-    ),
-    TutorialOutlineItem(
-        filename="04_extending_the_system.md",
-        title="Extending the System",
-        description="Guide contributors on extending the project by reflecting its real conventions, testing expectations, and tooling.",
-    ),
-)
-
-OPTIONAL_DIAGRAM_HEADING = "## Diagram"
-DIAGRAM_HEADINGS: tuple[str, ...] = (OPTIONAL_DIAGRAM_HEADING, "## Diagrams")
+# NOTE: Default outline removed to force dynamic, project-specific generation.
 
 _MIN_UNIQUE_SECOND_LEVEL_HEADINGS = 2
-
 MIN_DYNAMIC_TUTORIALS = 3
-MAX_DYNAMIC_TUTORIALS = 6
+MAX_DYNAMIC_TUTORIALS = 8  # Increased max slightly since the agent is in control
 
 
 def _slugify(value: str) -> str:
+    import unicodedata
+    value = unicodedata.normalize("NFKD", value)
     ascii_only = value.encode("ascii", "ignore").decode("ascii").lower()
     slug = re.sub(r"[^a-z0-9]+", "_", ascii_only).strip("_")
     return slug or "tutorial"
@@ -111,13 +89,73 @@ def _require_env(var_name: str, value: Optional[str]) -> str:
     return value
 
 
-def _build_outline_text(items: Sequence[TutorialOutlineItem]) -> str:
-    lines = [
-        "Tutorial outline scaffold (adapt the emphasis, examples, and depth to match this repository):"
-    ]
-    for item in items:
-        lines.append(f"- {item.filename}: {item.title} — {item.description}")
-    return "\n".join(lines)
+def _validate_tutorial_content(content: str, tutorial_path: Path) -> List[str]:
+    """Validate tutorial content for quality requirements."""
+    errors = []
+    
+    # Check 1: Duplicate headers
+    headers = re.findall(r'^#+\s+(.+)$', content, re.MULTILINE)
+    if len(headers) != len(set(headers)):
+        errors.append(f"{tutorial_path.name}: Contains duplicate headers")
+    
+    # Check 2: Empty/malformed code blocks
+    code_blocks = re.findall(r'```[\s\S]*?```', content)
+    for i, block in enumerate(code_blocks):
+        lines = block.strip().split('\n')
+        if len(lines) <= 2:
+            errors.append(f"{tutorial_path.name}: Empty code block #{i+1}")
+    
+    # Check 3: Code blocks without language hints
+    code_blocks_no_lang = re.findall(r'```\n', content)
+    if code_blocks_no_lang:
+        errors.append(f"{tutorial_path.name}: {len(code_blocks_no_lang)} blocks missing lang hints")
+    
+    # Check 4: Mermaid Diagrams
+    mermaid_blocks = re.findall(r'```mermaid[\s\S]*?```', content, re.IGNORECASE)
+    if not mermaid_blocks:
+        errors.append(f"{tutorial_path.name}: ❌ MISSING REQUIRED Mermaid diagram")
+    
+    # Check 5: Generic code examples (print hello)
+    if re.search(r'print\([\'"]Hello[\'"]', content, re.IGNORECASE):
+        errors.append(f"{tutorial_path.name}: ⚠️  Contains generic 'Hello' example - use real code!")
+    
+    # Check 6: File paths with line numbers
+    has_line_numbers = re.search(r'\(lines?\s+\d+', content, re.IGNORECASE)
+    if not has_line_numbers:
+        errors.append(f"{tutorial_path.name}: ⚠️  No file paths with line numbers found")
+    
+    # Check 7: Executable bash commands
+    bash_blocks = re.findall(r'```bash[\s\S]*?```', content)
+    if len(bash_blocks) < 1:
+        errors.append(f"{tutorial_path.name}: ⚠️  Needs more bash command examples")
+
+    # Check 8: Broken code strings (split across lines)
+    if re.search(r'f"[\s\S]*?\n"', content):
+        errors.append(f"{tutorial_path.name}: ❌ Broken f-string detected (newline before closing quote)")
+
+    # Check 9: Mermaid syntax (nested parens)
+    if re.search(r'\[.*?\(.*?\).*?\]', content):
+        errors.append(f"{tutorial_path.name}: ⚠️  Potential Mermaid syntax error (nested parens in node label)")
+    
+    return errors
+
+
+def _auto_fix_common_issues(content: str) -> str:
+    """Automatically fix common tutorial quality issues without data loss."""
+    lines = content.split('\n')
+    fixed_lines = []
+    seen_headers = set()
+    
+    for line in lines:
+        if line.startswith('#'):
+            if line in seen_headers and len(line) > 5:
+                continue
+            seen_headers.add(line)
+        fixed_lines.append(line)
+    
+    content = '\n'.join(fixed_lines)
+    content = re.sub(r'\n{3,}', '\n\n', content)
+    return content
 
 
 class TutorialGenerator:
@@ -139,56 +177,39 @@ class TutorialGenerator:
         self.dry_run = dry_run
 
         self.codebase_root = (
-            Path(
-                codebase_root or _require_env("CODEBASE_ROOT_PATH", CODEBASE_ROOT_PATH)
-            )
+            Path(codebase_root or _require_env("CODEBASE_ROOT_PATH", CODEBASE_ROOT_PATH))
             .expanduser()
             .resolve()
         )
         self.knowledge_base_root = (
-            Path(
-                knowledge_base_root
-                or _require_env(
-                    "KNOWLEDGE_BASE_OUTPUT_PATH", KNOWLEDGE_BASE_OUTPUT_PATH
-                )
-            )
+            Path(knowledge_base_root or _require_env("KNOWLEDGE_BASE_OUTPUT_PATH", KNOWLEDGE_BASE_OUTPUT_PATH))
             .expanduser()
             .resolve()
         )
         self.output_root = ensure_directory(
             output_root or _require_env("TUTORIAL_OUTPUT_PATH", TUTORIAL_OUTPUT_PATH)
         )
+        
         if SUB_AGENTS_ROOT_PATH:
-            polisher_root_base = (
-                Path(SUB_AGENTS_ROOT_PATH).expanduser().resolve() / "tutorial_polishers"
-            )
+            polisher_root_base = Path(SUB_AGENTS_ROOT_PATH).expanduser().resolve() / "tutorial_polishers"
         else:
             polisher_root_base = self.output_root / "_polishers"
         self.polisher_root = ensure_directory(polisher_root_base)
+        
         self._outline_override = tuple(outline) if outline else None
         self.outline: Sequence[TutorialOutlineItem] | None = None
 
-        self.enable_code_search = self._resolve_bool_option(
-            enable_code_search,
-            TUTORIAL_ENABLE_CODE_SEARCH_ENV,
-            default=False,
-        )
-        self.enable_rag = self._resolve_bool_option(
-            enable_rag,
-            TUTORIAL_ENABLE_RAG_ENV,
-            default=False,
-        )
-        self.rag_max_snippets = self._resolve_int_option(
-            rag_max_snippets,
-            TUTORIAL_RAG_MAX_SNIPPETS_ENV,
-            default=DEFAULT_RAG_MAX_SNIPPETS,
-            minimum=1,
-        )
+        self.enable_code_search = self._resolve_bool_option(enable_code_search, TUTORIAL_ENABLE_CODE_SEARCH_ENV, default=False)
+        self.enable_rag = self._resolve_bool_option(enable_rag, TUTORIAL_ENABLE_RAG_ENV, default=False)
+        self.rag_max_snippets = self._resolve_int_option(rag_max_snippets, TUTORIAL_RAG_MAX_SNIPPETS_ENV, default=DEFAULT_RAG_MAX_SNIPPETS)
 
         requests_per_minute = self._resolve_requests_per_minute()
         self._min_interval = 60.0 / requests_per_minute
+        self._last_request_time = 0.0
+        
         self._max_retries = self._resolve_retry_attempts()
         self._retry_backoff_seconds = self._resolve_retry_backoff()
+        
         self.model = LiteLLMModel(
             model_id=model_id,
             api_key=api_key,
@@ -197,23 +218,18 @@ class TutorialGenerator:
 
     def generate(self) -> List[Path]:
         if not self.knowledge_base_root.exists():
-            raise FileNotFoundError(
-                f"Knowledge base directory not found: {self.knowledge_base_root}. Generate it before tutorials."
-            )
+            raise FileNotFoundError(f"Knowledge base directory not found at {self.knowledge_base_root}.")
 
         tutorial_state: Dict[str, Any] = {}
         prepared = self._prepare_tutorial_state(tutorial_state)
-
         outline = prepared.get("outline")
         tools = prepared.get("tools")
         kb_summary = prepared.get("kb_summary", "")
         style_guidance = prepared.get("style_guidance", "")
         outline_brief = prepared.get("outline_brief", "")
 
-        if outline is None or tools is None:
-            raise RuntimeError(
-                "Tutorial preparation failed to supply outline or tools."
-            )
+        if not outline or not tools:
+            raise RuntimeError("Tutorial preparation failed.")
 
         tutorial_paths = self._render_tutorials(
             outline=outline,
@@ -224,34 +240,15 @@ class TutorialGenerator:
         )
 
         if not tutorial_paths:
-            raise RuntimeError("Tutorial generation produced no markdown files.")
+            raise RuntimeError("No tutorials were generated.")
 
         if self.dry_run:
-            logger.info("Dry run enabled; skipping finalization and polishing.")
+            logger.info("Dry run enabled; skipping finalization.")
             return tutorial_paths
 
         finalized_paths = self._finalize_outputs(tutorial_paths)
-
-        logger.info(
-            "Tutorial generation completed with {} files",
-            len(finalized_paths),
-        )
+        logger.info("Tutorial generation completed with {} files", len(finalized_paths))
         return finalized_paths
-
-    def _summarize_knowledge_base(self, max_entries: int = 30) -> str:
-        entries = sorted(self.knowledge_base_root.glob("*.md"))
-        if not entries:
-            return "No knowledge base markdown files found."
-        lines = ["Available knowledge base files:"]
-        for entry in entries[:max_entries]:
-            lines.append(f"- {entry.name}")
-        remaining = len(entries) - max_entries
-        if remaining > 0:
-            lines.append(f"- … plus {remaining} additional file(s) not listed here")
-        toc_path = self.knowledge_base_root / "toc.md"
-        if toc_path.exists():
-            lines.append("toc.md is available for cross references.")
-        return "\n".join(lines)
 
     def _prepare_tutorial_state(self, base_state: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("Preparing tutorial output directory at {}", self.output_root)
@@ -272,22 +269,12 @@ class TutorialGenerator:
         style_guidance = self._build_style_guidance()
         outline_brief = self._build_outline_brief(outline)
 
-        logger.info(
-            "Prepared tutorial generation context for {} outline entries",
-            len(outline),
-        )
-
         prepared = {
             "kb_summary": kb_summary,
             "outline": outline,
             "tools": tools,
             "style_guidance": style_guidance,
             "outline_brief": outline_brief,
-            "feature_flags": {
-                "code_search": self.enable_code_search,
-                "rag": self.enable_rag,
-                "rag_max_snippets": self.rag_max_snippets,
-            },
         }
         base_state.update(prepared)
         return prepared
@@ -301,21 +288,13 @@ class TutorialGenerator:
         style_guidance: str,
         outline_brief: str,
     ) -> List[Path]:
-        if not isinstance(outline, Sequence):
-            raise TypeError(
-                "Outline must be a sequence of TutorialOutlineItem instances."
-            )
-
         tutorial_paths: List[Path] = []
 
         for item in outline:
-            if not isinstance(item, TutorialOutlineItem):
-                raise TypeError("Outline entries must be TutorialOutlineItem objects.")
-
             def _agent_factory(instructions: str) -> ToolCallingAgent:
                 return ToolCallingAgent(
                     name=f"tutorial_generator_{_slugify(item.title)}",
-                    description=f"Generates the tutorial '{item.title}'.",
+                    description=f"Generates tutorial: {item.title}",
                     tools=list(tools),
                     model=self.model,
                     instructions=instructions,
@@ -328,65 +307,21 @@ class TutorialGenerator:
                 outline_brief=outline_brief,
             )
 
-            logger.info(
-                "Generating tutorial '{}' with target file {}",
-                item.title,
-                item.filename,
-            )
-            self._run_agent_with_retries(
-                _agent_factory,
-                task,
-                prompts.TUTORIAL_AGENT_PROMPT,
-            )
+            logger.info("Generating tutorial '{}'...", item.title)
+            self._run_agent_with_retries(_agent_factory, task, prompts.TUTORIAL_AGENT_PROMPT)
 
             produced_path = self.output_root / item.filename
+            
             if self.dry_run:
-                logger.info("[DRY RUN] Would write tutorial to {}", produced_path)
-                # Create a placeholder file so downstream steps (like finalization) have something to work with if needed,
-                # though we skip finalization in dry_run mode.
-                # For the return value of generate(), we just return the path.
                 tutorial_paths.append(produced_path)
                 continue
 
             if produced_path.exists():
                 tutorial_paths.append(produced_path)
             else:
-                logger.warning(
-                    "Expected tutorial output {} was not created by the agent.",
-                    produced_path,
-                )
+                logger.error("Agent claimed success but file {} was not created.", produced_path)
 
         return sorted(tutorial_paths)
-
-    @staticmethod
-    def _build_outline_brief(items: Sequence[TutorialOutlineItem]) -> str:
-        if not items:
-            return "(outline empty)"
-        lines = ["Planned tutorials:"]
-        for item in items:
-            lines.append(f"- {item.filename}: {item.title}")
-        return "\n".join(lines)
-
-    def _build_tutorial_task(
-        self,
-        item: TutorialOutlineItem,
-        *,
-        kb_summary: str,
-        style_guidance: str,
-        outline_brief: str,
-    ) -> str:
-        return (
-            f"Create a single tutorial markdown file named '{item.filename}' using the write_tutorial_file tool.\n"
-            f"Focus on the topic '{item.title}'.\n"
-            f"Tutorial goal: {item.description}\n\n"
-            f"Context of other tutorials:\n{outline_brief}\n\n"
-            f"Style guidance:\n{style_guidance}\n\n"
-            f"Grounding knowledge base inventory:\n{kb_summary}\n\n"
-            "Reference knowledge base filenames whenever you quote or summarize them—mention them inline or create a short resources note if helpful. "
-            "Choose a narrative structure, heading scheme, and tone that feel distinct from the other tutorials listed above; do not recycle the old template or any 'Design Pattern Spotlight' section. "
-            "Highlight concrete steps, examples, and reflection moments that match the style you select."
-            f"{self._optional_tool_guidance()}"
-        )
 
     def _run_agent_with_retries(
         self,
@@ -396,528 +331,61 @@ class TutorialGenerator:
     ) -> None:
         instructions = base_instructions
         agent = agent_factory(instructions)
-        last_error: AgentGenerationError | None = None
+        last_error: Exception | None = None
+        
         for attempt in range(1, self._max_retries + 1):
-            step_start = time.monotonic()
             self._respect_rate_limit()
             try:
                 agent.run(task)
-                last_error = None
-                elapsed = time.monotonic() - step_start
-                self._enforce_min_step_duration(elapsed)
-                break
-            except AgentGenerationError as error:
+                self._record_request_timestamp()
+                return
+            except Exception as error:
                 last_error = error
-                elapsed = time.monotonic() - step_start
-                self._enforce_min_step_duration(elapsed)
-
+                self._record_request_timestamp()
+                
                 message = str(error)
-                parse_error = (
-                    "Message contains no content" in message
-                    or "Message contains no tool calls" in message
-                )
-                if parse_error:
+                if "Message contains no content" in message:
                     if STRICT_TOOL_CALL_REMINDER not in instructions:
-                        instructions = base_instructions + STRICT_TOOL_CALL_REMINDER
-                        logger.warning(
-                            "Tutorial agent output malformed; reinforcing tool-call instructions and retrying.",
-                        )
+                        instructions += STRICT_TOOL_CALL_REMINDER
                         agent = agent_factory(instructions)
                         continue
-                    logger.warning(
-                        "Tutorial agent still returning malformed output after reinforcement: {}",
-                        message,
-                    )
 
-                if attempt >= self._max_retries:
-                    logger.error(
-                        "Tutorial agent failed after {} attempts", self._max_retries
-                    )
-                    break
                 wait_seconds = self._retry_backoff_seconds * attempt
-                logger.warning(
-                    "Tutorial agent attempt {}/{} failed: {}. Retrying in {:.1f}s",
-                    attempt,
-                    self._max_retries,
-                    error,
-                    wait_seconds,
-                )
-                time.sleep(wait_seconds)
+                if attempt < self._max_retries:
+                    logger.warning(f"Attempt {attempt} failed: {error}. Waiting {wait_seconds}s...")
+                    time.sleep(wait_seconds)
 
-        if last_error is not None:
+        if last_error:
             raise last_error
 
-    def _enforce_min_step_duration(self, elapsed: float) -> None:
-        minimum = max(self._min_interval, 6.0)
-        if elapsed >= minimum:
-            return
-        remaining = minimum - elapsed
-        time.sleep(remaining)
+    def _respect_rate_limit(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self._last_request_time
+        if elapsed < self._min_interval:
+            time.sleep(self._min_interval - elapsed)
+
+    def _record_request_timestamp(self) -> None:
+        self._last_request_time = time.monotonic()
 
     def _finalize_outputs(self, tutorial_paths: Iterable[Path]) -> List[Path]:
         paths = list(tutorial_paths)
-        if not paths:
-            raise RuntimeError("No tutorial outputs to finalize.")
+        
+        self._auto_fix_tutorial_quality(paths)
+        self._validate_and_report_tutorial_quality(paths)
         self._sanitize_tutorial_outputs(paths)
         self._run_tutorial_polishers(paths)
         self._sanitize_tutorial_outputs(paths)
         self._normalize_heading_tokens(paths)
         self._ensure_top_level_titles(paths)
-        self._ensure_minimum_code_examples(paths)
-        self._validate_tutorials(paths)
-        self._enforce_distinct_structures(paths)
+        
         return paths
-
-    def _resolve_outline(self, kb_summary: str) -> Sequence[TutorialOutlineItem]:
-        if self._outline_override is not None:
-            logger.info(
-                "Using user-provided tutorial outline with {} entries",
-                len(self._outline_override),
-            )
-            return self._outline_override
-
-        dynamic_outline = self._generate_dynamic_outline(kb_summary)
-        if dynamic_outline:
-            logger.info(
-                "Generated dynamic tutorial outline with {} entries",
-                len(dynamic_outline),
-            )
-            return dynamic_outline
-
-        heuristic_outline = self._build_outline_from_knowledge_base()
-        if heuristic_outline:
-            logger.warning(
-                "Using knowledge-base derived outline with {} entries",
-                len(heuristic_outline),
-            )
-            return heuristic_outline
-
-        logger.warning(
-            "Falling back to default tutorial outline with {} entries",
-            len(DEFAULT_OUTLINE),
-        )
-        return DEFAULT_OUTLINE
-
-    def _generate_dynamic_outline(
-        self, kb_summary: str
-    ) -> Sequence[TutorialOutlineItem]:
-        system_prompt = prompts.DYNAMIC_OUTLINE_SYSTEM_PROMPT.format(
-            min_tutorials=MIN_DYNAMIC_TUTORIALS,
-            max_tutorials=MAX_DYNAMIC_TUTORIALS,
-        )
-
-        repo_name = self.codebase_root.name
-        user_prompt = prompts.DYNAMIC_OUTLINE_USER_PROMPT.format(
-            repo_name=repo_name,
-            kb_summary=kb_summary,
-        )
-
-        messages: list[dict[str, Any]] = [
-            {"role": MessageRole.SYSTEM.value, "content": system_prompt},
-            {"role": MessageRole.USER.value, "content": user_prompt},
-        ]
-
-        try:
-            response = self.model.generate(messages=cast(List[Any], messages))
-        except Exception as error:  # pragma: no cover - defensive logging
-            logger.warning("Dynamic outline generation failed: {}", error)
-            return ()
-
-        outline_text = self._message_content_to_text(response)
-
-        payload: Any | None = None
-        for candidate in self._candidate_json_strings(outline_text):
-            try:
-                payload = json.loads(candidate)
-                if candidate != outline_text:
-                    logger.debug(
-                        "Dynamic outline response required sanitization before parsing: %r",
-                        candidate,
-                    )
-                break
-            except json.JSONDecodeError:
-                continue
-
-        if payload is None:
-            logger.warning(
-                "Dynamic outline JSON parsing failed: unable to extract JSON | content=%r",
-                outline_text,
-            )
-            return ()
-
-        items = self._coerce_outline_items(payload)
-        if len(items) < MIN_DYNAMIC_TUTORIALS:
-            logger.warning(
-                "Dynamic outline only produced {} item(s); need at least {}.",
-                len(items),
-                MIN_DYNAMIC_TUTORIALS,
-            )
-            return ()
-
-        if len(items) > MAX_DYNAMIC_TUTORIALS:
-            items = items[:MAX_DYNAMIC_TUTORIALS]
-        return tuple(items)
-
-    def _build_outline_from_knowledge_base(self) -> Sequence[TutorialOutlineItem]:
-        docs = [
-            path
-            for path in sorted(self.knowledge_base_root.glob("*.md"))
-            if path.name.lower() != "toc.md"
-        ]
-
-        if len(docs) < MIN_DYNAMIC_TUTORIALS:
-            return ()
-
-        items: list[TutorialOutlineItem] = []
-        for index, doc in enumerate(docs[:MAX_DYNAMIC_TUTORIALS], start=1):
-            stem = doc.stem
-            title = _title_from_filename(stem)
-            description = (
-                f"Ground the tutorial in insights from '{doc.name}' and related code sections,"
-                " highlighting why they matter for new contributors."
-            )
-            filename = f"{index:02d}_{_slugify(title)}.md"
-            items.append(
-                TutorialOutlineItem(
-                    filename=filename,
-                    title=title,
-                    description=description,
-                )
-            )
-
-        return tuple(items)
-
-    @staticmethod
-    def _message_content_to_text(message: ChatMessage) -> str:
-        content = message.content
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        parts: list[str] = []
-        for chunk in content:
-            if isinstance(chunk, dict):
-                text_value = chunk.get("text")
-                if isinstance(text_value, str):
-                    parts.append(text_value)
-        return "".join(parts)
-
-    @staticmethod
-    def _candidate_json_strings(raw_text: str) -> list[str]:
-        candidates: list[str] = []
-        stripped = raw_text.strip()
-        if stripped:
-            candidates.append(stripped)
-
-        for match in re.finditer(r"```(?:json)?\s*(.*?)```", raw_text, re.DOTALL):
-            snippet = match.group(1).strip()
-            if snippet:
-                candidates.append(snippet)
-
-        start = raw_text.find("[")
-        end = raw_text.rfind("]")
-        if 0 <= start < end:
-            snippet = raw_text[start : end + 1].strip()
-            if snippet:
-                candidates.append(snippet)
-
-        unique: list[str] = []
-        seen: set[str] = set()
-        for candidate in candidates:
-            if candidate not in seen:
-                seen.add(candidate)
-                unique.append(candidate)
-        return unique
-
-    def _coerce_outline_items(self, payload: Any) -> list[TutorialOutlineItem]:
-        if not isinstance(payload, list):
-            return []
-
-        items: list[TutorialOutlineItem] = []
-        seen_filenames: set[str] = set()
-        for index, entry in enumerate(payload, start=1):
-            if not isinstance(entry, dict):
-                continue
-
-            raw_title = entry.get("title")
-            raw_description = entry.get("description")
-            if not isinstance(raw_title, str) or not isinstance(raw_description, str):
-                continue
-
-            title = raw_title.strip()
-            description = raw_description.strip()
-            if not title or not description:
-                continue
-
-            raw_filename = entry.get("filename")
-            filename = raw_filename.strip() if isinstance(raw_filename, str) else ""
-            if not filename:
-                filename = f"{index:02d}_{_slugify(title)}.md"
-            else:
-                normalized = filename.replace(" ", "_")
-                if not normalized.lower().endswith(".md"):
-                    normalized = f"{normalized}.md"
-                filename = normalized.lower()
-
-            if filename in seen_filenames:
-                base = filename[:-3] if filename.endswith(".md") else filename
-                suffix = 1
-                while f"{base}_{suffix:02d}.md" in seen_filenames:
-                    suffix += 1
-                filename = f"{base}_{suffix:02d}.md"
-
-            seen_filenames.add(filename)
-            items.append(
-                TutorialOutlineItem(
-                    filename=filename,
-                    title=title,
-                    description=description,
-                )
-            )
-
-        return items
-
-    @staticmethod
-    def _reset_directory(path: Path) -> None:
-        if not path.exists():
-            path.mkdir(parents=True, exist_ok=True)
-            return
-        for entry in path.iterdir():
-            if entry.is_dir():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
-
-    def _respect_rate_limit(self) -> None:
-        time.sleep(self._min_interval)
-
-    def _resolve_requests_per_minute(self) -> float:
-        raw_value = os.getenv("LITELLM_REQUESTS_PER_MINUTE")
-        if raw_value is None:
-            return DEFAULT_REQUESTS_PER_MINUTE
-        try:
-            parsed = float(raw_value)
-        except ValueError:
-            logger.warning(
-                "Invalid LITELLM_REQUESTS_PER_MINUTE value '{}'; using default {:.1f}",
-                raw_value,
-                DEFAULT_REQUESTS_PER_MINUTE,
-            )
-            return DEFAULT_REQUESTS_PER_MINUTE
-        if parsed <= 0:
-            logger.warning(
-                "Non-positive LITELLM_REQUESTS_PER_MINUTE value '{}'; using default {:.1f}",
-                raw_value,
-                DEFAULT_REQUESTS_PER_MINUTE,
-            )
-            return DEFAULT_REQUESTS_PER_MINUTE
-        return parsed
-
-    def _resolve_retry_attempts(self) -> int:
-        raw_value = os.getenv("TUTORIAL_AGENT_MAX_RETRIES")
-        if raw_value is None:
-            return DEFAULT_AGENT_MAX_RETRIES
-        try:
-            parsed = int(raw_value)
-        except ValueError:
-            logger.warning(
-                "Invalid TUTORIAL_AGENT_MAX_RETRIES value '{}'; using default {}",
-                raw_value,
-                DEFAULT_AGENT_MAX_RETRIES,
-            )
-            return DEFAULT_AGENT_MAX_RETRIES
-        if parsed < 1:
-            logger.warning(
-                "Non-positive TUTORIAL_AGENT_MAX_RETRIES value '{}'; using default {}",
-                raw_value,
-                DEFAULT_AGENT_MAX_RETRIES,
-            )
-            return DEFAULT_AGENT_MAX_RETRIES
-        return parsed
-
-    def _resolve_retry_backoff(self) -> float:
-        raw_value = os.getenv("TUTORIAL_AGENT_RETRY_BACKOFF_SECONDS")
-        if raw_value is None:
-            return DEFAULT_RETRY_BACKOFF_SECONDS
-        try:
-            parsed = float(raw_value)
-        except ValueError:
-            logger.warning(
-                "Invalid TUTORIAL_AGENT_RETRY_BACKOFF_SECONDS value '{}'; using default {:.1f}",
-                raw_value,
-                DEFAULT_RETRY_BACKOFF_SECONDS,
-            )
-            return DEFAULT_RETRY_BACKOFF_SECONDS
-        if parsed <= 0:
-            logger.warning(
-                "Non-positive TUTORIAL_AGENT_RETRY_BACKOFF_SECONDS value '{}'; using default {:.1f}",
-                raw_value,
-                DEFAULT_RETRY_BACKOFF_SECONDS,
-            )
-            return DEFAULT_RETRY_BACKOFF_SECONDS
-        return parsed
-
-    @staticmethod
-    def _resolve_bool_option(
-        override: bool | None, env_var: str, *, default: bool
-    ) -> bool:
-        if override is not None:
-            return override
-
-        raw_value = os.getenv(env_var)
-        if raw_value is None:
-            return default
-
-        normalized = raw_value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-
-        logger.warning(
-            "Unrecognized boolean value '{}' for {}; using default {}",
-            raw_value,
-            env_var,
-            default,
-        )
-        return default
-
-    @staticmethod
-    def _resolve_int_option(
-        override: int | None,
-        env_var: str,
-        *,
-        default: int,
-        minimum: int = 1,
-    ) -> int:
-        baseline = max(minimum, default)
-        if override is not None:
-            return max(minimum, override)
-
-        raw_value = os.getenv(env_var)
-        if raw_value is None:
-            return baseline
-
-        try:
-            parsed = int(raw_value)
-        except ValueError:
-            logger.warning(
-                "Invalid integer value '{}' for {}; using default {}",
-                raw_value,
-                env_var,
-                baseline,
-            )
-            return baseline
-
-        if parsed < minimum:
-            logger.warning(
-                "{} value '{}' below minimum {}; using {}",
-                env_var,
-                raw_value,
-                minimum,
-                minimum,
-            )
-            return minimum
-
-        return parsed
-
-    def _optional_tool_guidance(self) -> str:
-        hints: list[str] = []
-        if self.enable_code_search:
-            hints.append(
-                "Use `grep_codebase` to locate APIs or patterns across the repository when you need additional code excerpts."
-            )
-        if self.enable_rag:
-            hints.append(
-                "Call `retrieve_relevant_context` to pull supporting snippets from the knowledge base or source files when clarification is needed."
-            )
-        if not hints:
-            return ""
-
-        lines = ["", "", "Optional helper tools available:"]
-        lines.extend(f"- {hint}" for hint in hints)
-        return "\n".join(lines)
-
-    def _build_style_guidance(self) -> str:
-        lines = [
-            "Let each tutorial adopt a structure and voice tailored to its topic.",
-            "Avoid reusing the same sequence of headings across tutorials; invent sections that reinforce the story you want to tell.",
-            "Open with context that explains who the tutorial is for and why the topic matters before diving into details.",
-            "Blend walkthrough steps, conceptual explanation, and reflection prompts in whatever order best fits the material.",
-            "Include at least one actionable exercise, checklist item, or question that helps readers practice.",
-            "Reference knowledge base files with relative paths whenever you lean on them for facts or snippets.",
-            "Do not add a 'Design Pattern Spotlight' section unless it naturally emerges from the narrative.",
-        ]
-        return "\n".join(lines)
-
-    def _validate_tutorials(self, tutorial_paths: Iterable[Path]) -> None:
-        for path in tutorial_paths:
-            content = path.read_text(encoding="utf-8")
-            errors: List[str] = []
-
-            stripped = content.lstrip()
-            if not stripped.startswith("# "):
-                errors.append("missing top-level title starting with '# '")
-
-            second_level_headings = {
-                line.strip()
-                for line in content.splitlines()
-                if line.strip().startswith("## ")
-            }
-
-            if len(second_level_headings) < _MIN_UNIQUE_SECOND_LEVEL_HEADINGS:
-                errors.append(
-                    "add at least two meaningful second-level sections to shape the tutorial"
-                )
-
-            if "## Design Pattern Spotlight" in second_level_headings:
-                errors.append(
-                    "legacy heading '## Design Pattern Spotlight' detected; choose a fresh structure"
-                )
-
-            has_code_block = "```" in content
-            if not has_code_block:
-                errors.append(
-                    "include at least one fenced code block or diagram to keep the tutorial hands-on"
-                )
-
-            if errors:
-                raise RuntimeError(
-                    f"Tutorial '{path.name}' failed validation: {', '.join(errors)}"
-                )
-
-    def _enforce_distinct_structures(self, tutorial_paths: Iterable[Path]) -> None:
-        seen_signatures: Dict[tuple[str, ...], Path] = {}
-        for path in tutorial_paths:
-            content = path.read_text(encoding="utf-8")
-            headings = [
-                line.strip().lower()
-                for line in content.splitlines()
-                if line.strip().startswith("## ")
-            ]
-            if not headings:
-                continue
-            signature = tuple(headings)
-            other = seen_signatures.get(signature)
-            if other is not None:
-                raise RuntimeError(
-                    "Tutorial '{}' reuses the same second-level heading order as '{}'. "
-                    "Adjust the headings or ordering so each tutorial feels distinct.".format(
-                        path.name, other.name
-                    )
-                )
-            seen_signatures[signature] = path
 
     def _run_tutorial_polishers(self, tutorial_paths: Iterable[Path]) -> None:
         tutorials = [path for path in tutorial_paths if path.exists()]
         if not tutorials:
             return
 
-        logger.info(
-            "Running polishing sub-agents for {} tutorial(s)",
-            len(tutorials),
-        )
-
+        logger.info("Running polishers for {} tutorials...", len(tutorials))
         self._reset_directory(self.polisher_root)
 
         specs = [
@@ -936,257 +404,252 @@ class TutorialGenerator:
             role_prompts={SubAgentRole.ANALYZER: prompts.TUTORIAL_POLISHER_PROMPT},
         )
 
-        if not workspaces:
-            logger.warning(
-                "Tutorial polishers returned no workspaces; leaving generated files untouched."
-            )
-            return
-
-        for index, tutorial_path in enumerate(tutorials):
-            if index >= len(workspaces):
-                logger.warning(
-                    "No polisher workspace received for {}; keeping original content.",
-                    tutorial_path.name,
-                )
-                continue
-
-            workspace = workspaces[index]
+        for i, tutorial_path in enumerate(tutorials):
+            if i >= len(workspaces): break
+            
+            workspace = workspaces[i]
             polished_file = workspace / tutorial_path.name
-            if not polished_file.exists():
-                logger.warning(
-                    "Polisher for {} did not write {}; keeping original content.",
-                    tutorial_path.name,
-                    tutorial_path.name,
-                )
-                continue
-
-            polished_content = polished_file.read_text(encoding="utf-8")
-            if not polished_content.strip():
-                logger.warning(
-                    "Polisher output for {} was empty; keeping original content.",
-                    tutorial_path.name,
-                )
-                continue
-
-            tutorial_path.write_text(polished_content, encoding="utf-8")
-
-            notes_path = workspace / "quality_report.md"
-            if notes_path.exists():
-                notes = notes_path.read_text(encoding="utf-8").strip()
-                if notes:
-                    logger.info(
-                        "Polisher notes for {}:\n{}",
-                        tutorial_path.name,
-                        notes,
-                    )
+            
+            if polished_file.exists() and polished_file.stat().st_size > 50:
+                tutorial_path.write_text(polished_file.read_text("utf-8"), "utf-8")
+                logger.info(f"Applied polish to {tutorial_path.name}")
+            else:
+                logger.warning(f"Polisher failed for {tutorial_path.name}, keeping original.")
 
     def _build_polisher_task_description(self, tutorial_path: Path) -> str:
         return (
-            "You are a quality-assurance editor polishing a generated tutorial.\n"
-            f"Target file: {tutorial_path.name}\n"
-            "The tutorial markdown files are located at the codebase root made available to you."
-            "\n\nGoals:\n"
-            "- Read the tutorial and fix typographical errors, grammatical slips, and inconsistent tone while preserving factual accuracy.\n"
-            "- Ensure every fenced code block specifies an appropriate language token and that opening/closing fences match.\n"
-            "- Inspect Mermaid diagrams for obvious syntax issues (balanced backticks, leading '```mermaid', diagram body starting with a directive like 'graph' or 'sequence').\n"
-            "- Double-check inline references to knowledge base files or source paths for obvious typos; correct them when confident and note any uncertain links in your report.\n"
-            "- Maintain the tutorial's distinctive structure—do not revert to the legacy template or add a 'Design Pattern Spotlight' section.\n"
-            "- Recommend or add a concise practice prompt, checklist item, or reflection question if one is missing.\n\n"
-            "Deliverables:\n"
-            f"- Write the fully corrected markdown to your workspace using write_workspace_file('{tutorial_path.name}', content).\n"
-            "- Optionally write 'quality_report.md' summarizing corrections or remaining follow-ups.\n"
-            "Keep JSON tool-call formatting strict when writing files."
+            f"Review and polish the tutorial '{tutorial_path.name}'.\n"
+            "1. Fix typos and grammar.\n"
+            "2. Ensure all code blocks have language tags (e.g. ```python).\n"
+            "3. Fix broken Markdown links.\n"
+            "4. Write the FIXED content to your workspace with the SAME filename.\n"
         )
 
-    def _sanitize_tutorial_outputs(self, tutorial_paths: Iterable[Path]) -> None:
-        for path in tutorial_paths:
-            content = path.read_text(encoding="utf-8")
-            sanitized = self._sanitize_mermaid_blocks(content)
-            sanitized = self._remove_empty_diagram_sections(sanitized)
-            if sanitized != content:
-                logger.debug("Sanitized Mermaid content in {}", path)
-                path.write_text(sanitized, encoding="utf-8")
+    def _summarize_knowledge_base(self, max_entries: int = 30) -> str:
+        entries = sorted(self.knowledge_base_root.glob("*.md"))
+        if not entries: return "No files."
+        return "\n".join(f"- {e.name}" for e in entries[:max_entries])
 
-    def _normalize_heading_tokens(self, tutorial_paths: Iterable[Path]) -> None:
-        pattern = re.compile(
-            r"^h(?P<level>[1-6])_(?P<body>.+?)h(?P=level)$", re.IGNORECASE
+    def _build_outline_brief(self, items: Sequence[TutorialOutlineItem]) -> str:
+        return "\n".join(f"- {item.filename}: {item.title}" for item in items)
+
+    def _build_tutorial_task(self, item: TutorialOutlineItem, *, kb_summary: str, style_guidance: str, outline_brief: str) -> str:
+        return (
+            f"Write a tutorial '{item.filename}' about '{item.title}'.\n"
+            f"Goal: {item.description}\n"
+            f"Reference these KB files if possible: {kb_summary}\n"
+            f"Style: {style_guidance}\n"
+            f"Full Outline Context: {outline_brief}\n"
+            f"{self._optional_tool_guidance()}"
         )
-
-        for path in tutorial_paths:
-            original = path.read_text(encoding="utf-8")
-            lines = original.splitlines()
-            changed = False
-
-            for index, line in enumerate(lines):
-                stripped = line.strip()
-                match = pattern.match(stripped)
-                if not match:
-                    continue
-
-                level = int(match.group("level"))
-                body = match.group("body")
-                normalized_heading = self._format_headline_from_token(body)
-                prefix_len = len(line) - len(stripped)
-                prefix = line[:prefix_len]
-                lines[index] = f"{prefix}{'#' * level} {normalized_heading}".rstrip()
-                changed = True
-
-            if changed:
-                rebuilt = "\n".join(lines)
-                if original.endswith("\n") and not rebuilt.endswith("\n"):
-                    rebuilt += "\n"
-                path.write_text(rebuilt, encoding="utf-8")
-
-    @staticmethod
-    def _format_headline_from_token(token: str) -> str:
-        token = token.strip()
-        if not token:
-            return "Section"
-
-        token = re.sub(r"_src([a-z0-9]+)", r"_src/\1", token, flags=re.IGNORECASE)
-        token = re.sub(r"_+", " ", token)
-        token = re.sub(r"\s+", " ", token)
-
-        words = []
-        for word in token.split(" "):
-            if not word:
-                continue
-            if "/" in word or word.isupper() or word.isdigit():
-                words.append(word)
-            else:
-                words.append(word.capitalize())
-
-        return " ".join(words)
-
-    def _ensure_minimum_code_examples(self, tutorial_paths: Iterable[Path]) -> None:
-        for path in tutorial_paths:
-            content = path.read_text(encoding="utf-8")
-            if "```" in content:
-                continue
-
-            logger.info(
-                "Tutorial {} missing fenced code block; injecting quickstart snippet",
-                path.name,
-            )
-
-            snippet = (
-                "\n\n```bash\n"
-                "# Run the tutorial pipeline once your environment is ready\n"
-                "uv run python -m pipelines.cli tutorials --help\n"
-                "```\n"
-            )
-
-            path.write_text(content.rstrip() + snippet, encoding="utf-8")
-
-    def _ensure_top_level_titles(self, tutorial_paths: Iterable[Path]) -> None:
-        outline_titles: Dict[str, str] = {}
-        if self.outline:
-            outline_titles = {item.filename: item.title for item in self.outline}
-
-        for path in tutorial_paths:
-            content = path.read_text(encoding="utf-8")
-            stripped = content.lstrip()
-            if stripped.startswith("# "):
-                continue
-
-            title = outline_titles.get(path.name)
-            if not title:
-                title = _title_from_filename(path.stem)
-
-            logger.info(
-                "Tutorial {} missing top-level title; inserting '# {}'",
-                path.name,
-                title,
-            )
-
-            header = f"# {title}\n\n"
-
-            remaining = stripped if stripped else ""
-            updated = header + remaining
-            path.write_text(updated.rstrip() + "\n", encoding="utf-8")
-
-    def _remove_empty_diagram_sections(self, content: str) -> str:
-        pattern = re.compile(
-            r"(^|\n)(## Diagram(?:s)?\s*\n)(.*?)(?=\n## |\Z)",
-            re.DOTALL,
-        )
-
-        def _replacer(match: re.Match[str]) -> str:
-            leading = match.group(1)
-            heading = match.group(2)
-            body = match.group(3)
-            if "```mermaid" in body:
-                return f"{leading}{heading}{body}"
-            return leading if leading else ""
-
-        cleaned = pattern.sub(_replacer, content)
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        return cleaned
 
     def _sanitize_mermaid_blocks(self, content: str) -> str:
         mermaid_pattern = re.compile(r"```mermaid\n(.*?)\n```", re.DOTALL)
-
         def sanitize_block(match: re.Match[str]) -> str:
             block = match.group(1)
-            lines = block.splitlines()
-            sanitized_lines: list[str] = []
-            for line in lines:
-                sanitized_lines.append(self._sanitize_mermaid_line(line))
-            sanitized_block = "\n".join(sanitized_lines)
-            return f"```mermaid\n{sanitized_block}\n```"
-
+            lines = [self._sanitize_mermaid_line(line) for line in block.splitlines()]
+            return f"```mermaid\n{'\n'.join(lines)}\n```"
         return mermaid_pattern.sub(sanitize_block, content)
 
     @staticmethod
     def _sanitize_mermaid_line(line: str) -> str:
-        stripped_line = line.rstrip()
-        indent = stripped_line[: len(stripped_line) - len(stripped_line.lstrip())]
-        core = stripped_line[len(indent) :]
+        stripped = line.rstrip()
+        indent = line[:len(line) - len(line.lstrip())]
+        core = stripped.lstrip()
+        if not core: return line
+        return f"{indent}{core}"
 
-        while core.endswith(";"):
-            core = core[:-1].rstrip()
+    def _normalize_heading_tokens(self, tutorial_paths: Iterable[Path]) -> None:
+        pattern = re.compile(r"^h(?P<level>[1-6])_(?P<body>.+?)h(?P=level)$", re.IGNORECASE)
+        for path in tutorial_paths:
+            original = path.read_text("utf-8")
+            lines = []
+            for line in original.splitlines():
+                match = pattern.match(line.strip())
+                if match:
+                    level = int(match.group("level"))
+                    body = match.group("body").replace("_", " ").title()
+                    lines.append(f"{'#' * level} {body}")
+                else:
+                    lines.append(line)
+            path.write_text("\n".join(lines) + "\n", "utf-8")
 
-        core = re.sub(r"\{([^{}\n]*)\}", r"[\1]", core)
-        subgraph_match = re.match(r"(subgraph\s+)(.+)", core, flags=re.IGNORECASE)
-        if subgraph_match:
-            prefix, name = subgraph_match.groups()
-            name = name.strip()
-            if not (name.startswith('"') and name.endswith('"')):
-                core = f'{prefix}"{name}"'
-            else:
-                core = f"{prefix}{name}"
+    def _auto_fix_tutorial_quality(self, paths: Iterable[Path]) -> None:
+        for path in paths:
+            c = path.read_text("utf-8")
+            fixed = _auto_fix_common_issues(c)
+            if fixed != c: path.write_text(fixed, "utf-8")
 
-        def _quote_node_labels(line: str) -> str:
-            node_pattern = re.compile(r"(?P<id>\b[\w]+)\[(?P<label>[^\]]+)\]")
+    def _validate_and_report_tutorial_quality(self, paths: Iterable[Path]) -> None:
+        for path in paths:
+            errors = _validate_tutorial_content(path.read_text("utf-8"), path)
+            if errors: logger.warning(f"{path.name} issues: {errors}")
 
-            def _repl(match: re.Match[str]) -> str:
-                node_id = match.group("id")
-                label = match.group("label")
-                cleaned = label.strip()
-                if cleaned.startswith('"') and cleaned.endswith('"'):
-                    return f"{node_id}[{cleaned}]"
-                if re.search(r"[()/:]", cleaned):
-                    return f'{node_id}["{cleaned}"]'
-                return f"{node_id}[{cleaned}]"
+    def _ensure_top_level_titles(self, paths: Iterable[Path]) -> None:
+        for path in paths:
+            c = path.read_text("utf-8")
+            if not c.strip().startswith("# "):
+                title = _title_from_filename(path.stem)
+                path.write_text(f"# {title}\n\n{c}", "utf-8")
+    
 
-            return node_pattern.sub(_repl, line)
 
-        core = _quote_node_labels(core)
+    def _resolve_outline(self, kb_summary: str) -> Sequence[TutorialOutlineItem]:
+        """
+        Determines the tutorial plan.
+        Strictly enforces AI generation to avoid 1:1 file mapping.
+        """
+        # Priority 1: User Override via CLI
+        if self._outline_override:
+            logger.info("Using user-provided outline override.")
+            return self._outline_override
 
-        edge_match = re.match(
-            r"^(?P<lhs>[^-].*?)--(?P<label>[^|][^-]*?)-->(?P<rhs>.*)$",
-            core,
+        # Priority 2: AI Planner (Dynamic)
+        logger.info("Asking AI Planner to design the tutorial structure...")
+        dynamic = self._generate_dynamic_outline(kb_summary)
+        
+        if dynamic:
+            logger.info(f"AI Planner created {len(dynamic)} tutorials.")
+            return dynamic
+        
+        # Priority 3: Hard Fail
+        # We REMOVED the heuristic fallback here. 
+        # If the AI fails, we do NOT want to auto-generate a tutorial for every file.
+        raise RuntimeError(
+            "The AI Planner failed to generate a valid outline JSON. "
+            "Please check your API keys or try again. "
+            "(Automatic 1:1 file mapping has been disabled to ensure quality)."
         )
-        if edge_match:
-            lhs = edge_match.group("lhs").rstrip()
-            label = edge_match.group("label").strip()
-            rhs = edge_match.group("rhs").lstrip()
-            if label:
-                core = f"{lhs} --|{label}|--> {rhs}"
-            else:
-                core = f"{lhs} --> {rhs}"
 
-        return f"{indent}{core}" if core else line
+    def _generate_dynamic_outline(self, kb_summary: str) -> Sequence[TutorialOutlineItem]:
+        system_prompt = prompts.DYNAMIC_OUTLINE_SYSTEM_PROMPT.format(
+            min_tutorials=MIN_DYNAMIC_TUTORIALS,
+            max_tutorials=MAX_DYNAMIC_TUTORIALS,
+        )
+
+        repo_name = self.codebase_root.name
+        user_prompt = prompts.DYNAMIC_OUTLINE_USER_PROMPT.format(
+            repo_name=repo_name,
+            kb_summary=kb_summary,
+        )
+
+        messages = [
+            {"role": MessageRole.SYSTEM.value, "content": system_prompt},
+            {"role": MessageRole.USER.value, "content": user_prompt},
+        ]
+
+        try:
+            response = self.model.generate(messages=messages)
+        except Exception as error:
+            logger.warning("Dynamic outline generation failed: {}", error)
+            return ()
+
+        # Extract text from response
+        outline_text = ""
+        if response.content:
+            if isinstance(response.content, str):
+                outline_text = response.content
+            elif isinstance(response.content, list):
+                for chunk in response.content:
+                     if isinstance(chunk, dict) and "text" in chunk:
+                         outline_text += chunk["text"]
+
+        # Parse JSON
+        payload = None
+        # Try raw
+        try:
+            payload = json.loads(outline_text)
+        except json.JSONDecodeError:
+            # Try finding regex blocks
+            match = re.search(r"```(?:json)?\s*(.*?)```", outline_text, re.DOTALL)
+            if match:
+                try:
+                    payload = json.loads(match.group(1).strip())
+                except json.JSONDecodeError:
+                    pass
+            # Try finding raw array
+            if not payload:
+                start = outline_text.find("[")
+                end = outline_text.rfind("]")
+                if start >= 0 and end > start:
+                    try:
+                        payload = json.loads(outline_text[start:end+1])
+                    except json.JSONDecodeError:
+                        pass
+        
+        if not payload:
+            logger.warning("Failed to parse JSON from outline response")
+            return ()
+
+        return tuple(self._coerce_outline_items(payload))
+
+    def _coerce_outline_items(self, payload: Any) -> List[TutorialOutlineItem]:
+        if not isinstance(payload, list): return []
+        items = []
+        for i, entry in enumerate(payload, 1):
+            if not isinstance(entry, dict): continue
+            title = entry.get("title", "").strip()
+            desc = entry.get("description", "").strip()
+            fname = entry.get("filename", "").strip()
+            
+            if not title or not desc: continue
+            
+            if not fname:
+                fname = f"{i:02d}_{_slugify(title)}.md"
+            elif not fname.endswith(".md"):
+                fname += ".md"
+            
+            items.append(TutorialOutlineItem(filename=fname, title=title, description=desc))
+        return items
+    
+    def _resolve_requests_per_minute(self) -> float:
+        return DEFAULT_REQUESTS_PER_MINUTE
+    
+    def _resolve_retry_attempts(self) -> int:
+        return DEFAULT_AGENT_MAX_RETRIES
+    
+    def _resolve_retry_backoff(self) -> float:
+        return DEFAULT_RETRY_BACKOFF_SECONDS
+    
+    def _optional_tool_guidance(self) -> str:
+        return ""
+    
+    def _build_style_guidance(self) -> str:
+        return "Use clear headings."
+    
+    @staticmethod
+    def _resolve_bool_option(override: bool | None, env_var: str, *, default: bool) -> bool:
+        if override is not None:
+            return override
+        raw = os.getenv(env_var)
+        if raw and raw.lower() in {"1", "true", "yes"}:
+            return True
+        return default
+    
+    @staticmethod
+    def _resolve_int_option(override: int | None, env_var: str, *, default: int, minimum: int = 1) -> int:
+        if override is not None:
+            return max(minimum, override)
+        raw = os.getenv(env_var)
+        if raw:
+            try:
+                return max(minimum, int(raw))
+            except ValueError:
+                pass
+        return max(minimum, default)
+    
+    @staticmethod
+    def _reset_directory(path: Path) -> None:
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+        path.mkdir(parents=True, exist_ok=True)
+    
+    def _sanitize_tutorial_outputs(self, paths: Iterable[Path]) -> None:
+        for path in paths:
+            c = path.read_text("utf-8")
+            fixed = self._sanitize_mermaid_blocks(c)
+            if fixed != c:
+                path.write_text(fixed, "utf-8")
 
 
-__all__ = ["TutorialGenerator", "TutorialOutlineItem", "DEFAULT_OUTLINE"]
+__all__ = ["TutorialGenerator", "TutorialOutlineItem"]

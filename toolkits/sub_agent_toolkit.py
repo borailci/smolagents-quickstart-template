@@ -28,7 +28,7 @@ LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
 CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
 SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
 SUB_AGENT_RPM_ENV = "SUB_AGENT_REQUESTS_PER_MINUTE"
-DEFAULT_SUB_AGENT_RPM = 8.0
+DEFAULT_SUB_AGENT_RPM = 4.0
 
 
 _RETRY_IN_PATTERN = re.compile(
@@ -109,20 +109,17 @@ def _resolve_sub_agent_rpm() -> float:
 def _build_model() -> LiteLLMModel:
     if not LITELLM_MODEL_ID or not LITELLM_API_KEY:
         raise RuntimeError("LITELLM_MODEL_ID and LITELLM_API_KEY must be configured.")
-    requests_per_minute = _resolve_sub_agent_rpm()
-    # Configure automatic retries for rate limits
+    
+    # Configure automatic retries via environment variable
     os.environ["LITELLM_NUM_RETRIES"] = "10"
     
     logger.info(
-        "Initializing sub-agent model {} with {:.1f} requests/minute limit and 10 retries",
+        "Initializing sub-agent model {} with 10 retries",
         LITELLM_MODEL_ID,
-        requests_per_minute,
     )
     return LiteLLMModel(
         model_id=LITELLM_MODEL_ID,
         api_key=LITELLM_API_KEY,
-        requests_per_minute=requests_per_minute,
-        num_retries=10,
     )
 
 
@@ -196,7 +193,14 @@ def _execute_sub_agent_runs(
             continue
 
         if workspace_exists:
-            shutil.rmtree(workspace_dir)
+            try:
+                shutil.rmtree(workspace_dir)
+            except (PermissionError, OSError) as exc:
+                logger.warning(
+                    "Failed to remove existing workspace {}: {}. Proceeding anyway.",
+                    workspace_dir,
+                    exc,
+                )
             workspace = ensure_directory(workspace_dir)
 
         logger.info("Launching sub-agent {} in {}", index, workspace)
@@ -248,6 +252,11 @@ def _execute_sub_agent_runs(
                 time.sleep(max(wait_time, 0.1))
                 continue
 
+            # Initialize to avoid UnboundLocalError
+            is_rate_limit = False
+            parse_error = False
+            last_exc = None
+
             try:
                 step_start = time.monotonic()
                 agent.run(description)
@@ -292,7 +301,7 @@ def _execute_sub_agent_runs(
                     _enforce_min_step_duration(elapsed)
                     continue
 
-            if is_rate_limit:
+                if is_rate_limit:
                     if attempt >= max_retries:
                         logger.error(
                             "Sub-agent {} exhausted retries after quota errors: {}.",
@@ -315,21 +324,21 @@ def _execute_sub_agent_runs(
                     time.sleep(wait_seconds)
                     continue
 
-            if attempt >= max_retries:
-                raise
-            
-            # Generic error backoff
-            wait_seconds = min_interval_seconds * (2 ** (attempt - 1))
-            logger.warning(
-                "Sub-agent {} failed on attempt {}/{}: {}. Retrying in {:.1f}s...",
-                index,
-                attempt,
-                max_retries,
-                last_exc,
-                wait_seconds,
-            )
-            time.sleep(wait_seconds)
-            _enforce_min_step_duration(elapsed)
+                if attempt >= max_retries:
+                    raise
+                
+                # Generic error backoff
+                wait_seconds = min_interval_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    "Sub-agent {} failed on attempt {}/{}: {}. Retrying in {:.1f}s...",
+                    index,
+                    attempt,
+                    max_retries,
+                    last_exc,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+                _enforce_min_step_duration(elapsed)
 
     return workspaces
 

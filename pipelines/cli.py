@@ -62,6 +62,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Simulate the process without running expensive agents.",
     )
+    kb_parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Force regeneration of all targets, ignoring checkpoints.",
+    )
 
     tutorial_parser = subparsers.add_parser(
         "tutorials",
@@ -247,6 +252,7 @@ def main() -> None:
             output_root=args.output,
             sub_agents_root=args.sub_agents_root,
             dry_run=args.dry_run,
+            force_rebuild=args.force_rebuild,
         )
         outputs = builder.generate()
         logger.info("Knowledge base written to:\n{}", _format_paths(outputs))

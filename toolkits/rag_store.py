@@ -18,63 +18,40 @@ try:
     from chromadb.api import ClientAPI
     from chromadb.api.models.Collection import Collection
     from chromadb.api.types import Metadata, Where
-except ImportError as exc:  # pragma: no cover - enforced by runtime checks
+except ImportError as exc:
     raise ImportError(
-        "chromadb is required for the RAG vector store but is not installed. "
-        "Make sure the project dependencies are synced."
+        "chromadb is required. Install it or check your dependencies."
     ) from exc
 
-try:  # pragma: no cover - dependency is provided via smolagents extras
+try:
     from litellm import embedding as litellm_embedding
 except ImportError as exc:
     raise ImportError(
-        "litellm is required to compute embeddings. Ensure smolagents is installed with the litellm extra."
+        "litellm is required for embeddings. Install it via `pip install litellm`."
     ) from exc
 
 
-_DEFAULT_EMBEDDING_MODEL = os.getenv(
-    "LITELLM_EMBEDDING_MODEL_ID", "text-embedding-3-small"
-)
-_DEFAULT_EMBEDDING_API_KEY = os.getenv("LITELLM_EMBEDDING_API_KEY") or os.getenv(
-    "LITELLM_API_KEY"
-)
-_CHUNK_SIZE = 900
+# Unified environment configuration
+_CHAT_MODEL = os.getenv("LITELLM_MODEL_ID", "")
+# Smart default: if using Gemini chat, use Gemini embeddings. Otherwise default to OpenAI.
+_FALLBACK_EMBED_MODEL = "gemini/text-embedding-004" if "gemini" in _CHAT_MODEL.lower() else "text-embedding-3-small"
+
+_DEFAULT_EMBEDDING_MODEL = os.getenv("LITELLM_EMBEDDING_MODEL_ID", _FALLBACK_EMBED_MODEL)
+_DEFAULT_EMBEDDING_API_KEY = os.getenv("LITELLM_API_KEY")
+
+
+# Text Splitting Config
+_CHUNK_SIZE = 1000  # Characters
 _CHUNK_OVERLAP = 200
-_MAX_FILE_SIZE_BYTES = 220_000
-_ALLOWED_CODE_SUFFIXES: tuple[str, ...] = (
-    ".py",
-    ".md",
-    ".txt",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".cfg",
-    ".ini",
-)
 
-_PROVIDER_HINT_PREFIXES: Set[str] = {
-    "google",
-    "gemini",
-    "vertex_ai",
-    "openrouter",
-    "huggingface",
-    "anthropic",
-    "azure",
-    "cohere",
-    "mistral",
+# File Filtering Config
+_MAX_FILE_SIZE_BYTES = 100_000
+_ALLOWED_SUFFIXES: Set[str] = {
+    ".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".cfg", ".ini",
+    ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h", ".cs"
 }
-
-_PROVIDER_ALIAS_MAP: Dict[str, str] = {
-    "google": "gemini",
-    "vertex_ai": "vertex_ai",
-    "openrouter": "openrouter",
-    "huggingface": "huggingface",
-    "anthropic": "anthropic",
-    "azure": "azure",
-    "cohere": "cohere",
-    "mistral": "mistral",
-    "gemini": "gemini",
+_IGNORED_DIRS: Set[str] = {
+    "__pycache__", "node_modules", "venv", ".git", ".idea", ".vscode", "dist", "build", "target"
 }
 
 
@@ -88,7 +65,7 @@ class ChunkRecord:
 
 
 class SimpleChromaRAGStore:
-    """Minimal wrapper around a Chroma persistent collection."""
+    """Wrapper around ChromaDB with efficient batching and smart filtering."""
 
     def __init__(
         self,
@@ -98,11 +75,9 @@ class SimpleChromaRAGStore:
         persist_directory: Path,
         collection_name: str = "tutorial_rag",
         embedding_model: str = _DEFAULT_EMBEDDING_MODEL,
-        embed_batch_size: int = 8,
+        embed_batch_size: int = 20, # Increased batch size for efficiency
         request_pause_seconds: float = 0.0,
-        embedding_fn: Optional[
-            Callable[[Sequence[str]], Sequence[Sequence[float]]]
-        ] = None,
+        embedding_fn: Optional[Callable[[Sequence[str]], Sequence[Sequence[float]]]] = None,
     ) -> None:
         self.codebase_root = codebase_root
         self.knowledge_base_root = knowledge_base_root
@@ -114,12 +89,9 @@ class SimpleChromaRAGStore:
         self._embedding_fn = embedding_fn
 
         self.persist_directory.mkdir(parents=True, exist_ok=True)
+        # Using the standard client interface
         self.client: ClientAPI = PersistentClient(path=str(self.persist_directory))
         self.collection: Optional[Collection] = None
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def ensure_index(
         self,
@@ -129,45 +101,39 @@ class SimpleChromaRAGStore:
         force_rebuild: bool = False,
     ) -> None:
         """Ensure a collection exists and matches the current repository state."""
-
+        
+        # 1. Compute fingerprint of current files
         desired_fingerprint = self._compute_fingerprint(
             include_codebase=include_codebase,
             include_knowledge_base=include_knowledge_base,
         )
 
-        existing: Optional[Collection]
+        existing: Optional[Collection] = None
         try:
             existing = self.client.get_collection(self.collection_name)
         except chroma_errors.NotFoundError:
-            existing = None
-        except Exception as exc:  # pragma: no cover - log and fall back to rebuild
-            logger.warning(
-                "Failed to load existing RAG collection '{}': {}",
-                self.collection_name,
-                exc,
-            )
-            existing = None
+            pass
+        except Exception as exc:
+            logger.warning(f"Could not load existing collection: {exc}")
 
-        if existing is not None:
+        # 2. Check if rebuild is needed
+        should_rebuild = force_rebuild
+        if existing:
             meta = existing.metadata or {}
-            if force_rebuild or meta.get("fingerprint") != desired_fingerprint:
-                logger.info(
-                    "Rebuilding RAG vector store '{}' (fingerprint mismatch)",
-                    self.collection_name,
-                )
-                self.client.delete_collection(self.collection_name)
-                self.collection = self._build_collection(
-                    include_codebase=include_codebase,
-                    include_knowledge_base=include_knowledge_base,
-                    fingerprint=desired_fingerprint,
-                )
+            stored_fingerprint = meta.get("fingerprint")
+            if stored_fingerprint != desired_fingerprint:
+                logger.info(f"Fingerprint mismatch ({stored_fingerprint} vs {desired_fingerprint}). Rebuilding...")
+                should_rebuild = True
             else:
+                logger.info(f"RAG store '{self.collection_name}' is up to date.")
                 self.collection = existing
-        else:
-            logger.info(
-                "Creating new RAG vector store '{}'",
-                self.collection_name,
-            )
+
+        # 3. Rebuild or Create
+        if should_rebuild or existing is None:
+            if existing:
+                self.client.delete_collection(self.collection_name)
+            
+            logger.info(f"Building RAG index '{self.collection_name}'...")
             self.collection = self._build_collection(
                 include_codebase=include_codebase,
                 include_knowledge_base=include_knowledge_base,
@@ -182,14 +148,10 @@ class SimpleChromaRAGStore:
         include_codebase: bool = True,
         include_knowledge_base: bool = True,
     ) -> List[Dict[str, str]]:
-        if not query.strip():
-            return []
-        if self.collection is None:
-            logger.warning(
-                "RAG collection is not initialised; returning no context snippets."
-            )
+        if not query.strip() or not self.collection:
             return []
 
+        # Construct Where clause
         where_clause: Optional[Dict[str, str]] = None
         if include_codebase and not include_knowledge_base:
             where_clause = {"source": "codebase"}
@@ -199,45 +161,40 @@ class SimpleChromaRAGStore:
             return []
 
         try:
+            # Embed query (batch of 1)
             query_vectors = self._embed_texts([query])
+            
             result = self.collection.query(
                 query_embeddings=query_vectors,
                 n_results=top_k,
                 where=cast(Optional[Where], where_clause),
             )
-        except (
-            Exception
-        ) as exc:  # pragma: no cover - query failures are logged and suppressed
-            logger.warning("RAG query failed: {}", exc)
+        except Exception as exc:
+            logger.warning(f"RAG query failed: {exc}")
             return []
 
+        # Parse results
         documents = (result.get("documents") or [[]])[0]
         metadatas = (result.get("metadatas") or [[]])[0]
 
         snippets: List[Dict[str, str]] = []
         for doc, meta in zip(documents, metadatas):
-            if not doc:
-                continue
-            source_value: Any = (
-                meta.get("source", "unknown") if isinstance(meta, dict) else "unknown"
-            )
-            path_value: Any = meta.get("path", "") if isinstance(meta, dict) else ""
-            line_value: Any = meta.get("line", 1) if isinstance(meta, dict) else 1
-            source = str(source_value)
-            path = str(path_value)
-            line = str(line_value)
-            snippets.append(
-                {
-                    "source": source,
-                    "path": path,
-                    "line": line,
-                    "snippet": doc.strip(),
-                }
-            )
+            if not doc: continue
+            
+            # Safe access to metadata
+            meta_dict = meta if isinstance(meta, dict) else {}
+            
+            snippets.append({
+                "source": str(meta_dict.get("source", "unknown")),
+                "path": str(meta_dict.get("path", "")),
+                "line": str(meta_dict.get("line", 1)),
+                "snippet": doc.strip(),
+            })
+            
         return snippets
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Internal Builders
     # ------------------------------------------------------------------
 
     def _build_collection(
@@ -251,243 +208,223 @@ class SimpleChromaRAGStore:
             include_codebase=include_codebase,
             include_knowledge_base=include_knowledge_base,
         )
-        try:
-            collection = self.client.create_collection(
-                name=self.collection_name,
-                metadata={
-                    "fingerprint": fingerprint,
-                    "embedding_model": self.embedding_model,
-                    "chunk_size": str(_CHUNK_SIZE),
-                    "chunk_overlap": str(_CHUNK_OVERLAP),
-                },
-            )
-        except chroma_errors.InternalError as exc:
-            message = str(exc)
-            if "already exists" in message.lower():
-                logger.info(
-                    "Existing collection '{}' detected during creation; replacing it",
-                    self.collection_name,
-                )
-                self.client.delete_collection(self.collection_name)
-                collection = self.client.create_collection(
-                    name=self.collection_name,
-                    metadata={
-                        "fingerprint": fingerprint,
-                        "embedding_model": self.embedding_model,
-                        "chunk_size": str(_CHUNK_SIZE),
-                        "chunk_overlap": str(_CHUNK_OVERLAP),
-                    },
-                )
-            else:
-                raise
+        
+        collection = self.client.create_collection(
+            name=self.collection_name,
+            metadata={
+                "fingerprint": fingerprint,
+                "embedding_model": self.embedding_model,
+            },
+        )
 
         if not chunks:
-            logger.warning(
-                "No chunks collected for RAG store; the collection will remain empty."
-            )
             return collection
 
-        documents = [chunk.content for chunk in chunks]
-        metadatas: List[Dict[str, str]] = [
-            {
-                "source": chunk.source,
-                "path": chunk.path,
-                "line": str(chunk.line),
-            }
-            for chunk in chunks
-        ]
-        ids = [chunk.chunk_id for chunk in chunks]
+        # Batch Processing
+        total_chunks = len(chunks)
+        logger.info(f"Embedding {total_chunks} chunks in batches of {self.embed_batch_size}...")
 
-        embeddings: List[Sequence[float]] = []
-        for start in range(0, len(documents), self.embed_batch_size):
-            batch = documents[start : start + self.embed_batch_size]
-            vectors = self._embed_texts(batch)
-            embeddings.extend(vectors)
-            if self.request_pause_seconds:
+        for start in range(0, total_chunks, self.embed_batch_size):
+            end = start + self.embed_batch_size
+            batch = chunks[start:end]
+            
+            texts = [c.content for c in batch]
+            ids = [c.chunk_id for c in batch]
+            metadatas = [{
+                "source": c.source, 
+                "path": c.path, 
+                "line": str(c.line)
+            } for c in batch]
+
+            try:
+                vectors = self._embed_texts(texts)
+                
+                collection.add(
+                    documents=texts,
+                    metadatas=cast(List[Metadata], metadatas),
+                    ids=ids,
+                    embeddings=vectors,
+                )
+            except Exception as exc:
+                logger.error(f"Failed to embed batch starting at index {start}: {exc}")
+            
+            if self.request_pause_seconds > 0:
                 time.sleep(self.request_pause_seconds)
 
-        collection.add(
-            documents=documents,
-            metadatas=cast(List[Metadata], metadatas),
-            ids=ids,
-            embeddings=embeddings,
-        )
         return collection
 
     def _embed_texts(self, texts: Sequence[str]) -> List[Sequence[float]]:
-        if self._embedding_fn is not None:
-            vectors = list(self._embedding_fn(texts))
-            if len(vectors) != len(texts):
-                raise ValueError(
-                    "Custom embedding function returned unexpected vector count."
-                )
-            return vectors
+        """Computes embeddings for a batch of texts."""
+        if self._embedding_fn:
+            return list(self._embedding_fn(texts))
 
-        vectors: List[Sequence[float]] = []
-        for text in texts:
-            trimmed = text[:4000]
-            embedding_params = self._build_embedding_params(trimmed)
-            response = litellm_embedding(**embedding_params)
-            data = response.get("data")  # type: ignore[assignment]
-            if not data:
-                raise RuntimeError("Embedding API returned no data.")
-            embedding_vector = data[0]["embedding"]
-            vectors.append(embedding_vector)
-        return vectors
+        # LiteLLM supports list input for batching
+        try:
+            # We strictly pass the model and the list of texts
+            response = litellm_embedding(
+                model=self.embedding_model,
+                input=texts,
+                api_key=_DEFAULT_EMBEDDING_API_KEY
+            )
+            
+            # Extract embeddings preserving order
+            data = response.get("data", [])
+            # Sort by index just in case, though usually returned in order
+            data.sort(key=lambda x: x["index"])
+            return [item["embedding"] for item in data]
 
-    def _build_embedding_params(self, text: str) -> Dict[str, Any]:
-        model_id = self.embedding_model
-        provider: Optional[str] = None
-        normalized_model = model_id
-
-        if "/" in model_id:
-            prefix, remainder = model_id.split("/", 1)
-            if prefix in _PROVIDER_HINT_PREFIXES and remainder:
-                provider = _PROVIDER_ALIAS_MAP.get(prefix, prefix)
-                normalized_model = remainder
-
-        params: Dict[str, Any] = {
-            "model": normalized_model,
-            "input": text,
-        }
-        if provider:
-            params["custom_llm_provider"] = provider
-        if _DEFAULT_EMBEDDING_API_KEY:
-            params["api_key"] = _DEFAULT_EMBEDDING_API_KEY
-        return params
+        except Exception as exc:
+            logger.error(f"Embedding API error: {exc}")
+            # Fallback: empty vectors or re-raise. Re-raising is safer for consistency.
+            raise
 
     def _collect_chunks(
-        self,
-        *,
-        include_codebase: bool,
-        include_knowledge_base: bool,
+        self, *, include_codebase: bool, include_knowledge_base: bool
     ) -> List[ChunkRecord]:
         chunks: List[ChunkRecord] = []
+        
         if include_knowledge_base and self.knowledge_base_root.exists():
-            chunks.extend(
-                self._chunk_directory(
-                    root=self.knowledge_base_root,
-                    source="knowledge_base",
-                    pattern="*.md",
-                )
-            )
+            chunks.extend(self._process_directory(self.knowledge_base_root, "knowledge_base"))
+            
         if include_codebase and self.codebase_root.exists():
-            chunks.extend(
-                self._chunk_directory(root=self.codebase_root, source="codebase")
-            )
+            chunks.extend(self._process_directory(self.codebase_root, "codebase"))
+            
         return chunks
 
-    def _chunk_directory(
-        self,
-        *,
-        root: Path,
-        source: str,
-        pattern: Optional[str] = None,
-    ) -> List[ChunkRecord]:
-        entries: Iterable[Path]
-        if pattern:
-            entries = root.rglob(pattern)
-        else:
-            entries = root.rglob("*")
-
+    def _process_directory(self, root: Path, source: str) -> List[ChunkRecord]:
         chunks: List[ChunkRecord] = []
-        for path in sorted(entries):
-            if path.is_dir() or path.name.startswith("."):
-                continue
-            if source == "codebase":
-                if path.suffix and path.suffix.lower() not in _ALLOWED_CODE_SUFFIXES:
-                    continue
-            try:
-                if path.stat().st_size > _MAX_FILE_SIZE_BYTES:
-                    continue
-            except FileNotFoundError:
+        
+        # Use rglob but filter manually to avoid traversing .git or node_modules
+        for path in sorted(root.rglob("*")):
+            if not self._is_valid_file(path, root):
                 continue
 
             try:
                 content = path.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, OSError):
-                continue
-
-            relative_path = str(path.relative_to(root))
-            chunks.extend(
-                self._chunk_file(
-                    content=content, source=source, relative_path=relative_path
-                )
-            )
-        return chunks
-
-    def _chunk_file(
-        self,
-        *,
-        content: str,
-        source: str,
-        relative_path: str,
-    ) -> List[ChunkRecord]:
-        records: List[ChunkRecord] = []
-        cleaned = content.strip()
-        if not cleaned:
-            return records
-
-        start = 0
-        length = len(cleaned)
-        while start < length:
-            end = min(length, start + _CHUNK_SIZE)
-            chunk = cleaned[start:end].strip()
-            if chunk:
-                line_number = cleaned.count("\n", 0, start) + 1
-                chunk_id = self._build_chunk_id(
-                    source, relative_path, line_number, chunk
-                )
-                records.append(
-                    ChunkRecord(
-                        chunk_id=chunk_id,
-                        source=source,
-                        path=relative_path,
-                        line=line_number,
-                        content=chunk,
+                chunks.extend(
+                    self._chunk_content_by_lines(
+                        content, source, str(path.relative_to(root))
                     )
                 )
-            if end == length:
-                break
-            start = max(end - _CHUNK_OVERLAP, start + 1)
+            except (UnicodeDecodeError, OSError):
+                continue
+                
+        return chunks
+
+    def _is_valid_file(self, path: Path, root: Path) -> bool:
+        """Centralized logic for file validity (used by collector AND fingerprinter)."""
+        # Check if directory is ignored
+        if any(part in _IGNORED_DIRS for part in path.parts):
+            return False
+        
+        # Must be a file
+        if not path.is_file():
+            return False
+            
+        # Hidden files
+        if path.name.startswith("."):
+            return False
+
+        # Size limit
+        try:
+            if path.stat().st_size > _MAX_FILE_SIZE_BYTES:
+                return False
+        except FileNotFoundError:
+            return False
+
+        # Suffix check
+        return path.suffix.lower() in _ALLOWED_SUFFIXES
+
+    def _chunk_content_by_lines(
+        self, content: str, source: str, relative_path: str
+    ) -> List[ChunkRecord]:
+        """Splits text respecting newlines to avoid breaking code syntax."""
+        lines = content.splitlines()
+        records: List[ChunkRecord] = []
+        
+        current_chunk: List[str] = []
+        current_length = 0
+        start_line = 1
+        current_line_idx = 0
+
+        while current_line_idx < len(lines):
+            line = lines[current_line_idx]
+            line_len = len(line) + 1 # +1 for newline
+
+            # If adding this line exceeds chunk size and we have content, save current chunk
+            if current_length + line_len > _CHUNK_SIZE and current_chunk:
+                chunk_text = "\n".join(current_chunk)
+                records.append(ChunkRecord(
+                    chunk_id=self._build_chunk_id(source, relative_path, start_line, chunk_text),
+                    source=source,
+                    path=relative_path,
+                    line=start_line,
+                    content=chunk_text
+                ))
+                
+                # Overlap logic: keep last N lines that fit within overlap budget
+                overlap_buffer = []
+                overlap_len = 0
+                for prev_line in reversed(current_chunk):
+                    if overlap_len + len(prev_line) > _CHUNK_OVERLAP:
+                        break
+                    overlap_buffer.insert(0, prev_line)
+                    overlap_len += len(prev_line) + 1
+                
+                current_chunk = overlap_buffer
+                current_length = overlap_len
+                # Approximate start line for next chunk (not perfect but sufficient)
+                start_line = (current_line_idx + 1) - len(current_chunk) 
+
+            current_chunk.append(line)
+            current_length += line_len
+            current_line_idx += 1
+
+        # Add remaining
+        if current_chunk:
+            chunk_text = "\n".join(current_chunk)
+            records.append(ChunkRecord(
+                chunk_id=self._build_chunk_id(source, relative_path, start_line, chunk_text),
+                source=source,
+                path=relative_path,
+                line=start_line,
+                content=chunk_text
+            ))
+
         return records
 
     @staticmethod
     def _build_chunk_id(source: str, path: str, line: int, chunk: str) -> str:
+        # Hashing content ensures identical chunks don't duplicate
         digest = hashlib.sha256(
-            f"{source}:{path}:{line}:{chunk[:80]}".encode("utf-8")
-        ).hexdigest()
+            f"{source}:{path}:{line}:{chunk}".encode("utf-8")
+        ).hexdigest()[:16] # Shorten hash for readability
         return f"{source}-{digest}"
 
     def _compute_fingerprint(
-        self,
-        *,
-        include_codebase: bool,
-        include_knowledge_base: bool,
+        self, *, include_codebase: bool, include_knowledge_base: bool
     ) -> str:
+        """Computes a hash of the file states to detect changes."""
         hasher = hashlib.sha256()
         hasher.update(self.embedding_model.encode("utf-8"))
         hasher.update(str(_CHUNK_SIZE).encode("utf-8"))
-        hasher.update(str(_CHUNK_OVERLAP).encode("utf-8"))
+        
+        roots_to_check = []
+        if include_knowledge_base: roots_to_check.append(self.knowledge_base_root)
+        if include_codebase: roots_to_check.append(self.codebase_root)
 
-        def _update_for_directory(root: Path) -> None:
+        for root in roots_to_check:
+            if not root.exists(): continue
             for path in sorted(root.rglob("*")):
-                if path.is_dir() or path.name.startswith("."):
+                # STRICTLY use the same validity check as collection
+                if not self._is_valid_file(path, root):
                     continue
-                try:
-                    stat = path.stat()
-                except FileNotFoundError:
-                    continue
+                    
+                stat = path.stat()
                 hasher.update(str(path.relative_to(root)).encode("utf-8"))
                 hasher.update(str(int(stat.st_mtime)).encode("utf-8"))
                 hasher.update(str(stat.st_size).encode("utf-8"))
 
-        if include_knowledge_base and self.knowledge_base_root.exists():
-            _update_for_directory(self.knowledge_base_root)
-        if include_codebase and self.codebase_root.exists():
-            _update_for_directory(self.codebase_root)
-
         return hasher.hexdigest()
-
 
 __all__ = ["SimpleChromaRAGStore"]

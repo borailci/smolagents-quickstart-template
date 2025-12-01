@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from loguru import logger
 from smolagents import Tool, tool
@@ -12,67 +12,50 @@ from smolagents import Tool, tool
 from toolkits.rag_store import SimpleChromaRAGStore
 from utils.path_utils import ensure_directory, resolve_within_root
 
-_MAX_SEARCH_FILE_SIZE_BYTES = 200_000
+_MAX_SEARCH_FILE_SIZE_BYTES = 100_000  # Reduced to 100KB for speed
+_MAX_READ_LINES = 500  # Limit file reads to protect context
 _DEFAULT_RAG_MAX_SNIPPETS = 5
 _SNIPPET_PADDING_CHARS = 240
+_TREE_MAX_DEPTH = 3
+_TREE_MAX_ITEMS = 200
+
+# Explicit ignore set for tree/search
+_IGNORED_DIRS = {
+    "__pycache__", "node_modules", "venv", ".git", ".idea", ".vscode", "dist", "build"
+}
+
 _CODE_SEARCH_SKIP_SUFFIXES = {
-    ".pyc",
-    ".pyo",
-    ".pyd",
-    ".so",
-    ".dll",
-    ".exe",
-    ".class",
-    ".zip",
-    ".tar",
-    ".gz",
+    ".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe", ".class", 
+    ".zip", ".tar", ".gz", ".png", ".jpg", ".pdf", ".lock"
 }
+
 _CODE_SEARCH_ALLOWED_SUFFIXES = {
-    ".py",
-    ".md",
-    ".txt",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".js",
-    ".ts",
-    ".tsx",
-    ".jsx",
-    ".java",
-    ".go",
-    ".rs",
-    ".rb",
-    ".php",
-    ".c",
-    ".cpp",
-    ".h",
-    ".hpp",
-    ".cs",
-    ".swift",
-    ".kt",
-    "",
+    ".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+    ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".rb", ".php",
+    ".c", ".cpp", ".h", ".hpp", ".cs", ".swift", ".kt", ".sh", "Dockerfile", "Makefile"
 }
 
-
-def _read_text_file(path: Path) -> str:
+def _read_text_file_truncated(path: Path) -> str:
+    """Reads file content with line limits."""
     try:
+        lines = []
         with path.open("r", encoding="utf-8") as handle:
-            return handle.read()
+            for i, line in enumerate(handle):
+                if i >= _MAX_READ_LINES:
+                    lines.append(f"\n... [Truncated after {_MAX_READ_LINES} lines] ...")
+                    break
+                lines.append(line)
+        return "".join(lines)
     except UnicodeDecodeError as exc:
         raise ValueError(
-            f"File '{path}' is not UTF-8 decodable. Skip binary or compiled artifacts."
+            f"File '{path.name}' is binary or not UTF-8 decodable."
         ) from exc
-
 
 def _write_text_file(path: Path, content: str, append: bool = False) -> None:
     ensure_directory(path.parent)
     mode = "a" if append else "w"
     with path.open(mode, encoding="utf-8") as handle:
         handle.write(content)
-
 
 def build_tutorial_tools(
     *,
@@ -82,6 +65,7 @@ def build_tutorial_tools(
     enable_code_search: bool = False,
     enable_rag: bool = False,
     rag_max_snippets: int = _DEFAULT_RAG_MAX_SNIPPETS,
+    rag_force_rebuild: bool = False, # Added explicit control
 ) -> List[Tool]:
     codebase_path = Path(codebase_root).expanduser().resolve()
     kb_path = Path(knowledge_base_root).expanduser().resolve()
@@ -99,116 +83,119 @@ def build_tutorial_tools(
                 knowledge_base_root=kb_path,
                 persist_directory=rag_storage_root,
             )
+            # CRITICAL FIX: Do not force rebuild by default. 
+            # This prevents 5-10 minute delays on agent startup.
             rag_store.ensure_index(
                 include_codebase=True,
                 include_knowledge_base=True,
-                force_rebuild=True,
+                force_rebuild=rag_force_rebuild,
             )
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to initialise RAG vector store: {}", exc)
+        except Exception as exc: 
+            logger.warning("Failed to initialize RAG vector store: {}", exc)
             rag_store = None
 
     max_snippets = max(1, rag_max_snippets)
 
+    def _is_safe_entry(entry: Path) -> bool:
+        return not entry.name.startswith(".") and entry.name not in _IGNORED_DIRS
+
     @tool
     def list_knowledge_base(dir_path: str = ".") -> List[str]:
         """List markdown files in the knowledge base.
-
+        
         Args:
             dir_path: Relative directory path within the knowledge base to inspect.
         """
-
         resolved = resolve_within_root(kb_path, dir_path)
         if not resolved.is_dir():
             return []
-        return sorted(
-            entry.name for entry in resolved.iterdir() if not entry.name.startswith(".")
-        )
+        return sorted(entry.name for entry in resolved.iterdir() if _is_safe_entry(entry))
 
     @tool
     def read_knowledge_base_file(file_path: str) -> str:
         """Read a markdown file from the knowledge base.
-
+        
         Args:
             file_path: Relative path to the markdown file inside the knowledge base directory.
         """
-
         resolved = resolve_within_root(kb_path, file_path)
-        return _read_text_file(resolved)
+        return _read_text_file_truncated(resolved)
 
     @tool
     def read_codebase_file(file_path: str) -> str:
-        """Read a source file from the codebase.
-
+        """Read a source file from the codebase (Truncated at 500 lines).
+        
         Args:
             file_path: Relative path of the source file to read from the codebase root.
         """
-
         resolved = resolve_within_root(codebase_path, file_path)
-        if "__pycache__" in resolved.parts:
-            raise ValueError(
-                "Compiled directories such as __pycache__ are not readable."
-            )
+        
+        if any(p in _IGNORED_DIRS for p in resolved.parts):
+             raise ValueError(f"Access to directories like {resolved.parent.name} is restricted.")
+
         if not resolved.is_file():
-            raise FileNotFoundError(
-                f"File '{file_path}' not found inside the codebase."
-            )
-        blocked_suffixes = {".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe"}
-        if resolved.suffix.lower() in blocked_suffixes:
-            raise ValueError(
-                f"Binary or compiled file '{file_path}' is not supported; choose a text source."
-            )
-        return _read_text_file(resolved)
+            raise FileNotFoundError(f"File '{file_path}' not found.")
+            
+        if resolved.suffix.lower() in _CODE_SEARCH_SKIP_SUFFIXES:
+            raise ValueError(f"Binary file '{file_path}' is not supported.")
+            
+        return _read_text_file_truncated(resolved)
 
     @tool
     def list_codebase_directory(dir_path: str = ".") -> List[str]:
-        """List entries in the codebase under the provided directory.
-
+        """List entries in the codebase.
+        
         Args:
             dir_path: Relative directory path whose contents should be listed.
         """
-
         resolved = resolve_within_root(codebase_path, dir_path)
         if not resolved.is_dir():
             return []
-        return sorted(
-            entry.name for entry in resolved.iterdir() if not entry.name.startswith(".")
-        )
+        return sorted(entry.name for entry in resolved.iterdir() if _is_safe_entry(entry))
 
     @tool
     def write_tutorial_file(file_path: str, content: str, append: bool = False) -> str:
         """Write tutorial content to the tutorials output directory.
-
+        
         Args:
             file_path: Relative path for the tutorial markdown file to create.
             content: Markdown content to write into the file.
             append: When True, append instead of overwriting.
         """
-
         resolved = resolve_within_root(output_path, file_path)
         _write_text_file(resolved, content, append=append)
         return str(resolved)
 
     @tool
-    def get_codebase_tree() -> str:
-        """Return a tree view of the accessible codebase."""
+    def get_codebase_tree(max_depth: int = _TREE_MAX_DEPTH) -> str:
+        """Return a tree view of the accessible codebase (Max depth 3).
+        
+        Args:
+            max_depth: Depth to traverse. Default is 3.
+        """
+        lines: List[str] = ["."]
+        
+        def _build_tree(directory: Path, prefix: str, depth: int):
+            if depth > max_depth or len(lines) > _TREE_MAX_ITEMS:
+                return
 
-        def tree(directory: Path, prefix: str = "") -> List[str]:
-            entries = sorted(
-                child for child in directory.iterdir() if not child.name.startswith(".")
-            )
-            lines: List[str] = []
+            entries = sorted(child for child in directory.iterdir() if _is_safe_entry(child))
+            
             for index, entry in enumerate(entries):
                 connector = "└── " if index == len(entries) - 1 else "├── "
                 child_prefix = "    " if index == len(entries) - 1 else "│   "
+                
                 if entry.is_dir():
                     lines.append(f"{prefix}{connector}{entry.name}/")
-                    lines.extend(tree(entry, prefix + child_prefix))
+                    if depth < max_depth:
+                        _build_tree(entry, prefix + child_prefix, depth + 1)
                 else:
                     lines.append(f"{prefix}{connector}{entry.name}")
-            return lines
 
-        lines = ["."] + tree(codebase_path)
+        _build_tree(codebase_path, "", 1)
+        if len(lines) > _TREE_MAX_ITEMS:
+            lines.append("... (Tree truncated) ...")
+            
         return "```markdown\n" + "\n".join(lines) + "\n```"
 
     tools: List[Tool] = [
@@ -221,7 +208,6 @@ def build_tutorial_tools(
     ]
 
     if enable_code_search:
-
         @tool
         def grep_codebase(
             pattern: str,
@@ -229,18 +215,16 @@ def build_tutorial_tools(
             ignore_case: bool = True,
             max_matches: int = 20,
         ) -> List[str]:
-            """Search codebase files for lines matching a regular expression.
-
+            """Search codebase files using regex. Skips binaries and large files.
+            
             Args:
                 pattern: Regular expression to search for within files.
                 dir_path: Relative directory or file path to scope the search (defaults to the repo root).
                 ignore_case: Perform case-insensitive matching when True.
                 max_matches: Maximum number of line hits to return.
             """
-
             if not pattern:
                 return []
-
             try:
                 resolved = resolve_within_root(codebase_path, dir_path)
             except ValueError:
@@ -249,176 +233,86 @@ def build_tutorial_tools(
             flags = re.IGNORECASE if ignore_case else 0
             try:
                 regex = re.compile(pattern, flags)
-            except re.error as exc:  # pragma: no cover - invalid user regex
+            except re.error as exc:
                 return [f"Invalid regular expression: {exc}"]
 
             matches: List[str] = []
 
-            def _search_file(file_path: Path) -> None:
-                if file_path.suffix.lower() in _CODE_SEARCH_SKIP_SUFFIXES:
+            # Generator for safe files
+            def _iterate_files(root_path: Path):
+                if root_path.is_file():
+                    yield root_path
                     return
-                if (
-                    file_path.suffix
-                    and file_path.suffix.lower() not in _CODE_SEARCH_ALLOWED_SUFFIXES
-                ):
-                    return
-                try:
-                    if file_path.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
-                        return
-                except FileNotFoundError:
-                    return
+                for p in root_path.rglob("*"):
+                    # Basic exclusion checks
+                    if not p.is_file(): continue
+                    if any(part in _IGNORED_DIRS for part in p.parts): continue
+                    if p.name.startswith("."): continue
+                    yield p
 
+            for file_path in _iterate_files(resolved):
+                if len(matches) >= max_matches:
+                    break
+
+                # Size and extension checks
+                if file_path.suffix.lower() in _CODE_SEARCH_SKIP_SUFFIXES: continue
+                # Relaxed extension check to allow Makefiles, etc.
+                is_text = (file_path.suffix.lower() in _CODE_SEARCH_ALLOWED_SUFFIXES 
+                           or file_path.suffix == "") 
+                if not is_text: continue
+                
                 try:
+                    if file_path.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES: continue
                     content = file_path.read_text(encoding="utf-8")
-                except (UnicodeDecodeError, OSError):
-                    return
+                except (OSError, UnicodeDecodeError):
+                    continue
 
-                for line_number, line in enumerate(content.splitlines(), start=1):
+                for line_num, line in enumerate(content.splitlines(), start=1):
                     if regex.search(line):
                         relative = file_path.relative_to(codebase_path)
-                        snippet = line.strip()
-                        matches.append(f"{relative}:{line_number}: {snippet}")
+                        matches.append(f"{relative}:{line_num}: {line.strip()[:200]}") # Truncate match line
                         if len(matches) >= max_matches:
-                            return
-
-            if resolved.is_file():
-                _search_file(resolved)
-            else:
-                for candidate in sorted(
-                    p
-                    for p in resolved.rglob("*")
-                    if p.is_file() and not p.name.startswith(".")
-                ):
-                    _search_file(candidate)
-                    if len(matches) >= max_matches:
-                        break
-
+                            break
+                            
             return matches
 
         tools.append(grep_codebase)
 
     if enable_rag:
-
         @tool
         def retrieve_relevant_context(
             query: str,
             max_snippets: int = max_snippets,
-            include_codebase: bool = True,
-            include_knowledge_base: bool = True,
         ) -> List[Dict[str, str]]:
-            """Return contextual snippets related to the query from docs and source.
-
+            """Retrieve snippets relevant to the query using RAG.
+            
             Args:
                 query: Free-text query to match against files.
                 max_snippets: Maximum number of snippets to return in total.
-                include_codebase: Search source files when True.
-                include_knowledge_base: Search knowledge base markdown when True.
+            
+            Note: This tool uses vector search. It is fuzzy and semantic.
+            For exact string matching, use 'grep_codebase'.
             """
-
             normalized_query = query.strip()
             if not normalized_query:
                 return []
-
+            
             limit = max(1, max_snippets)
-            if rag_store is not None:
+            
+            # Primary method: Vector Search
+            if rag_store:
                 try:
-                    rag_results = rag_store.query(
+                    return rag_store.query(
                         normalized_query,
                         top_k=limit,
-                        include_codebase=include_codebase,
-                        include_knowledge_base=include_knowledge_base,
-                    )
-                    if rag_results:
-                        return rag_results[:limit]
-                except Exception as exc:  # pragma: no cover - defensive logging
-                    logger.warning(
-                        "RAG query failed; falling back to substring search: {}", exc
-                    )
-
-            lowered_query = normalized_query.lower()
-
-            def _fallback_search() -> List[Dict[str, str]]:
-                snippets: List[Dict[str, str]] = []
-
-                def _append_snippet(
-                    *,
-                    source: str,
-                    root: Path,
-                    file_path: Path,
-                    content: str,
-                ) -> None:
-                    lowered_content = content.lower()
-                    index = lowered_content.find(lowered_query)
-                    if index == -1:
-                        return
-                    start = max(0, index - _SNIPPET_PADDING_CHARS)
-                    end = min(len(content), index + _SNIPPET_PADDING_CHARS)
-                    snippet_text = content[start:end].strip()
-
-                    line_number = content.count("\n", 0, start) + 1
-                    entry = {
-                        "source": source,
-                        "path": str(file_path.relative_to(root)),
-                        "line": str(line_number),
-                        "snippet": snippet_text,
-                    }
-                    snippets.append(entry)
-
-                if include_knowledge_base:
-                    for kb_file in sorted(kb_path.rglob("*.md")):
-                        try:
-                            if kb_file.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
-                                continue
-                        except FileNotFoundError:
-                            continue
-                        try:
-                            content = kb_file.read_text(encoding="utf-8")
-                        except (UnicodeDecodeError, OSError):
-                            continue
-                        _append_snippet(
-                            source="knowledge_base",
-                            root=kb_path,
-                            file_path=kb_file,
-                            content=content,
-                        )
-                        if len(snippets) >= limit:
-                            return snippets[:limit]
-
-                if include_codebase:
-                    for candidate in sorted(
-                        path
-                        for path in codebase_path.rglob("*")
-                        if path.is_file() and not path.name.startswith(".")
-                    ):
-                        if candidate.suffix.lower() in _CODE_SEARCH_SKIP_SUFFIXES:
-                            continue
-                        if (
-                            candidate.suffix
-                            and candidate.suffix.lower()
-                            not in _CODE_SEARCH_ALLOWED_SUFFIXES
-                        ):
-                            continue
-                        try:
-                            if candidate.stat().st_size > _MAX_SEARCH_FILE_SIZE_BYTES:
-                                continue
-                        except FileNotFoundError:
-                            continue
-                        try:
-                            content = candidate.read_text(encoding="utf-8")
-                        except (UnicodeDecodeError, OSError):
-                            continue
-                        _append_snippet(
-                            source="codebase",
-                            root=codebase_path,
-                            file_path=candidate,
-                            content=content,
-                        )
-                        if len(snippets) >= limit:
-                            return snippets[:limit]
-
-                return snippets[:limit]
-
-            return _fallback_search()
+                        include_codebase=True,
+                        include_knowledge_base=True,
+                    )[:limit]
+                except Exception as exc:
+                    logger.error(f"RAG query failed: {exc}")
+                    return [{"error": "RAG search failed. Please use grep_codebase or navigation tools."}]
+            
+            return [{"error": "RAG is not enabled. Please use grep_codebase."}]
 
         tools.append(retrieve_relevant_context)
 

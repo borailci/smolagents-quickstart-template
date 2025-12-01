@@ -1,32 +1,47 @@
-"""Scoped filesystem tools for sub-agents with strict path validation."""
+"""Scoped filesystem tools for sub-agents with strict path validation and context limits."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Set
 
 from smolagents import Tool, tool
 
+# Assuming utils.path_utils is available as per original code
 from utils.path_utils import ensure_directory, resolve_within_root
 
+# Configurable limits to prevent context overflow
+MAX_READ_LINES = 500
+MAX_TREE_DEPTH = 3
+MAX_TREE_ITEMS = 200
+IGNORED_DIRS: Set[str] = {
+    "__pycache__", "node_modules", "venv", "env", "dist", "build", "target"
+}
+BLOCKED_EXTENSIONS: Set[str] = {
+    ".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe", ".bin", ".lock"
+}
 
-def _read_text_file(path: Path) -> str:
+def _read_text_file_truncated(path: Path, max_lines: int = MAX_READ_LINES) -> str:
+    """Reads file content with truncation to protect LLM context."""
     try:
+        content_lines = []
         with path.open("r", encoding="utf-8") as handle:
-            return handle.read()
+            for i, line in enumerate(handle):
+                if i >= max_lines:
+                    content_lines.append(f"\n... [Truncated after {max_lines} lines] ...")
+                    break
+                content_lines.append(line)
+        return "".join(content_lines)
     except UnicodeDecodeError as exc:
         raise ValueError(
-            f"File '{path}' is not UTF-8 decodable. Skip binary or compiled artifacts."
+            f"File '{path.name}' is not UTF-8 decodable. It may be binary."
         ) from exc
 
-
-def _write_text_file(path: Path, content: str, append: bool = False) -> None:
-    ensure_directory(path.parent)
-    mode = "a" if append else "w"
-    with path.open(mode, encoding="utf-8") as handle:
-        handle.write(content)
-
+def _sanitize_mermaid_label(label: str) -> str:
+    """Escapes characters that break Mermaid syntax."""
+    # Replace brackets and quotes with safe alternatives
+    return label.replace("[", "(").replace("]", ")").replace('"', "'")
 
 def build_scoped_tools(codebase_root: str, workspace_root: str) -> List[Tool]:
     """Create Smolagents tools bound to the provided codebase and workspace roots."""
@@ -34,170 +49,142 @@ def build_scoped_tools(codebase_root: str, workspace_root: str) -> List[Tool]:
     codebase_root_path = Path(codebase_root).expanduser().resolve()
     workspace_root_path = ensure_directory(workspace_root)
 
+    def _is_safe_path(path: Path) -> bool:
+        # Check against common noisy or compiled directories
+        return not any(part in IGNORED_DIRS for part in path.parts)
+
     @tool
     def read_codebase_file(file_path: str) -> str:
-        """Read a UTF-8 text file inside the target codebase.
-
+        """Read a UTF-8 text file inside the target codebase (Truncated at 500 lines).
+        
         Args:
             file_path: Relative path inside the codebase directory.
         """
-
         resolved = resolve_within_root(codebase_root_path, file_path)
-        if "__pycache__" in resolved.parts:
-            raise ValueError(
-                "Compiled directories such as __pycache__ are not readable."
-            )
+        
+        if not resolved.exists():
+            raise FileNotFoundError(f"File '{file_path}' not found.")
         if not resolved.is_file():
-            raise FileNotFoundError(
-                f"File '{file_path}' not found inside the codebase."
-            )
-        blocked_suffixes = {".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe"}
-        if resolved.suffix.lower() in blocked_suffixes:
-            raise ValueError(
-                f"Binary or compiled file '{file_path}' is not supported; choose a text source."
-            )
-        return _read_text_file(resolved)
+             raise IsADirectoryError(f"'{file_path}' is a directory, not a file.")
+             
+        if resolved.suffix.lower() in BLOCKED_EXTENSIONS:
+            raise ValueError(f"File type '{resolved.suffix}' is not supported.")
+            
+        return _read_text_file_truncated(resolved)
 
     @tool
     def list_codebase_directory(dir_path: str = ".") -> List[str]:
-        """List entries within a directory of the codebase.
-
+        """List entries within a directory. Raises error if path is a file.
+        
         Args:
             dir_path: Relative directory path to inspect. Defaults to current directory.
         """
-
         resolved = resolve_within_root(codebase_root_path, dir_path)
+        
+        if resolved.is_file():
+            raise NotADirectoryError(f"Path '{dir_path}' is a file, use read_codebase_file instead.")
         if not resolved.is_dir():
-            return []
-        return sorted(
-            entry.name for entry in resolved.iterdir() if not entry.name.startswith(".")
-        )
+             raise FileNotFoundError(f"Directory '{dir_path}' not found.")
+
+        entries = []
+        for entry in resolved.iterdir():
+            if not entry.name.startswith(".") and entry.name not in IGNORED_DIRS:
+                entries.append(entry.name)
+        return sorted(entries)
 
     @tool
     def write_workspace_file(file_path: str, content: str, append: bool = False) -> str:
         """Write content to a file in the sub-agent workspace.
-
+        
         Args:
             file_path: Relative path inside the workspace where content is written.
             content: Text to write into the file.
             append: When True, append instead of overwriting.
         """
-
         resolved = resolve_within_root(workspace_root_path, file_path)
-        _write_text_file(resolved, content, append=append)
-        return str(resolved)
+        ensure_directory(resolved.parent)
+        mode = "a" if append else "w"
+        with resolved.open(mode, encoding="utf-8") as handle:
+            handle.write(content)
+        return f"Successfully wrote to {file_path}"
 
     @tool
-    def get_codebase_tree() -> str:
-        """Return a markdown-formatted tree of the accessible codebase."""
+    def get_codebase_tree(max_depth: int = MAX_TREE_DEPTH) -> str:
+        """Return a tree structure of the codebase.
+        
+        Args:
+            max_depth: Depth to traverse. Default is 3.
+        """
+        # Limit recursion to prevent context overflow
+        lines: List[str] = ["."]
+        
+        def _build_tree(directory: Path, prefix: str, current_depth: int):
+            if current_depth > max_depth or len(lines) > MAX_TREE_ITEMS:
+                return
 
-        def tree(directory: Path, prefix: str = "") -> List[str]:
+            # Filter and sort
             entries = sorted(
-                child for child in directory.iterdir() if not child.name.startswith(".")
+                child for child in directory.iterdir() 
+                if not child.name.startswith(".") and child.name not in IGNORED_DIRS
             )
-            lines: List[str] = []
+            
             for index, entry in enumerate(entries):
                 connector = "└── " if index == len(entries) - 1 else "├── "
                 child_prefix = "    " if index == len(entries) - 1 else "│   "
+                
                 if entry.is_dir():
                     lines.append(f"{prefix}{connector}{entry.name}/")
-                    lines.extend(tree(entry, prefix + child_prefix))
+                    if current_depth < max_depth:
+                        _build_tree(entry, prefix + child_prefix, current_depth + 1)
                 else:
                     lines.append(f"{prefix}{connector}{entry.name}")
-            return lines
-
-        lines = ["."] + tree(codebase_root_path)
+                    
+        _build_tree(codebase_root_path, "", 1)
+        
+        if len(lines) > MAX_TREE_ITEMS:
+            lines.append("... (Tree truncated due to size) ...")
+            
         return "```markdown\n" + "\n".join(lines) + "\n```"
 
     @tool
     def get_directory_mermaid(dir_path: str = ".", max_depth: int = 3) -> str:
-        """Return a Mermaid diagram representing the structure under a directory.
-
+        """Return a Mermaid diagram for visual structure analysis.
+        
         Args:
             dir_path: Relative directory path whose structure should be visualised.
             max_depth: Recursion depth for traversing children. Defaults to 3.
         """
-
         resolved = resolve_within_root(codebase_root_path, dir_path)
         if not resolved.exists():
-            raise FileNotFoundError(
-                f"Directory '{dir_path}' not found inside the codebase."
-            )
-
-        if resolved.is_file():
-            node_id = "root"
-            label = resolved.name
-            return "```mermaid\ngraph TD\n    {0}[{1}]\n```".format(node_id, label)
+             return "Directory not found."
 
         mapping: dict[Path, str] = {}
-
+        lines: List[str] = ["graph TD"]
+        
         def assign_id(path: Path) -> str:
             if path not in mapping:
                 mapping[path] = f"n{len(mapping)}"
             return mapping[path]
 
-        lines: List[str] = ["graph TD"]
-
-        def walk(path: Path, depth: int = 0) -> None:
-            node = assign_id(path)
-            label = path.name + ("/" if path.is_dir() else "")
-            lines.append(f"    {node}[{label}]")
+        def walk(path: Path, depth: int):
+            node_id = assign_id(path)
+            clean_label = _sanitize_mermaid_label(path.name)
+            label = clean_label + ("/" if path.is_dir() else "")
+            
+            lines.append(f"    {node_id}[\"{label}\"]")
+            
             if path.is_dir() and depth < max_depth:
-                for child in sorted(
-                    child
-                    for child in path.iterdir()
-                    if not child.name.startswith(".") and child.name != "__pycache__"
-                ):
-                    child_node = assign_id(child)
-                    lines.append(f"    {node} --> {child_node}")
+                children = sorted(
+                    c for c in path.iterdir() 
+                    if not c.name.startswith(".") and c.name not in IGNORED_DIRS
+                )
+                for child in children:
+                    child_id = assign_id(child)
+                    lines.append(f"    {node_id} --> {child_id}")
                     walk(child, depth + 1)
 
-        walk(resolved)
+        walk(resolved, 0)
         return "```mermaid\n" + "\n".join(lines) + "\n```"
-
-    @tool
-    def view_file_outline(file_path: str) -> str:
-        """View the outline (classes, functions, docstrings) of a Python file.
-
-        Args:
-            file_path: Relative path to the file.
-        """
-        resolved = resolve_within_root(codebase_root_path, file_path)
-        if not resolved.exists():
-            raise FileNotFoundError(f"File '{file_path}' not found.")
-
-        if resolved.suffix != ".py":
-            return "Outline only supported for Python files. Use read_codebase_file to read content."
-
-        try:
-            content = _read_text_file(resolved)
-            import ast
-
-            tree = ast.parse(content)
-
-            lines = []
-            for node in tree.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    args = [arg.arg for arg in node.args.args]
-                    lines.append(f"Function: {node.name}({', '.join(args)})")
-                    if ast.get_docstring(node):
-                        doc = ast.get_docstring(node).splitlines()[0]
-                        lines.append(f"  Docstring: {doc}...")
-                elif isinstance(node, ast.ClassDef):
-                    lines.append(f"Class: {node.name}")
-                    if ast.get_docstring(node):
-                        doc = ast.get_docstring(node).splitlines()[0]
-                        lines.append(f"  Docstring: {doc}...")
-                    for item in node.body:
-                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            args = [arg.arg for arg in item.args.args]
-                            lines.append(f"  Method: {item.name}({', '.join(args)})")
-
-            if not lines:
-                return "No classes or functions found."
-            return "\n".join(lines)
-        except Exception as e:
-            return f"Failed to parse outline: {e}"
 
     return [
         read_codebase_file,
@@ -205,5 +192,4 @@ def build_scoped_tools(codebase_root: str, workspace_root: str) -> List[Tool]:
         write_workspace_file,
         get_codebase_tree,
         get_directory_mermaid,
-        view_file_outline,
     ]

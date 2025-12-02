@@ -1,51 +1,126 @@
-# Getting Started with Sample Codebase
+# Getting Started with FastAPI RealWorld App
 
-This tutorial provides a quick guide to setting up your development environment, cloning the repository, and running a basic example to ensure everything is working correctly.
+This tutorial will guide you through setting up your development environment, running the FastAPI RealWorld Example App, and understanding its basic project structure. We'll also perform a simple health check to ensure everything is running correctly.
 
-## 1. Prerequisites
+## Prerequisites
 
-Before you begin, ensure you have the following installed:
+*   **Python 3.7+**: Ensure you have Python installed.
+*   **Docker**: Recommended for a seamless setup experience.
 
-- Python 3.7 or higher
-- Git
+## Project Setup
 
-## 2. Cloning the Repository
+1.  **Clone the Repository**:
+    ```bash
+git clone https://github.com/tiangolo/fastapi-realworld-example-app.git
+cd fastapi-realworld-example-app
+    ```
 
-First, clone the sample codebase repository to your local machine:
+2.  **Set up Environment Variables**:
+    Create a `.env` file in the root directory of the project with the following content:
 
-```bash
-git clone <repository_url>
-cd <repository_directory>
+    ```dotenv
+    # .env
+    API_PREFIX=/api/v1
+    DEBUG=True
+    ALLOWED_HOSTS=
+    DATABASE_PROJECT_NAME=fastapi-realworld-example-app
+    POSTGRES_USER=user
+    POSTGRES_PASSWORD=password
+    POSTGRES_SERVER=db
+    POSTGRES_PORT=5432
+    POSTGRES_DB=postgres
+    SECRET_KEY=
+    ```
+    *Note: You can leave `SECRET_KEY` empty for now; it will be auto-generated if not provided.*
+
+3.  **Install Dependencies**:
+    It's recommended to use a virtual environment:
+    ```bash
+python -m venv venv
+source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+pip install -r requirements.txt
+    ```
+
+## Running the Application
+
+This project uses Docker Compose for easy setup. Ensure you have Docker and Docker Compose installed.
+
+1.  **Build and Run with Docker Compose**:
+    ```bash
+docker-compose up --build
+    ```
+    This command will build the Docker images (if not already built) and start the application and its dependencies (like the database).
+
+2.  **Access the Application**:
+    The application will be running at `http://localhost:8000`.
+
+## Project Structure
+
+Here's a brief overview of the key directories and files:
+
+```
+.
+├── app/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── deps.py
+│   │   ├── exceptions.py
+│   │   ├── routes/
+│   │   │   ├── __init__.py
+│   │   │   ├── api.py
+│   │   │   ├── articles.py
+│   │   │   ├── comments.py
+│   │   │   ├── profiles.py
+│   │   │   └── users.py
+│   │   └── v1/
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── config.py
+│   │   ├── events.py
+│   │   └── security.py
+│   ├── db/
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── models.py
+│   │   └── session.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── user.py
+│   │   └── error.py
+│   └── services/
+│       ├── __init__.py
+│       └── ...
+├── tests/
+├── requirements.txt
+├── .env.example
+├── docker-compose.yml
+└── README.md
 ```
 
-Replace `<repository_url>` with the actual URL of the repository and `<repository_directory>` with the name of the directory after cloning.
+## Performing a Health Check
 
-## 3. Running a Basic Example
+You can verify that the application is running by sending a request to the health check endpoint.
 
-This section will guide you through running a simple example to verify your setup. We will use the example located in the `examples/` directory.
-
-### 3.1. Navigate to the examples directory
+Send a GET request to `http://localhost:8000/api/v1/health`:
 
 ```bash
-cd examples/
+curl -X GET http://localhost:8000/api/v1/health
 ```
 
-### 3.2. Run the example script
+**Expected Response:**
 
-Assuming there is a basic example script (e.g., `basic_example.py`), you can run it as follows:
-
-```bash
-python basic_example.py
+```json
+{
+  "ping": "pong"
+}
 ```
 
-This command should execute without errors and may produce some output indicating its successful run.
-
-## 4. Verifying the Output
-
-Observe the output of the script. If you see messages confirming the successful execution of the basic example, your environment is set up correctly, and you are ready to explore further.
+This confirms that your FastAPI application is up and running successfully.
 
 ## Next Steps
 
-Now that you have successfully set up your environment and run a basic example, you can proceed to the next tutorial to understand the core concepts and models of the sample codebase:
-
-- [Understanding Core Concepts and Models](02_understanding_core_concepts.md)
+*   Explore User Authentication in [02_user_authentication.md](02_user_authentication.md).
+*   Learn about Managing Articles in [03_article_management.md](03_article_management.md).

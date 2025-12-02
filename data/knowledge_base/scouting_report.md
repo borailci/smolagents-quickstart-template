@@ -4,42 +4,121 @@ Generated before launching analyzer sub-agents to capture a high-level snapshot 
 
 ## Top-Level Structure
 ```markdown
-(Tree of /Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/sample_codebase)
+fastapi-realworld-example-app/
+├── app/
+│   ├── api/
+│   ├── core/
+│   ├── db/
+│   ├── models/
+│   ├── resources/
+│   ├── services/
+│   ├── __init__.py
+│   └── main.py
+├── postman/
+│   ├── Conduit.postman_collection.json
+│   └── run-api-tests.sh
+├── scripts/
+│   ├── format
+│   ├── lint
+│   ├── test
+│   └── test-cov-html
+├── tests/
+│   ├── test_api/
+│   ├── test_db/
+│   ├── test_schemas/
+│   ├── test_services/
+│   ├── __init__.py
+│   ├── conftest.py
+│   └── fake_asyncpg_pool.py
+├── alembic.ini
+├── docker-compose.yml
+├── Dockerfile
+├── LICENSE
+├── poetry.lock
+├── pyproject.toml
+├── README.rst
+└── setup.cfg
 ```
 
-## README.md (excerpt)
+## First-Level Directories of `src/`
 
-```markdown
-# TaskFlow - Simple Task Management API
-
-A lightweight task management application demonstrating clean Python project structure with REST API patterns, data models, and business logic.
-
-
-```
+- app
+- tests
+- postman
+- scripts
 
 ## Dependency Config (excerpt)
 
 ```text
-# TaskFlow Requirements
-# Python 3.8+
+[tool.poetry]
+name = "fastapi-realworld-example-app"
+version = "0.0.0"
+description = "Backend logic implementation for https://github.com/gothinkster/realworld with awesome FastAPI"
+authors = ["Nik Sidnev <sidnev.nick@gmail.com>"]
+license = "MIT"
 
-# Web Framework
-Flask==2.3.2
-Werkzeug==2.3.6
+[tool.poetry.dependencies]
+python = "^3.9"
+uvicorn = "^0.18.2"
+fastapi = "^0.79.1"
+pydantic = { version = "^1.9", extras = ["email", "dotenv"] }
+passlib = { version = "^1.7", extras = ["bcrypt"] }
+pyjwt = "^2.4"
+databases = "^0.6.1"
+asyncpg = "^0.26.0"
+psycopg2-binary = "^2.9.3"
+aiosql = "^6.2"
+pypika = "^0.48.9"
+alembic = "^1.8"
+python-slugify = "^6.1"
+Unidecode = "^1.3"
+loguru = "^0.6.0"
 
-# Environment Management
-python-dotenv==1.0.0
+[tool.poetry.dev-dependencies]
+black = "^22.6.0"
+isort = "^5.10"
+autoflake = "^1.4"
+wemake-python-styleguide = "^0.16.1"
+mypy = "^0.971"
+flake8-fixme = "^1.1"
+pytest = "^7.1"
+pytest-cov = "^3.0"
+pytest-asyncio = "^0.19.0"
+pytest-env = "^0.6.2"
+pytest-xdist = "^2.4.0"
+httpx = "^0.23.0"
+asgi-lifespan = "^1.0.1"
 
-# Testing
-pytest==7.4.0
-pytest-cov==4.1.0
+[tool.isort]
+profile = "black"
+src_paths = ["app", "tests"]
+combine_as_imports = true
 
-# Code Quality
-black==23.7.0
-flake8==6.0.0
-isort==5.12.0
+[tool.pytest.ini_options]
+testpaths = "tests"
+filterwarnings = "error"
+addopts = '''
+  --strict-markers
+  --tb=short
+  --cov=app
+  --cov=tests
+  --cov-branch
+  --cov-report=term-missing
+  --cov-report=html
+  --cov-report=xml
+  --no-cov-on-fail
+  --cov-fail-under=100
+  --numprocesses=auto
+  --asyncio-mode=auto
+'''
+env = [
+  "SECRET_KEY=secret",
+  "MAX_CONNECTIONS_COUNT=1",
+  "MIN_CONNECTIONS_COUNT=1"
+]
 
-# Utilities
-requests==2.31.0
+[build-system]
+requires = ["poetry>=1.0"]
+build-backend = "poetry.masonry.api"
 
 ```

@@ -3,13 +3,13 @@
 This knowledge base was generated automatically.
 
 ## Covered Areas
-- `README.md`
-- `src/api`
-- `src/models`
+- `app`
+- `tests`
+- `tests`
 
 ## Artifact Index
-- [README.md](README.md)
+- [app.md](app.md)
 - [plan.md](plan.md)
 - [scouting_report.md](scouting_report.md)
-- [src_api.md](src_api.md)
-- [src_models.md](src_models.md)
+- [tests.md](tests.md)
+- [tests.md](tests.md)

@@ -251,19 +251,31 @@ class KnowledgeBaseBuilder:
         # Build planner task
         task = (
             f"{context_summary}\n\n"
-            "Based on this codebase structure, select 3-6 folders/files that should be documented. "
+            "Explore the codebase using the provided tools. Select 4-8 distinct folders/files that should be documented.\n"
             "Return ONLY a JSON array of relative paths, nothing else."
         )
         
         # Create simple planner agent (no tools needed, just decision)
         from smolagents import  LiteLLMModel, ToolCallingAgent
         from toolkits.sub_agent_toolkit import LITELLM_MODEL_ID, LITELLM_API_KEY
+        from toolkits.scoped_filesystem_toolkit import build_scoped_tools
+        
+        # Give planner a temporary workspace for tools (even if it doesn't write)
+        planner_workspace = self.sub_agents_root / "planner"
+        self._reset_directory(planner_workspace)
+        
+        planner_tools = build_scoped_tools(
+            codebase_root=str(self.codebase_root),
+            workspace_root=str(planner_workspace)
+        )
+        # Filter out writing tools to keep it read-only
+        planner_tools = [t for t in planner_tools if "write" not in t.name]
         
         model = LiteLLMModel(model_id=LITELLM_MODEL_ID, api_key=LITELLM_API_KEY)
         planner = ToolCallingAgent(
             name="documentation_planner",
             description="Selects which parts of codebase to document",
-            tools=[],  # No tools - pure reasoning
+            tools=planner_tools,
             model=model,
             instructions=prompts.PLANNER_AGENT_PROMPT
         )
@@ -603,12 +615,38 @@ class KnowledgeBaseBuilder:
         return len(content.strip()) > 50 # Simple heuristic
 
     def _build_directory_tree(self, root: Path, max_depth: int = 2) -> str:
-        # Simplified tree for brevity, logic remains same as original
-        return f"(Tree of {root})"
+        tree_lines = []
+        
+        def _add_to_tree(path: Path, current_depth: int, prefix: str = ""):
+            if current_depth > max_depth:
+                return
+            
+            try:
+                items = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+            except PermissionError:
+                return
+
+            items = [i for i in items if not i.name.startswith(".") and i.name not in ["__pycache__", "node_modules", "venv", "env"]]
+            
+            for index, item in enumerate(items):
+                is_last = index == len(items) - 1
+                connector = "└── " if is_last else "├── "
+                
+                tree_lines.append(f"{prefix}{connector}{item.name}{'/' if item.is_dir() else ''}")
+                
+                if item.is_dir():
+                    extension = "    " if is_last else "│   "
+                    _add_to_tree(item, current_depth + 1, prefix + extension)
+
+        tree_lines.append(f"{root.name}/")
+        _add_to_tree(root, 1)
+        return "\n".join(tree_lines)
 
     def _summarize_top_level_directories(self) -> List[str]:
-        # Logic remains same
-        return []
+        try:
+            return [p.name for p in self.codebase_root.iterdir() if p.is_dir() and not p.name.startswith(".")]
+        except Exception:
+            return []
 
     def _read_file_excerpt(self, path: Path, max_chars: int = 2000) -> str | None:
         if path.exists():

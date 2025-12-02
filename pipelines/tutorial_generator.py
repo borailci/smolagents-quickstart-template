@@ -136,7 +136,27 @@ def _validate_tutorial_content(content: str, tutorial_path: Path) -> List[str]:
     # Check 9: Mermaid syntax (nested parens)
     if re.search(r'\[.*?\(.*?\).*?\]', content):
         errors.append(f"{tutorial_path.name}: ⚠️  Potential Mermaid syntax error (nested parens in node label)")
-    
+
+    # Check 10: Nested code blocks (strict line-by-line check)
+    lines = content.split('\n')
+    in_block = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('```'):
+            if not in_block:
+                in_block = True
+            else:
+                # We are inside a block.
+                # If it's just ```, it closes.
+                # If it has content after ``` (e.g. ```python), it's a nested open!
+                if len(stripped) > 3:
+                    errors.append(f"{tutorial_path.name}: ❌ Nested code block detected at line {i+1} ('{stripped}')")
+                in_block = False
+        elif in_block:
+            # Check 11: Meta-commentary inside code block
+            if "**NOTE:**" in line or "@pytest.Mindtype" in line:
+                errors.append(f"{tutorial_path.name}: ❌ Meta-commentary detected inside code block at line {i+1}")
+
     return errors
 
 

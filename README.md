@@ -49,11 +49,14 @@ uv run pipelines/cli.py spawn-subagents "Analyze src/utils and document helper u
 
 You can also control these defaults with environment variables:
 
-| Feature           | CLI flag                             | Env var                            |
-| ----------------- | ------------------------------------ | ---------------------------------- |
-| Code search tools | `--code-search` / `--no-code-search` | `TUTORIAL_ENABLE_CODE_SEARCH=true` |
-| Retrieval helper  | `--rag` / `--no-rag`                 | `TUTORIAL_ENABLE_RAG=true`         |
-| Snippet cap       | `--rag-max-snippets N`               | `TUTORIAL_RAG_MAX_SNIPPETS=N`      |
+| Feature             | CLI flag                                | Env var                               |
+| ------------------- | --------------------------------------- | ------------------------------------- |
+| Code search tools   | `--code-search` / `--no-code-search`    | `TUTORIAL_ENABLE_CODE_SEARCH=true`    |
+| Retrieval helper    | `--rag` / `--no-rag`                    | `TUTORIAL_ENABLE_RAG=true`            |
+| Snippet cap         | `--rag-max-snippets N`                  | `TUTORIAL_RAG_MAX_SNIPPETS=N`         |
+| Tutorial step delay | `tutorials --step-delay-seconds 1.5`    | `TUTORIAL_STEP_DELAY_SECONDS=1.5`     |
+| KB step pad         | `knowledge-base --step-delay-seconds 2` | `KNOWLEDGE_BASE_STEP_DELAY_SECONDS=2` |
+| KB target cap       | `knowledge-base --max-targets 4`        | `KNOWLEDGE_BASE_MAX_TARGETS=4`        |
 
 With `--rag` enabled the tutorial toolkit rebuilds a persistent Chroma collection under `data/rag_vector_store`, embedding knowledge-base markdown and selected source files via LiteLLM. Subsequent queries are answered with semantic matches pulled from that vector store.
 

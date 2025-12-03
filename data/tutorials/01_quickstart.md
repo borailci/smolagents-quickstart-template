@@ -1,126 +1,92 @@
-# Getting Started with FastAPI RealWorld App
+# Quickstart: Setting Up and Running the RealWorld App
 
-This tutorial will guide you through setting up your development environment, running the FastAPI RealWorld Example App, and understanding its basic project structure. We'll also perform a simple health check to ensure everything is running correctly.
+This tutorial will guide you through the process of setting up your development environment and running the FastAPI RealWorld application for the first time.
 
 ## Prerequisites
 
-*   **Python 3.7+**: Ensure you have Python installed.
-*   **Docker**: Recommended for a seamless setup experience.
+*   **Docker**: Make sure Docker is installed and running on your system.
+*   **Docker Compose**: Docker Compose is typically installed with Docker.
+*   **Poetry**: For dependency management. Installation instructions can be found at https://python-poetry.org/docs/#installation
 
-## Project Setup
+## 1. Clone the Repository
 
-1.  **Clone the Repository**:
-    ```bash
-git clone https://github.com/tiangolo/fastapi-realworld-example-app.git
-cd fastapi-realworld-example-app
-    ```
-
-2.  **Set up Environment Variables**:
-    Create a `.env` file in the root directory of the project with the following content:
-
-    ```dotenv
-    # .env
-    API_PREFIX=/api/v1
-    DEBUG=True
-    ALLOWED_HOSTS=
-    DATABASE_PROJECT_NAME=fastapi-realworld-example-app
-    POSTGRES_USER=user
-    POSTGRES_PASSWORD=password
-    POSTGRES_SERVER=db
-    POSTGRES_PORT=5432
-    POSTGRES_DB=postgres
-    SECRET_KEY=
-    ```
-    *Note: You can leave `SECRET_KEY` empty for now; it will be auto-generated if not provided.*
-
-3.  **Install Dependencies**:
-    It's recommended to use a virtual environment:
-    ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-pip install -r requirements.txt
-    ```
-
-## Running the Application
-
-This project uses Docker Compose for easy setup. Ensure you have Docker and Docker Compose installed.
-
-1.  **Build and Run with Docker Compose**:
-    ```bash
-docker-compose up --build
-    ```
-    This command will build the Docker images (if not already built) and start the application and its dependencies (like the database).
-
-2.  **Access the Application**:
-    The application will be running at `http://localhost:8000`.
-
-## Project Structure
-
-Here's a brief overview of the key directories and files:
-
-```
-.
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── deps.py
-│   │   ├── exceptions.py
-│   │   ├── routes/
-│   │   │   ├── __init__.py
-│   │   │   ├── api.py
-│   │   │   ├── articles.py
-│   │   │   ├── comments.py
-│   │   │   ├── profiles.py
-│   │   │   └── users.py
-│   │   └── v1/
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── config.py
-│   │   ├── events.py
-│   │   └── security.py
-│   ├── db/
-│   │   ├── __init__.py
-│   │   ├── base.py
-│   │   ├── models.py
-│   │   └── session.py
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── base.py
-│   │   ├── user.py
-│   │   └── error.py
-│   └── services/
-│       ├── __init__.py
-│       └── ...
-├── tests/
-├── requirements.txt
-├── .env.example
-├── docker-compose.yml
-└── README.md
-```
-
-## Performing a Health Check
-
-You can verify that the application is running by sending a request to the health check endpoint.
-
-Send a GET request to `http://localhost:8000/api/v1/health`:
+First, clone the official FastAPI RealWorld example application repository:
 
 ```bash
-curl -X GET http://localhost:8000/api/v1/health
+git clone https://github.com/nsidnev/fastapi-realworld-example-app
+cd fastapi-realworld-example-app
 ```
 
-**Expected Response:**
+## 2. Set Up the Database with Docker Compose
 
-```json
-{
-  "ping": "pong"
-}
+The project uses Docker Compose to manage the PostgreSQL database. 
+
+First, create a `.env` file in the root of the project to store environment-specific variables. Add the following content to the `.env` file:
+
+```ini
+# .env file
+APP_ENV=dev
+POSTGRES_USER=rwuser
+POSTGRES_PASSWORD=rwpassword
+POSTGRES_DB=rwdb
+POSTGRES_HOST=db
+POSTGRES_PORT=5432
+SECRET_KEY=your-secret-key-for-jwt-signing
 ```
 
-This confirms that your FastAPI application is up and running successfully.
+Then, start the database service using Docker Compose:
 
-## Next Steps
+```bash
+docker-compose up -d db
+```
 
-*   Explore User Authentication in [02_user_authentication.md](02_user_authentication.md).
-*   Learn about Managing Articles in [03_article_management.md](03_article_management.md).
+This command will download the PostgreSQL image (if you dont have it already) and start a PostgreSQL container in the background. It will also create a volume to persist your database data.
+
+## 3. Install Dependencies with Poetry
+
+Install the project dependencies using Poetry:
+
+```bash
+poetry install
+```
+
+This command reads the `pyproject.toml` file and installs all the necessary packages, including FastAPI, Pydantic, and database drivers.
+
+Activate the Poetry shell to ensure you are using the project's isolated environment:
+
+```bash
+poetry shell
+```
+
+## 4. Apply Database Migrations
+
+Before running the application, apply the database migrations to set up the necessary tables and schema. The `alembic` tool is used for this purpose. Ensure your `.env` file has the `DATABASE_URL` variable configured correctly. If you used the example `.env` above, you can add the following line:
+
+```ini
+# .env file (add this line)
+DATABASE_URL=postgresql://rwuser:rwpassword@db:5432/rwdb
+```
+
+Now, run the migrations:
+
+```bash
+alembic upgrade head
+```
+
+## 5. Run the FastAPI Application
+
+Finally, run the FastAPI application using Uvicorn:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+The `--reload` flag enables hot-reloading, so the server will restart automatically when you make code changes.
+
+## Accessing the Application
+
+The application will be running at `http://127.0.0.1:8000`.
+
+You can access the interactive API documentation (Swagger UI) at `http://127.0.0.1:8000/swagger`.
+
+Congratulations! You have successfully set up and run the FastAPI RealWorld application.

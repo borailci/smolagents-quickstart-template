@@ -117,7 +117,7 @@ uv.lock
 .pdm-python
 .pdm-build/
 
-pipelines/
+logs/
 # pixi
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
 #pixi.lock
@@ -210,3 +210,14 @@ __marimo__/
 
 # gradio
 .gradio/
+
+# Generated knowledge base artifacts
+data/knowledge_base/
+!data/knowledge_base/.gitkeep
+
+# Agent workspaces / scratchpads
+data/sub_agents_workspace/
+!data/sub_agents_workspace/.gitkeep
+
+# Local filtered logs
+filtered_log*.txt

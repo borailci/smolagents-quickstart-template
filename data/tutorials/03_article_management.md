@@ -1,222 +1,129 @@
-# 03 Article Management
+# Article Management: Creating, Reading, Updating, and Deleting Articles
 
+This tutorial will guide you through managing articles using the API. We will cover how to perform CRUD (Create, Read, Update, Delete) operations on articles, interacting with the relevant API endpoints and understanding the underlying service logic.
 
-## Article Management
+## API Endpoints for Article Management
 
-The article management feature allows users to perform CRUD (Create, Read, Update, Delete) operations on articles. This section outlines the API endpoints and provides examples of how to interact with them.
+The application provides several API endpoints for managing articles. These endpoints are typically mounted under the `/api/articles` path.
 
-### Creating an Article (`app/api/routes/articles.py`)
+### Creating an Article
 
-```python
-@router.post(
-    "/articles",
-    response_model=ArticleResponse,
-    status_code=status.HTTP_201_CREATED,
-    name="articles:create-article",
-    dependencies=[Depends(get_verified_token)],
-)
-async def create_article(
-    article_data: ArticleCreateSchema,
-    article_service: ArticleService = Depends(get_article_service),
-) -> ArticleResponse:
-    article = await article_service.create_article(article_data=article_data)
-    return ArticleResponse(article=article)
+To create a new article, you use the `POST /api/articles` endpoint. This requires authentication and a payload containing the article details.
+
+**Request Example (HTTP)**:
+
+```http
+POST /api/articles HTTP/1.1
+Host: your-api-host.com
+Content-Type: application/json
+Authorization: Token YOUR_AUTH_TOKEN
+
+{
+  "article": {
+    "title": "New Article Title",
+    "description": "A short description of the new article.",
+    "body": "This is the full content of the new article.",
+    "tagList": ["tag1", "tag2"]
+  }
+}
 ```
 
-### Retrieving Articles (`app/api/routes/articles.py`)
+**Service Logic**: The `articles.py` service likely handles slug generation from the title and interacts with the `ArticlesRepository` to save the new article to the database.
 
-This endpoint retrieves a list of articles, with options for filtering and pagination.
+### Reading Articles
 
-```python
-@router.get("/articles", response_model=ArticlesResponse, name="articles:get-articles")
-async def get_articles(
-    tag: str | None = None,
-    author: str | None = None,
-    favorited: str | None = None,
-    limit: int = Query(default=20, ge=1, le=100), # Default limit to 20, max 100
-    offset: int = Query(default=0, ge=0), # Default offset to 0
-    article_service: ArticleService = Depends(get_article_service),
-    token: str | None = Depends(get_optional_token), # For checking followed authors and favorited status
-) -> ArticlesResponse:
-    articles = await article_service.get_articles( 
-        limit=limit, 
-        offset=offset, 
-        tag=tag, 
-        author=author, 
-        favorited=favorited,
-        user_id=token.user.id if token else None # Pass user ID if authenticated
-    )
-    return ArticlesResponse(articles=articles, articles_count=len(articles))
+There are multiple ways to read articles:
+
+*   **Get a single article by slug**: `GET /api/articles/:slug`
+    This endpoint retrieves a specific article. It requires an `ArticlesRepository` and uses the `get_article_by_slug_from_path` dependency to fetch the article, handling cases where the article does not exist.
+
+    **Request Example (HTTP)**:
+
+    ```http
+    GET /api/articles/new-article-title HTTP/1.1
+    Host: your-api-host.com
+    ```
+
+*   **Get multiple articles (feed)**: `GET /api/articles`
+    This endpoint retrieves a list of articles, optionally filtered by tags, authors, or favorited status, and supports pagination. The `get_articles_filters` dependency is used to parse query parameters like `tag`, `author`, `favorited`, `limit`, and `offset`.
+
+    **Request Example (HTTP)**:
+
+    ```http
+    GET /api/articles?tag=python&limit=10&offset=0 HTTP/1.1
+    Host: your-api-host.com
+    ```
+
+### Updating an Article
+
+To update an existing article, you use the `PUT /api/articles/:slug` endpoint. This operation is typically restricted to the author of the article.
+
+**Service Logic**: The `check_article_modification_permissions` dependency ensures that the authenticated user is the author of the article before allowing the update. The `ArticlesRepository` is then used to persist the changes.
+
+**Request Example (HTTP)**:
+
+```http
+PUT /api/articles/your-article-slug HTTP/1.1
+Host: your-api-host.com
+Content-Type: application/json
+Authorization: Token YOUR_AUTH_TOKEN
+
+{
+  "article": {
+    "title": "Updated Article Title",
+    "description": "Updated description.",
+    "body": "Updated body content."
+  }
+}
 ```
 
-### Retrieving a Single Article (`app/api/routes/articles.py`)
+### Deleting an Article
 
-```python
-@router.get("/articles/{slug}", response_model=ArticleResponse, name="articles:get-article")
-async def retrieve_article(
-    slug: str,
-    article_service: ArticleService = Depends(get_article_service),
-    token: str | None = Depends(get_optional_token), # For liking check
-) -> ArticleResponse:
-    article = await article_service.get_article_by_slug(slug=slug, user_id=token.user.id if token else None)
-    return ArticleResponse(article=article)
+To delete an article, you use the `DELETE /api/articles/:slug` endpoint. Similar to updating, this is typically restricted to the article's author.
+
+**Service Logic**: The `check_article_modification_permissions` dependency also guards this endpoint. The `ArticlesRepository` would then be responsible for removing the article from the database.
+
+**Request Example (HTTP)**:
+
+```http
+DELETE /api/articles/your-article-slug HTTP/1.1
+Host: your-api-host.com
+Authorization: Token YOUR_AUTH_TOKEN
 ```
 
-### Updating an Article (`app/api/routes/articles.py`)
+## Underlying Service Logic
 
-```python
-@router.put(
-    "/articles/{slug}",
-    response_model=ArticleResponse,
-    name="articles:update-article",
-    dependencies=[Depends(get_verified_token)],
-)
-async def update_article(
-    slug: str,
-    article_data: ArticleUpdateSchema,
-    article_service: ArticleService = Depends(get_article_service),
-) -> ArticleResponse:
-    updated_article = await article_service.update_article(
-        slug=slug,
-        article_data=article_data
-    )
-    return ArticleResponse(article=updated_article)
+Article management heavily relies on the `app/services/articles.py` and `app/db/repositories/articles.py` modules.
+
+*   **`app/services/articles.py`**: Contains business logic such as generating slugs (`get_slug_for_article`), checking article existence (`check_article_exists`), and verifying user permissions for modification (`check_user_can_modify_article`).
+*   **`app/db/repositories/articles.py`**: This repository handles direct interactions with the database for article-related data operations (e.g., fetching, creating, updating, deleting articles).
+
+## Architecture Diagram (Mermaid Sequence Diagram)
+
+This diagram illustrates the flow for creating a new article:
+
+```mermaid
+sequenceDiagram
+    participant API
+    participant ArticleService
+    participant ArticlesRepository
+    participant Database
+
+    API->>ArticleService: POST /api/articles (article data)
+    ArticleService->>ArticlesRepository: generate_slug(title)
+    ArticlesRepository-->>ArticleService: slug
+    ArticleService->>ArticlesRepository: create_article(article_data_with_slug)
+    ArticlesRepository->>Database: INSERT INTO articles (...)
+    Database-->>ArticlesRepository: success
+    ArticlesRepository-->>ArticleService: created_article
+    ArticleService-->>API: Article response
 ```
 
-### Deleting an Article (`app/api/routes/articles.py`)
+This diagram shows how an incoming API request is processed by the service layer, which in turn uses the repository to interact with the database. The service layer is also responsible for generating slugs for new articles.
 
-```python
-@router.delete("/articles/{slug}", status_code=status.HTTP_204_NO_CONTENT, name="articles:delete-article", dependencies=[Depends(get_verified_token)])
-async def delete_article(
-    slug: str,
-    article_service: ArticleService = Depends(get_article_service),
-) -> Response:
-    await article_service.delete_article(slug=slug)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-```
+## Further Reading
 
-## Testing Article Management
-
-The `tests` module contains comprehensive tests for article management, ensuring that all CRUD operations function correctly. You can find these tests in `tests/test_api/test_routes.py`.
-
-### Example Test (`tests/test_api/test_routes.py`)
-
-```python
-async def test_create_article(authorized_client: AsyncClient, test_user: Dict, authorization_prefix: str, token: str) -> None:
-    response = await authorized_client.post(
-        "/articles",
-        json={
-            "title": "Test Article Creation",
-            "slug": "test-article-creation",
-            "description": "This is a test article.",
-            "body": "This is the body of the test article.",
-            "tagList": ["testing", "api"],
-        },
-    )
-    assert response.status_code == 201
-    data = response.json()["article"]
-    assert data["title"] == "Test Article Creation"
-    assert data["slug"] == "test-article-creation"
-    assert data["description"] == "This is a test article."
-    assert data["body"] == "This is the body of the test article."
-    assert data["tagList"] == ["testing", "api"]
-    assert data["author"]["username"] == test_user["username"]
-
-async def test_get_articles(authorized_client: AsyncClient, test_user: Dict, token: str) -> None:
-    # First, create an article to ensure there is something to retrieve
-    await authorized_client.post(
-        "/articles",
-        json={
-            "title": "Another Article",
-            "slug": "another-article",
-            "description": "A second test article.",
-            "body": "Content for the second article.",
-            "tagList": ["testing"],
-        },
-    )
-
-    response = await authorized_client.get("/articles")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["articles_count"] > 0
-    assert len(data["articles"]) == data["articles_count"]
-
-    # Example: Filter by tag
-    response_tag = await authorized_client.get("/articles?tag=testing")
-    assert response_tag.status_code == 200
-    data_tag = response_tag.json()
-    assert data_tag["articles_count"] > 0
-    assert all(tag == "testing" for article in data_tag["articles"] for tag in article["tagList"])
-
-async def test_get_single_article(authorized_client: AsyncClient, test_user: Dict, token: str) -> None:
-    # Create an article first
-    create_response = await authorized_client.post(
-        "/articles",
-        json={
-            "title": "Single Article",
-            "slug": "single-article",
-            "description": "This article is for single retrieval test.",
-            "body": "Body of the single article.",
-            "tagList": ["single"],
-        },
-    )
-    article_slug = create_response.json()["article"]["slug"]
-
-    response = await authorized_client.get(f"/articles/{article_slug}")
-    assert response.status_code == 200
-    data = response.json()["article"]
-    assert data["slug"] == article_slug
-    assert data["title"] == "Single Article"
-
-async def test_update_article(authorized_client: AsyncClient, test_user: Dict, token: str) -> None:
-    # Create an article first
-    create_response = await authorized_client.post(
-        "/articles",
-        json={
-            "title": "Article to Update",
-            "slug": "article-to-update",
-            "description": "Initial description.",
-            "body": "Initial body.",
-            "tagList": ["update", "test"],
-        },
-    )
-    article_slug = create_response.json()["article"]["slug"]
-
-    # Update the article
-    update_response = await authorized_client.put(
-        f"/articles/{article_slug}",
-        json={
-            "title": "Updated Article Title",
-            "description": "Updated description.",
-            "body": "Updated body content.",
-        },
-    )
-    assert update_response.status_code == 200
-    data = update_response.json()["article"]
-    assert data["title"] == "Updated Article Title"
-    assert data["description"] == "Updated description."
-    assert data["body"] == "Updated body content."
-    assert data["slug"] == article_slug # Slug should remain the same
-
-async def test_delete_article(authorized_client: AsyncClient, test_user: Dict, token: str) -> None:
-    # Create an article first
-    create_response = await authorized_client.post(
-        "/articles",
-        json={
-            "title": "Article to Delete",
-            "slug": "article-to-delete",
-            "description": "This article will be deleted.",
-            "body": "Content for deletion.",
-            "tagList": ["delete"],
-        },
-    )
-    article_slug = create_response.json()["article"]["slug"]
-
-    # Delete the article
-    delete_response = await authorized_client.delete(f"/articles/{article_slug}")
-    assert delete_response.status_code == 204
-
-    # Verify deletion by trying to retrieve it
-    get_response = await authorized_client.get(f"/articles/{article_slug}")
-    assert get_response.status_code == 404
-```
+*   [API Module Documentation](%s)
+*   [Models Module Documentation](%s)
+*   [Services Module Documentation](%s)
+*   [Database Module Documentation](%s)

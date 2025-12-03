@@ -29,6 +29,9 @@ CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
 SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
 SUB_AGENT_RPM_ENV = "SUB_AGENT_REQUESTS_PER_MINUTE"
 DEFAULT_SUB_AGENT_RPM = 4.0
+DEFAULT_SUB_AGENT_MAX_RETRIES = 10
+DEFAULT_SUB_AGENT_TOOL_CALL_BUDGET = 6
+DEFAULT_SUB_AGENT_DIRECTORY_CALL_BUDGET = 0
 
 
 _RETRY_IN_PATTERN = re.compile(
@@ -40,6 +43,48 @@ _RETRY_DELAY_PATTERN = re.compile(
 _QUOTA_RESET_PATTERN = re.compile(
     r"Please retry in ([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE
 )
+
+
+class ToolBudgetExceededError(RuntimeError):
+    """Raised when an agent exceeds its configured tool usage budget."""
+
+
+@dataclass
+class ToolUsageBudget:
+    agent_index: int
+    max_total_calls: int | None = None
+    max_directory_calls: int | None = None
+    total_calls: int = 0
+    directory_calls: int = 0
+
+    def record(self, tool_name: str) -> None:
+        if tool_name == "write_workspace_file":
+            return
+        self.total_calls += 1
+        if tool_name == "list_codebase_directory":
+            self.directory_calls += 1
+            if (
+                self.max_directory_calls is not None
+                and self.directory_calls > self.max_directory_calls
+            ):
+                logger.error(
+                    "Sub-agent %d exceeded directory listing budget (%d).",
+                    self.agent_index,
+                    self.max_directory_calls,
+                )
+                raise ToolBudgetExceededError(
+                    "Directory listing limit exceeded; rely on provided structure."
+                )
+
+        if self.max_total_calls is not None and self.total_calls > self.max_total_calls:
+            logger.error(
+                "Sub-agent %d exceeded total tool call budget (%d).",
+                self.agent_index,
+                self.max_total_calls,
+            )
+            raise ToolBudgetExceededError(
+                "Tool call budget exceeded; consolidate your findings and stop."
+            )
 
 
 class SubAgentRole(str, Enum):
@@ -109,10 +154,10 @@ def _resolve_sub_agent_rpm() -> float:
 def _build_model() -> LiteLLMModel:
     if not LITELLM_MODEL_ID or not LITELLM_API_KEY:
         raise RuntimeError("LITELLM_MODEL_ID and LITELLM_API_KEY must be configured.")
-    
+
     # Configure automatic retries via environment variable
     os.environ["LITELLM_NUM_RETRIES"] = "10"
-    
+
     logger.info(
         "Initializing sub-agent model {} with 10 retries",
         LITELLM_MODEL_ID,
@@ -148,10 +193,12 @@ def _execute_sub_agent_runs(
     *,
     codebase_root: Optional[str | Path] = None,
     sub_agents_root: Optional[str | Path] = None,
-    max_retries: int = 3,
+    max_retries: int = DEFAULT_SUB_AGENT_MAX_RETRIES,
     window_seconds: float = 90.0,
     max_requests_per_window: int = 4,
     min_interval_seconds: float = 5.0,
+    max_tool_calls: int | None = None,
+    max_directory_calls: int | None = None,
 ) -> List[Path]:
     if not task_payloads:
         return []
@@ -205,15 +252,31 @@ def _execute_sub_agent_runs(
 
         logger.info("Launching sub-agent {} in {}", index, workspace)
 
-        scoped_tools = build_scoped_tools(
-            codebase_root=str(codebase_path),
-            workspace_root=str(workspace),
+        budget = (
+            ToolUsageBudget(
+                agent_index=index,
+                max_total_calls=max_tool_calls,
+                max_directory_calls=max_directory_calls,
+            )
+            if max_tool_calls is not None or max_directory_calls is not None
+            else None
         )
 
         base_instructions = _formatted_prompt(description, instruction_prompt)
+        if STRICT_JSON_REMINDER not in base_instructions:
+            base_instructions += STRICT_JSON_REMINDER
         current_instructions = base_instructions
 
         def _build_agent(instructions: str) -> ToolCallingAgent:
+            scoped_tools = build_scoped_tools(
+                codebase_root=str(codebase_path),
+                workspace_root=str(workspace),
+                usage_callback=budget.record if budget else None,
+                allow_directory_listing=False,
+                allow_tree=False,
+                allow_mermaid=False,
+                allow_writes=True,
+            )
             return ToolCallingAgent(
                 name=f"sub_agent_{index}",
                 description=f"Knowledge-base agent for task {index}",
@@ -268,6 +331,9 @@ def _execute_sub_agent_runs(
                 break
             except Exception as exc:
                 last_exc = exc
+                if isinstance(exc, ToolBudgetExceededError):
+                    raise
+
                 step_end = time.monotonic()
                 request_timestamps.append(step_end)
                 elapsed = step_end - step_start
@@ -309,11 +375,15 @@ def _execute_sub_agent_runs(
                             last_exc,
                         )
                         raise
-                    
+
                     # Exponential backoff for rate limits
-                    base_delay = _extract_retry_after_seconds(last_exc, default=min_interval_seconds * 2)
-                    wait_seconds = max(base_delay, min_interval_seconds * (2 ** (attempt - 1)))
-                    
+                    base_delay = _extract_retry_after_seconds(
+                        last_exc, default=min_interval_seconds * 2
+                    )
+                    wait_seconds = max(
+                        base_delay, min_interval_seconds * (2 ** (attempt - 1))
+                    )
+
                     logger.warning(
                         "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry ({}/{}).",
                         index,
@@ -326,7 +396,7 @@ def _execute_sub_agent_runs(
 
                 if attempt >= max_retries:
                     raise
-                
+
                 # Generic error backoff
                 wait_seconds = min_interval_seconds * (2 ** (attempt - 1))
                 logger.warning(
@@ -348,11 +418,13 @@ def run_sub_agent_tasks(
     *,
     codebase_root: Optional[str | Path] = None,
     sub_agents_root: Optional[str | Path] = None,
-    max_retries: int = 3,
+    max_retries: int = DEFAULT_SUB_AGENT_MAX_RETRIES,
     window_seconds: float = 90.0,
     max_requests_per_window: int = 5,
     min_interval_seconds: float = 5.0,
     instruction_prompt: str = prompts.SUB_AGENT_KB_PROMPT,
+    max_tool_calls: int | None = None,
+    max_directory_calls: int | None = None,
 ) -> List[Path]:
     """Execute analyzer-style sub-agents and return their workspace paths."""
 
@@ -368,6 +440,8 @@ def run_sub_agent_tasks(
         window_seconds=window_seconds,
         max_requests_per_window=max_requests_per_window,
         min_interval_seconds=min_interval_seconds,
+        max_tool_calls=max_tool_calls,
+        max_directory_calls=max_directory_calls,
     )
 
 
@@ -376,11 +450,13 @@ def run_typed_sub_agent_tasks(
     *,
     codebase_root: Optional[str | Path] = None,
     sub_agents_root: Optional[str | Path] = None,
-    max_retries: int = 3,
+    max_retries: int = DEFAULT_SUB_AGENT_MAX_RETRIES,
     window_seconds: float = 90.0,
     max_requests_per_window: int = 5,
     min_interval_seconds: float = 5.0,
     role_prompts: Optional[Dict[SubAgentRole, str]] = None,
+    max_tool_calls: int | None = None,
+    max_directory_calls: int | None = None,
 ) -> List[Path]:
     """Execute sub-agents with explicit roles and return their workspace paths."""
 
@@ -408,6 +484,8 @@ def run_typed_sub_agent_tasks(
         window_seconds=window_seconds,
         max_requests_per_window=max_requests_per_window,
         min_interval_seconds=min_interval_seconds,
+        max_tool_calls=max_tool_calls,
+        max_directory_calls=max_directory_calls,
     )
 
 

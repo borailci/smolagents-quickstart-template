@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Callable, List, Set
 
@@ -10,6 +9,8 @@ from smolagents import Tool, tool
 
 # Assuming utils.path_utils is available as per original code
 from utils.path_utils import ensure_directory, resolve_within_root
+
+__all__ = ["build_scoped_tools"]
 
 # Configurable limits to prevent context overflow
 MAX_READ_LINES = 500

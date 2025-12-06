@@ -8,7 +8,7 @@ import os
 import re
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, cast
 
@@ -28,6 +28,13 @@ from toolkits.sub_agent_toolkit import (
 from toolkits.tutorial_toolkit import build_tutorial_tools
 from utils.path_utils import ensure_directory, resolve_within_root, PathTraversalError
 
+try:
+    import tiktoken  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    tiktoken = None
+
+__all__ = ["TutorialGenerator", "TutorialOutlineItem", "TutorialValidationIssue"]
+
 load_dotenv()
 
 LITELLM_MODEL_ID = os.getenv("LITELLM_MODEL_ID")
@@ -36,6 +43,7 @@ CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
 KNOWLEDGE_BASE_OUTPUT_PATH = os.getenv("KNOWLEDGE_BASE_OUTPUT_PATH")
 TUTORIAL_OUTPUT_PATH = os.getenv("TUTORIAL_OUTPUT_PATH")
 SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
+DEFAULT_BASE_ROOT = Path("data/agent_workspace").expanduser().resolve()
 DEFAULT_REQUESTS_PER_MINUTE = 15.0
 DEFAULT_AGENT_MAX_RETRIES = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = 5.0
@@ -52,7 +60,7 @@ TUTORIAL_ENABLE_CODE_SEARCH_ENV = "TUTORIAL_ENABLE_CODE_SEARCH"
 TUTORIAL_ENABLE_RAG_ENV = "TUTORIAL_ENABLE_RAG"
 TUTORIAL_RAG_MAX_SNIPPETS_ENV = "TUTORIAL_RAG_MAX_SNIPPETS"
 TUTORIAL_STEP_DELAY_SECONDS_ENV = "TUTORIAL_STEP_DELAY_SECONDS"
-DEFAULT_RAG_MAX_SNIPPETS = 5
+DEFAULT_RAG_MAX_SNIPPETS = 3  # keep RAG light to reduce cost
 DEFAULT_STEP_DELAY_SECONDS = 0.0
 
 
@@ -69,6 +77,35 @@ class TutorialValidationIssue:
     message: str
 
 
+@dataclass
+class TutorialRunMetrics:
+    tool_calls: int = 0
+    tool_token_estimate: int = 0
+    instructions_token_estimate: int = 0
+    tutorial_token_estimate: int = 0
+    context_overflow_events: int = 0
+    model_errors: list[str] = field(default_factory=list)
+
+    @property
+    def total_estimated_tokens(self) -> int:
+        return (
+            self.tool_token_estimate
+            + self.instructions_token_estimate
+            + self.tutorial_token_estimate
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "tool_calls": self.tool_calls,
+            "tool_token_estimate": self.tool_token_estimate,
+            "instructions_token_estimate": self.instructions_token_estimate,
+            "tutorial_token_estimate": self.tutorial_token_estimate,
+            "total_estimated_tokens": self.total_estimated_tokens,
+            "context_overflow_events": self.context_overflow_events,
+            "model_errors": list(self.model_errors),
+        }
+
+
 @dataclass(frozen=True)
 class _CodeBlock:
     language: str
@@ -80,7 +117,7 @@ class _CodeBlock:
 
 _MIN_UNIQUE_SECOND_LEVEL_HEADINGS = 2
 MIN_DYNAMIC_TUTORIALS = 3
-MAX_DYNAMIC_TUTORIALS = 8  # Increased max slightly since the agent is in control
+MAX_DYNAMIC_TUTORIALS = 5  # Keep series concise to reduce runtime
 CODEBASE_TREE_MAX_DEPTH = 2
 CODEBASE_TREE_MAX_ENTRIES = 180
 ANCHOR_FILES_PER_CATEGORY = 3
@@ -426,32 +463,32 @@ class TutorialGenerator:
         enable_rag: bool | None = None,
         rag_max_snippets: int | None = None,
         step_delay_seconds: float | None = None,
+        rag_force_rebuild: bool = False,
         dry_run: bool = False,
     ) -> None:
         model_id = _require_env("LITELLM_MODEL_ID", LITELLM_MODEL_ID)
         api_key = _require_env("LITELLM_API_KEY", LITELLM_API_KEY)
 
         self.dry_run = dry_run
+        self.metrics = TutorialRunMetrics()
 
+        base_root = DEFAULT_BASE_ROOT
         self.codebase_root = (
-            Path(
-                codebase_root or _require_env("CODEBASE_ROOT_PATH", CODEBASE_ROOT_PATH)
-            )
+            Path(codebase_root or CODEBASE_ROOT_PATH or base_root)
             .expanduser()
             .resolve()
         )
         self.knowledge_base_root = (
             Path(
                 knowledge_base_root
-                or _require_env(
-                    "KNOWLEDGE_BASE_OUTPUT_PATH", KNOWLEDGE_BASE_OUTPUT_PATH
-                )
+                or KNOWLEDGE_BASE_OUTPUT_PATH
+                or (base_root / "knowledge_base")
             )
             .expanduser()
             .resolve()
         )
         self.output_root = ensure_directory(
-            output_root or _require_env("TUTORIAL_OUTPUT_PATH", TUTORIAL_OUTPUT_PATH)
+            output_root or TUTORIAL_OUTPUT_PATH or (base_root / "tutorials")
         )
 
         if SUB_AGENTS_ROOT_PATH:
@@ -476,6 +513,9 @@ class TutorialGenerator:
             TUTORIAL_RAG_MAX_SNIPPETS_ENV,
             default=DEFAULT_RAG_MAX_SNIPPETS,
         )
+        self.rag_force_rebuild = rag_force_rebuild
+
+        self._token_encoder = self._build_token_encoder(model_id)
 
         requests_per_minute = self._resolve_requests_per_minute()
         self._min_interval = 60.0 / requests_per_minute
@@ -496,11 +536,66 @@ class TutorialGenerator:
             requests_per_minute=requests_per_minute,
         )
 
+    # ----- Metrics helpers -------------------------------------------------
+
+    def _build_token_encoder(self, model_id: str) -> Callable[[str], int]:
+        if tiktoken is None:
+            return lambda text: max(1, len(text) // 4)
+
+        try:
+            encoding = tiktoken.encoding_for_model(model_id)
+        except Exception:
+            encoding = tiktoken.get_encoding("cl100k_base")
+
+        def _encode(text: str) -> int:
+            try:
+                return len(encoding.encode(text))
+            except Exception:
+                return max(1, len(text) // 4)
+
+        return _encode
+
+    def _count_tokens(self, text: str) -> int:
+        return self._token_encoder(text)
+
+    def _record_tool_usage(self, tool_name: str, content: Any = None) -> None:
+        self.metrics.tool_calls += 1
+        if content:
+            try:
+                as_text = content if isinstance(content, str) else json.dumps(content)
+            except Exception:
+                as_text = str(content)
+            self.metrics.tool_token_estimate += self._count_tokens(as_text)
+
+    def _record_instruction_tokens(self, *chunks: str) -> None:
+        for chunk in chunks:
+            if chunk:
+                self.metrics.instructions_token_estimate += self._count_tokens(chunk)
+
+    def _record_tutorial_tokens(self, path: Path) -> None:
+        try:
+            content = path.read_text("utf-8")
+        except OSError:
+            return
+        self.metrics.tutorial_token_estimate += self._count_tokens(content)
+
+    @staticmethod
+    def _is_context_overflow(message: str) -> bool:
+        lowered = message.lower()
+        return (
+            "context length" in lowered
+            or "maximum context" in lowered
+            or "token limit" in lowered
+            or "too long" in lowered
+        )
+
     def generate(self) -> List[Path]:
         if not self.knowledge_base_root.exists():
             raise FileNotFoundError(
                 f"Knowledge base directory not found at {self.knowledge_base_root}."
             )
+
+        self.metrics = TutorialRunMetrics()
 
         tutorial_state: Dict[str, Any] = {}
         prepared = self._prepare_tutorial_state(tutorial_state)
@@ -545,6 +640,8 @@ class TutorialGenerator:
             enable_code_search=self.enable_code_search,
             enable_rag=self.enable_rag,
             rag_max_snippets=self.rag_max_snippets,
+            rag_force_rebuild=self.rag_force_rebuild,
+            usage_callback=self._record_tool_usage,
         )
 
         kb_summary = self._summarize_knowledge_base()
@@ -597,6 +694,7 @@ class TutorialGenerator:
             )
 
             logger.debug("Generating tutorial '{}'...", item.title)
+            self._record_instruction_tokens(prompts.TUTORIAL_AGENT_PROMPT, task)
             self._run_agent_with_retries(
                 _agent_factory, task, prompts.TUTORIAL_AGENT_PROMPT
             )
@@ -637,6 +735,10 @@ class TutorialGenerator:
                 self._record_request_timestamp()
 
                 message = str(error)
+                self.metrics.model_errors.append(message)
+                if self._is_context_overflow(message):
+                    self.metrics.context_overflow_events += 1
+
                 if "Message contains no content" in message:
                     if STRICT_TOOL_CALL_REMINDER not in instructions:
                         instructions += STRICT_TOOL_CALL_REMINDER
@@ -675,6 +777,14 @@ class TutorialGenerator:
         self._sanitize_tutorial_outputs(paths)
         self._normalize_heading_tokens(paths)
         self._ensure_top_level_titles(paths)
+
+        wiki_path = self._write_wiki_page(paths)
+        if wiki_path:
+            paths.append(wiki_path)
+
+        for path in paths:
+            if path.exists():
+                self._record_tutorial_tokens(path)
 
         return paths
 
@@ -721,10 +831,51 @@ class TutorialGenerator:
         return (
             f"Review and polish the tutorial '{tutorial_path.name}'.\n"
             "1. Fix typos and grammar.\n"
-            "2. Ensure all code blocks have language tags (e.g. ```python).\n"
-            "3. Fix broken Markdown links.\n"
-            "4. Write the FIXED content to your workspace with the SAME filename.\n"
+            "2. Ensure every code block has a language tag (e.g. ```bash, ```python, ```json, ```mermaid).\n"
+            "3. Close any unclosed fences and split/merged code sections correctly.\n"
+            "4. Fix broken Markdown links.\n"
+            "5. If the file is already perfect, still write it back unchanged to your workspace with the SAME filename; otherwise, write the corrected version.\n"
         )
+
+    def _write_wiki_page(self, tutorial_paths: Iterable[Path]) -> Path | None:
+        wiki_path = self.output_root / "wiki.md"
+        entries: list[tuple[str, str, str]] = []
+
+        for path in sorted(tutorial_paths, key=lambda p: p.name):
+            if path == wiki_path or not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            match = re.search(r"^#\s+(.+)$", text, flags=re.MULTILINE)
+            title = match.group(1).strip() if match else _title_from_filename(path.stem)
+            anchor = _slugify(title)
+            entries.append((title, anchor, text.strip()))
+
+        if not entries:
+            return None
+
+        toc_anchor = _slugify("Tutorials Wiki")
+        lines = [
+            "# Tutorials Wiki",
+            "",
+            "> Compact, single-page view of all tutorials. Use the TOC below to jump around.",
+            "",
+            "## Table of Contents",
+        ]
+        for title, anchor, _ in entries:
+            lines.append(f"- [{title}](#{anchor})")
+        lines.extend(["", f'<a id="{toc_anchor}"></a>'])
+
+        back_link = f"[↩ Back to top](#{toc_anchor})"
+        for title, anchor, text in entries:
+            lines.append("---")
+            lines.append(f'<a id="{anchor}"></a>')
+            lines.append(text)
+            lines.append("")
+            lines.append(back_link)
+            lines.append("")
+
+        wiki_path.write_text("\n".join(lines), encoding="utf-8")
+        return wiki_path
 
     def _summarize_knowledge_base(self, max_entries: int = 30) -> str:
         entries = sorted(self.knowledge_base_root.glob("*.md"))
@@ -869,7 +1020,7 @@ class TutorialGenerator:
             f"Full Outline Context: {outline_brief}\n"
             "Repository Snapshot (use this before calling navigation tools):\n"
             f"{codebase_context}\n"
-            "Stay within the knowledge base unless absolutely necessary; if you need code snippets, call retrieve_relevant_context (RAG). Raw code-reading tools are unavailable.\n"
+            "Use the knowledge base as high-level orientation only. You MUST still explore the codebase: start with get_tree, then use file_search/semantic_search and read_file/read_file_bulk to pull real code with line numbers. Keep KB usage concise—do not copy it verbatim.\n"
             f"{self._optional_tool_guidance()}"
         )
 
@@ -1150,4 +1301,4 @@ class TutorialGenerator:
                 path.write_text(fixed, "utf-8")
 
 
-__all__ = ["TutorialGenerator", "TutorialOutlineItem"]
+__all__ = ["TutorialGenerator", "TutorialOutlineItem", "TutorialRunMetrics"]

@@ -45,7 +45,10 @@ uv run pipelines/cli.py knowledge-base
 uv run pipelines/cli.py tutorials --code-search --rag --rag-max-snippets 3
 uv run pipelines/cli.py qa "How do background jobs work?"
 uv run pipelines/cli.py spawn-subagents "Analyze src/utils and document helper utilities"
+uv run pipelines/cli.py bench --codebase /path/to/repo1 --codebase /path/to/repo2 --rag
 ```
+
+`bench` runs both the baseline (single agent) and deep-with-KB pipelines for each codebase you pass, then writes artifacts under `data/bench/<repo>/` plus a rollup at `data/bench/bench_results.json`. Use `--skip-baseline` or `--skip-deep` to limit runs and `--force-rebuild-kb` to ignore cached KB outputs.
 
 You can also control these defaults with environment variables:
 

@@ -1,15 +1,18 @@
-"""Tools for tutorial generation leveraging the knowledge base and optional RAG."""
+"""Tools for tutorial generation leveraging the knowledge base, codebase access, and optional RAG."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from loguru import logger
 from smolagents import Tool, tool
 
+from toolkits.baseline_toolkit import build_baseline_tools
 from toolkits.rag_store import SimpleChromaRAGStore
 from utils.path_utils import ensure_directory, resolve_within_root
+
+__all__ = ["build_tutorial_tools"]
 
 _MAX_READ_LINES = 500  # Limit KB reads to protect context
 _DEFAULT_RAG_MAX_SNIPPETS = 5
@@ -59,17 +62,27 @@ def build_tutorial_tools(
     enable_code_search: bool = False,
     enable_rag: bool = False,
     rag_max_snippets: int = _DEFAULT_RAG_MAX_SNIPPETS,
-    rag_force_rebuild: bool = False,  # Added explicit control
+    rag_force_rebuild: bool = False,
+    usage_callback: Callable[[str, str | None], None] | None = None,
 ) -> List[Tool]:
     codebase_path = Path(codebase_root).expanduser().resolve()
     kb_path = Path(knowledge_base_root).expanduser().resolve()
     output_path = ensure_directory(tutorial_output_root)
 
-    if enable_code_search:
-        logger.warning(
-            "Tutorial generator no longer exposes direct code search; "
-            "ignoring enable_code_search flag."
-        )
+    def _record_tool_usage(tool_name: str, content: str | None = None) -> None:
+        if usage_callback:
+            try:
+                usage_callback(tool_name, content)
+            except Exception:
+                pass
+
+    base_tools = build_baseline_tools(
+        codebase_root=str(codebase_path),
+        tutorial_output_root=str(output_path),
+        knowledge_base_root=str(kb_path),
+        rag_force_rebuild=rag_force_rebuild,
+        usage_callback=usage_callback,
+    )
 
     rag_store: Optional[SimpleChromaRAGStore] = None
     if enable_rag:
@@ -83,8 +96,6 @@ def build_tutorial_tools(
                 knowledge_base_root=kb_path,
                 persist_directory=rag_storage_root,
             )
-            # CRITICAL FIX: Do not force rebuild by default.
-            # This prevents 5-10 minute delays on agent startup.
             rag_store.ensure_index(
                 include_codebase=True,
                 include_knowledge_base=True,
@@ -109,9 +120,11 @@ def build_tutorial_tools(
         resolved = resolve_within_root(kb_path, dir_path)
         if not resolved.is_dir():
             return []
-        return sorted(
+        entries = sorted(
             entry.name for entry in resolved.iterdir() if _is_safe_entry(entry)
         )
+        _record_tool_usage("list_knowledge_base", "\n".join(entries))
+        return entries
 
     @tool
     def read_knowledge_base_file(file_path: str) -> str:
@@ -121,7 +134,9 @@ def build_tutorial_tools(
             file_path: Relative path to the markdown file inside the knowledge base directory.
         """
         resolved = resolve_within_root(kb_path, file_path)
-        return _read_text_file_truncated(resolved)
+        output = _read_text_file_truncated(resolved)
+        _record_tool_usage("read_knowledge_base_file", output)
+        return output
 
     @tool
     def write_tutorial_file(file_path: str, content: str, append: bool = False) -> str:
@@ -134,9 +149,10 @@ def build_tutorial_tools(
         """
         resolved = resolve_within_root(output_path, file_path)
         _write_text_file(resolved, content, append=append)
+        _record_tool_usage("write_tutorial_file", None)
         return str(resolved)
 
-    tools: List[Tool] = [
+    tools: List[Tool] = list(base_tools) + [
         list_knowledge_base,
         read_knowledge_base_file,
         write_tutorial_file,
@@ -164,12 +180,14 @@ def build_tutorial_tools(
             # Primary method: Vector Search
             if rag_store:
                 try:
-                    return rag_store.query(
+                    output = rag_store.query(
                         normalized_query,
                         top_k=limit,
                         include_codebase=True,
                         include_knowledge_base=True,
                     )[:limit]
+                    _record_tool_usage("retrieve_relevant_context", str(output))
+                    return output
                 except Exception as exc:
                     logger.error(f"RAG query failed: {exc}")
                     return [

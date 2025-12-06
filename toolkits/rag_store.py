@@ -34,10 +34,18 @@ except ImportError as exc:
 # Unified environment configuration
 _CHAT_MODEL = os.getenv("LITELLM_MODEL_ID", "")
 # Smart default: if using Gemini chat, use Gemini embeddings. Otherwise default to OpenAI.
-_FALLBACK_EMBED_MODEL = "gemini/text-embedding-004" if "gemini" in _CHAT_MODEL.lower() else "text-embedding-3-small"
+_FALLBACK_EMBED_MODEL = (
+    "gemini/text-embedding-004"
+    if "gemini" in _CHAT_MODEL.lower()
+    else "text-embedding-3-small"
+)
 
-_DEFAULT_EMBEDDING_MODEL = os.getenv("LITELLM_EMBEDDING_MODEL_ID", _FALLBACK_EMBED_MODEL)
+_DEFAULT_EMBEDDING_MODEL = os.getenv(
+    "LITELLM_EMBEDDING_MODEL_ID", _FALLBACK_EMBED_MODEL
+)
 _DEFAULT_EMBEDDING_API_KEY = os.getenv("LITELLM_API_KEY")
+
+__all__ = ["SimpleChromaRAGStore", "ChunkRecord"]
 
 
 # Text Splitting Config
@@ -47,11 +55,37 @@ _CHUNK_OVERLAP = 200
 # File Filtering Config
 _MAX_FILE_SIZE_BYTES = 100_000
 _ALLOWED_SUFFIXES: Set[str] = {
-    ".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".cfg", ".ini",
-    ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h", ".cs"
+    ".py",
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".cfg",
+    ".ini",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".java",
+    ".go",
+    ".rs",
+    ".c",
+    ".cpp",
+    ".h",
+    ".cs",
 }
 _IGNORED_DIRS: Set[str] = {
-    "__pycache__", "node_modules", "venv", ".git", ".idea", ".vscode", "dist", "build", "target"
+    "__pycache__",
+    "node_modules",
+    "venv",
+    ".git",
+    ".idea",
+    ".vscode",
+    "dist",
+    "build",
+    "target",
 }
 
 
@@ -75,9 +109,11 @@ class SimpleChromaRAGStore:
         persist_directory: Path,
         collection_name: str = "tutorial_rag",
         embedding_model: str = _DEFAULT_EMBEDDING_MODEL,
-        embed_batch_size: int = 20, # Increased batch size for efficiency
+        embed_batch_size: int = 20,  # Increased batch size for efficiency
         request_pause_seconds: float = 0.0,
-        embedding_fn: Optional[Callable[[Sequence[str]], Sequence[Sequence[float]]]] = None,
+        embedding_fn: Optional[
+            Callable[[Sequence[str]], Sequence[Sequence[float]]]
+        ] = None,
     ) -> None:
         self.codebase_root = codebase_root
         self.knowledge_base_root = knowledge_base_root
@@ -101,7 +137,7 @@ class SimpleChromaRAGStore:
         force_rebuild: bool = False,
     ) -> None:
         """Ensure a collection exists and matches the current repository state."""
-        
+
         # 1. Compute fingerprint of current files
         desired_fingerprint = self._compute_fingerprint(
             include_codebase=include_codebase,
@@ -122,7 +158,9 @@ class SimpleChromaRAGStore:
             meta = existing.metadata or {}
             stored_fingerprint = meta.get("fingerprint")
             if stored_fingerprint != desired_fingerprint:
-                logger.info(f"Fingerprint mismatch ({stored_fingerprint} vs {desired_fingerprint}). Rebuilding...")
+                logger.info(
+                    f"Fingerprint mismatch ({stored_fingerprint} vs {desired_fingerprint}). Rebuilding..."
+                )
                 should_rebuild = True
             else:
                 logger.info(f"RAG store '{self.collection_name}' is up to date.")
@@ -132,7 +170,7 @@ class SimpleChromaRAGStore:
         if should_rebuild or existing is None:
             if existing:
                 self.client.delete_collection(self.collection_name)
-            
+
             logger.info(f"Building RAG index '{self.collection_name}'...")
             self.collection = self._build_collection(
                 include_codebase=include_codebase,
@@ -163,7 +201,7 @@ class SimpleChromaRAGStore:
         try:
             # Embed query (batch of 1)
             query_vectors = self._embed_texts([query])
-            
+
             result = self.collection.query(
                 query_embeddings=query_vectors,
                 n_results=top_k,
@@ -179,18 +217,21 @@ class SimpleChromaRAGStore:
 
         snippets: List[Dict[str, str]] = []
         for doc, meta in zip(documents, metadatas):
-            if not doc: continue
-            
+            if not doc:
+                continue
+
             # Safe access to metadata
             meta_dict = meta if isinstance(meta, dict) else {}
-            
-            snippets.append({
-                "source": str(meta_dict.get("source", "unknown")),
-                "path": str(meta_dict.get("path", "")),
-                "line": str(meta_dict.get("line", 1)),
-                "snippet": doc.strip(),
-            })
-            
+
+            snippets.append(
+                {
+                    "source": str(meta_dict.get("source", "unknown")),
+                    "path": str(meta_dict.get("path", "")),
+                    "line": str(meta_dict.get("line", 1)),
+                    "snippet": doc.strip(),
+                }
+            )
+
         return snippets
 
     # ------------------------------------------------------------------
@@ -208,7 +249,7 @@ class SimpleChromaRAGStore:
             include_codebase=include_codebase,
             include_knowledge_base=include_knowledge_base,
         )
-        
+
         collection = self.client.create_collection(
             name=self.collection_name,
             metadata={
@@ -222,23 +263,23 @@ class SimpleChromaRAGStore:
 
         # Batch Processing
         total_chunks = len(chunks)
-        logger.info(f"Embedding {total_chunks} chunks in batches of {self.embed_batch_size}...")
+        logger.info(
+            f"Embedding {total_chunks} chunks in batches of {self.embed_batch_size}..."
+        )
 
         for start in range(0, total_chunks, self.embed_batch_size):
             end = start + self.embed_batch_size
             batch = chunks[start:end]
-            
+
             texts = [c.content for c in batch]
             ids = [c.chunk_id for c in batch]
-            metadatas = [{
-                "source": c.source, 
-                "path": c.path, 
-                "line": str(c.line)
-            } for c in batch]
+            metadatas = [
+                {"source": c.source, "path": c.path, "line": str(c.line)} for c in batch
+            ]
 
             try:
                 vectors = self._embed_texts(texts)
-                
+
                 collection.add(
                     documents=texts,
                     metadatas=cast(List[Metadata], metadatas),
@@ -247,7 +288,7 @@ class SimpleChromaRAGStore:
                 )
             except Exception as exc:
                 logger.error(f"Failed to embed batch starting at index {start}: {exc}")
-            
+
             if self.request_pause_seconds > 0:
                 time.sleep(self.request_pause_seconds)
 
@@ -264,9 +305,9 @@ class SimpleChromaRAGStore:
             response = litellm_embedding(
                 model=self.embedding_model,
                 input=texts,
-                api_key=_DEFAULT_EMBEDDING_API_KEY
+                api_key=_DEFAULT_EMBEDDING_API_KEY,
             )
-            
+
             # Extract embeddings preserving order
             data = response.get("data", [])
             # Sort by index just in case, though usually returned in order
@@ -282,18 +323,20 @@ class SimpleChromaRAGStore:
         self, *, include_codebase: bool, include_knowledge_base: bool
     ) -> List[ChunkRecord]:
         chunks: List[ChunkRecord] = []
-        
+
         if include_knowledge_base and self.knowledge_base_root.exists():
-            chunks.extend(self._process_directory(self.knowledge_base_root, "knowledge_base"))
-            
+            chunks.extend(
+                self._process_directory(self.knowledge_base_root, "knowledge_base")
+            )
+
         if include_codebase and self.codebase_root.exists():
             chunks.extend(self._process_directory(self.codebase_root, "codebase"))
-            
+
         return chunks
 
     def _process_directory(self, root: Path, source: str) -> List[ChunkRecord]:
         chunks: List[ChunkRecord] = []
-        
+
         # Use rglob but filter manually to avoid traversing .git or node_modules
         for path in sorted(root.rglob("*")):
             if not self._is_valid_file(path, root):
@@ -308,7 +351,7 @@ class SimpleChromaRAGStore:
                 )
             except (UnicodeDecodeError, OSError):
                 continue
-                
+
         return chunks
 
     def _is_valid_file(self, path: Path, root: Path) -> bool:
@@ -316,11 +359,11 @@ class SimpleChromaRAGStore:
         # Check if directory is ignored
         if any(part in _IGNORED_DIRS for part in path.parts):
             return False
-        
+
         # Must be a file
         if not path.is_file():
             return False
-            
+
         # Hidden files
         if path.name.startswith("."):
             return False
@@ -341,7 +384,7 @@ class SimpleChromaRAGStore:
         """Splits text respecting newlines to avoid breaking code syntax."""
         lines = content.splitlines()
         records: List[ChunkRecord] = []
-        
+
         current_chunk: List[str] = []
         current_length = 0
         start_line = 1
@@ -349,19 +392,23 @@ class SimpleChromaRAGStore:
 
         while current_line_idx < len(lines):
             line = lines[current_line_idx]
-            line_len = len(line) + 1 # +1 for newline
+            line_len = len(line) + 1  # +1 for newline
 
             # If adding this line exceeds chunk size and we have content, save current chunk
             if current_length + line_len > _CHUNK_SIZE and current_chunk:
                 chunk_text = "\n".join(current_chunk)
-                records.append(ChunkRecord(
-                    chunk_id=self._build_chunk_id(source, relative_path, start_line, chunk_text),
-                    source=source,
-                    path=relative_path,
-                    line=start_line,
-                    content=chunk_text
-                ))
-                
+                records.append(
+                    ChunkRecord(
+                        chunk_id=self._build_chunk_id(
+                            source, relative_path, start_line, chunk_text
+                        ),
+                        source=source,
+                        path=relative_path,
+                        line=start_line,
+                        content=chunk_text,
+                    )
+                )
+
                 # Overlap logic: keep last N lines that fit within overlap budget
                 overlap_buffer = []
                 overlap_len = 0
@@ -370,11 +417,11 @@ class SimpleChromaRAGStore:
                         break
                     overlap_buffer.insert(0, prev_line)
                     overlap_len += len(prev_line) + 1
-                
+
                 current_chunk = overlap_buffer
                 current_length = overlap_len
                 # Approximate start line for next chunk (not perfect but sufficient)
-                start_line = (current_line_idx + 1) - len(current_chunk) 
+                start_line = (current_line_idx + 1) - len(current_chunk)
 
             current_chunk.append(line)
             current_length += line_len
@@ -383,13 +430,17 @@ class SimpleChromaRAGStore:
         # Add remaining
         if current_chunk:
             chunk_text = "\n".join(current_chunk)
-            records.append(ChunkRecord(
-                chunk_id=self._build_chunk_id(source, relative_path, start_line, chunk_text),
-                source=source,
-                path=relative_path,
-                line=start_line,
-                content=chunk_text
-            ))
+            records.append(
+                ChunkRecord(
+                    chunk_id=self._build_chunk_id(
+                        source, relative_path, start_line, chunk_text
+                    ),
+                    source=source,
+                    path=relative_path,
+                    line=start_line,
+                    content=chunk_text,
+                )
+            )
 
         return records
 
@@ -398,7 +449,9 @@ class SimpleChromaRAGStore:
         # Hashing content ensures identical chunks don't duplicate
         digest = hashlib.sha256(
             f"{source}:{path}:{line}:{chunk}".encode("utf-8")
-        ).hexdigest()[:16] # Shorten hash for readability
+        ).hexdigest()[
+            :16
+        ]  # Shorten hash for readability
         return f"{source}-{digest}"
 
     def _compute_fingerprint(
@@ -408,23 +461,27 @@ class SimpleChromaRAGStore:
         hasher = hashlib.sha256()
         hasher.update(self.embedding_model.encode("utf-8"))
         hasher.update(str(_CHUNK_SIZE).encode("utf-8"))
-        
+
         roots_to_check = []
-        if include_knowledge_base: roots_to_check.append(self.knowledge_base_root)
-        if include_codebase: roots_to_check.append(self.codebase_root)
+        if include_knowledge_base:
+            roots_to_check.append(self.knowledge_base_root)
+        if include_codebase:
+            roots_to_check.append(self.codebase_root)
 
         for root in roots_to_check:
-            if not root.exists(): continue
+            if not root.exists():
+                continue
             for path in sorted(root.rglob("*")):
                 # STRICTLY use the same validity check as collection
                 if not self._is_valid_file(path, root):
                     continue
-                    
+
                 stat = path.stat()
                 hasher.update(str(path.relative_to(root)).encode("utf-8"))
                 hasher.update(str(int(stat.st_mtime)).encode("utf-8"))
                 hasher.update(str(stat.st_size).encode("utf-8"))
 
         return hasher.hexdigest()
+
 
 __all__ = ["SimpleChromaRAGStore"]

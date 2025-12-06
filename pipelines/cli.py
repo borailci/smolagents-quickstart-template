@@ -9,9 +9,9 @@ from typing import Iterable
 
 from loguru import logger
 
+from pipelines.bench import run_benchmarks
 from pipelines.knowledge_base_builder import KnowledgeBaseBuilder
 from pipelines.tutorial_generator import TutorialGenerator
-from toolkits.sub_agent_toolkit import run_sub_agent_tasks
 
 
 def _format_paths(paths: Iterable[Path]) -> str:
@@ -25,66 +25,54 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Utilities for generating knowledge bases and tutorials.",
     )
-    parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress all logging output.",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose logging for troubleshooting.",
-    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     kb_parser = subparsers.add_parser(
         "knowledge-base",
         aliases=["build-kb", "kb"],
-        help="Generate the knowledge base using sub-agents.",
+        help="Generate the knowledge base using defaults and environment settings.",
     )
     kb_parser.set_defaults(command="knowledge-base")
     kb_parser.add_argument(
-        "codebase",
-        nargs="?",
+        "--codebase",
+        type=Path,
         default=None,
-        help="Path to the codebase root. Uses CODEBASE_ROOT_PATH if omitted.",
+        help="Override CODEBASE_ROOT_PATH for this run.",
     )
     kb_parser.add_argument(
         "--output",
-        dest="output",
+        type=Path,
         default=None,
-        help="Directory where the knowledge base markdown files will be written.",
+        help="Override KNOWLEDGE_BASE_OUTPUT_PATH for this run.",
     )
     kb_parser.add_argument(
         "--sub-agents-root",
-        dest="sub_agents_root",
+        type=Path,
         default=None,
-        help="Workspace root where sub-agent artifacts are stored.",
+        help="Workspace for sub-agents (defaults to data/agent_workspace/sub_agents_workspace).",
     )
     kb_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Simulate the process without running expensive agents.",
+        help="Plan targets without spawning analyzer agents.",
     )
     kb_parser.add_argument(
         "--force-rebuild",
         action="store_true",
-        help="Force regeneration of all targets, ignoring checkpoints.",
+        help="Ignore cache and regenerate all targets.",
     )
     kb_parser.add_argument(
-        "--step-delay-seconds",
-        dest="step_delay_seconds",
+        "--step-delay",
         type=float,
         default=None,
-        help="Insert an extra pause between sub-agent steps (e.g., 1.5) to reduce rate pressure.",
+        help="Seconds to sleep between sub-agent steps (default 0).",
     )
     kb_parser.add_argument(
         "--max-targets",
-        dest="max_targets",
         type=int,
         default=None,
-        help="Cap the number of planner-selected targets (sub-agents) to run this session.",
+        help="Hard cap on planner-selected targets (defaults to MAX_PLANNER_TARGETS).",
     )
 
     tutorial_parser = subparsers.add_parser(
@@ -94,79 +82,52 @@ def parse_args() -> argparse.Namespace:
     )
     tutorial_parser.set_defaults(command="tutorials")
     tutorial_parser.add_argument(
-        "--codebase",
-        dest="codebase",
-        default=None,
-        help="Path to the codebase root. Uses CODEBASE_ROOT_PATH if omitted.",
-    )
-    tutorial_parser.add_argument(
-        "--knowledge-base",
-        dest="knowledge_base",
-        default=None,
-        help="Directory containing the generated knowledge base files.",
-    )
-    tutorial_parser.add_argument(
-        "--output",
-        dest="output",
-        default=None,
-        help="Directory where tutorial markdown files will be written.",
-    )
-    tutorial_parser.add_argument(
-        "--code-search",
-        dest="code_search",
-        default=None,
-        action=argparse.BooleanOptionalAction,
-        help="Enable grep-based code search tools for the tutorial agent.",
-    )
-    tutorial_parser.add_argument(
         "--rag",
         dest="rag",
         default=None,
         action=argparse.BooleanOptionalAction,
         help="Enable retrieval helper tools for gathering supporting snippets.",
     )
-    tutorial_parser.add_argument(
-        "--rag-max-snippets",
-        dest="rag_max_snippets",
-        type=int,
-        default=None,
-        help="Override the maximum number of snippets returned by the retrieval helper.",
-    )
-    tutorial_parser.add_argument(
-        "--step-delay-seconds",
-        dest="step_delay_seconds",
-        type=float,
-        default=None,
-        help="Insert an additional pause between each agent step (e.g., 1.5) to ease rate limits.",
-    )
-    tutorial_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Simulate the process without running expensive agents.",
-    )
 
-    subagent_parser = subparsers.add_parser(
-        "spawn-subagents",
-        aliases=["spawn-sub-agents", "sub-agent"],
-        help="Run ad-hoc sub-agent analyzer tasks and report their workspaces.",
+    bench_parser = subparsers.add_parser(
+        "bench",
+        help="Run baseline vs deep-with-KB tutorial generation and collect metrics.",
     )
-    subagent_parser.set_defaults(command="spawn-subagents")
-    subagent_parser.add_argument(
+    bench_parser.set_defaults(command="bench")
+    bench_parser.add_argument(
         "--codebase",
-        dest="codebase",
-        default=None,
-        help="Path to the codebase root. Uses CODEBASE_ROOT_PATH if omitted.",
+        type=Path,
+        action="append",
+        required=True,
+        help="Path to a codebase to benchmark. Provide multiple --codebase flags for multiple repos.",
     )
-    subagent_parser.add_argument(
-        "--sub-agents-root",
-        dest="sub_agents_root",
+    bench_parser.add_argument(
+        "--output",
+        type=Path,
         default=None,
-        help="Directory where sub-agent workspaces should be created.",
+        help="Output root for bench artifacts (defaults to data/bench).",
     )
-    subagent_parser.add_argument(
-        "tasks",
-        nargs="+",
-        help="One or more analyzer task descriptions (wrap sentences in quotes).",
+    bench_parser.add_argument(
+        "--rag",
+        dest="rag",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Enable RAG for tutorial generation during benchmarking.",
+    )
+    bench_parser.add_argument(
+        "--force-rebuild-kb",
+        action="store_true",
+        help="Force knowledge base regeneration for deep runs.",
+    )
+    bench_parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Skip the baseline agent run (only run deep+KB).",
+    )
+    bench_parser.add_argument(
+        "--skip-deep",
+        action="store_true",
+        help="Skip the deep+KB run (only run baseline).",
     )
 
     return parser.parse_args()
@@ -218,70 +179,40 @@ def generate_tutorials(
     return generator.generate()
 
 
-def spawn_sub_agents(
-    tasks: list[str],
-    *,
-    codebase: str | Path | None = None,
-    sub_agents_root: str | Path | None = None,
-) -> list[Path]:
-    return run_sub_agent_tasks(
-        tasks,
-        codebase_root=codebase,
-        sub_agents_root=sub_agents_root,
-    )
-
-
-def setup_logging(*, verbose: bool = False, quiet: bool = False) -> None:
+def setup_logging() -> None:
     logger.remove()
-    if quiet:
-        return
-    level = "DEBUG" if verbose else "INFO"
-    logger.add(sys.stderr, level=level)
+    logger.add(sys.stderr, level="INFO")
 
 
 def main() -> None:
     args = parse_args()
-    setup_logging(verbose=args.verbose, quiet=args.quiet)
+    setup_logging()
 
     if args.command == "knowledge-base":
-        builder = KnowledgeBaseBuilder(
-            codebase_root=args.codebase,
-            output_root=args.output,
+        outputs = generate_knowledge_base(
+            codebase=args.codebase,
+            output=args.output,
             sub_agents_root=args.sub_agents_root,
             dry_run=args.dry_run,
             force_rebuild=args.force_rebuild,
-            step_delay_seconds=args.step_delay_seconds,
+            step_delay_seconds=args.step_delay,
             max_targets=args.max_targets,
         )
-        outputs = builder.generate()
         logger.info("Knowledge base written to:\n{}", _format_paths(outputs))
     elif args.command == "tutorials":
-        generator = TutorialGenerator(
-            codebase_root=args.codebase,
-            knowledge_base_root=args.knowledge_base,
-            output_root=args.output,
-            enable_code_search=args.code_search,
-            enable_rag=args.rag,
-            rag_max_snippets=args.rag_max_snippets,
-            step_delay_seconds=args.step_delay_seconds,
-            dry_run=args.dry_run,
-        )
+        generator = TutorialGenerator(enable_rag=args.rag)
         outputs = generator.generate()
         logger.info("Tutorials written to:\n{}", _format_paths(outputs))
-    elif args.command == "spawn-subagents":
-        workspaces = spawn_sub_agents(
-            args.tasks,
-            codebase=args.codebase,
-            sub_agents_root=args.sub_agents_root,
+    elif args.command == "bench":
+        summary_path = run_benchmarks(
+            args.codebase,
+            output_root=args.output,
+            enable_rag=args.rag,
+            force_rebuild_kb=args.force_rebuild_kb,
+            skip_baseline=args.skip_baseline,
+            skip_deep=args.skip_deep,
         )
-        if not workspaces:
-            logger.warning("No sub-agents were executed; check the provided tasks.")
-            return
-        workspace_lines = "\n".join(f"- {path}" for path in workspaces)
-        logger.info(
-            "Sub-agents completed. Workspaces:\n{}",
-            workspace_lines,
-        )
+        logger.info("Bench summary: {}", summary_path)
     else:
         raise ValueError(f"Unknown command: {args.command}")
 

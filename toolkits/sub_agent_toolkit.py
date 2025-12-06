@@ -21,6 +21,13 @@ from prompts import prompts
 from toolkits.scoped_filesystem_toolkit import build_scoped_tools
 from utils.path_utils import ensure_directory
 
+__all__ = [
+    "SubAgentRole",
+    "SubAgentTaskSpec",
+    "run_typed_sub_agent_tasks",
+    "ToolBudgetExceededError",
+]
+
 load_dotenv()
 
 LITELLM_MODEL_ID = os.getenv("LITELLM_MODEL_ID")
@@ -224,7 +231,7 @@ def _execute_sub_agent_runs(
         )
         time.sleep(remaining)
 
-    for index, (description, instruction_prompt) in enumerate(task_payloads):
+    for index, (description, instruction_prompt) in enumerate(task_payloads, start=1):
         workspace_dir = sub_agents_path / f"sub_agent_{index}"
         workspace_exists = workspace_dir.exists()
         workspace = ensure_directory(workspace_dir)
@@ -376,13 +383,8 @@ def _execute_sub_agent_runs(
                         )
                         raise
 
-                    # Exponential backoff for rate limits
-                    base_delay = _extract_retry_after_seconds(
-                        last_exc, default=min_interval_seconds * 2
-                    )
-                    wait_seconds = max(
-                        base_delay, min_interval_seconds * (2 ** (attempt - 1))
-                    )
+                    # For rate limits, always pause 5 seconds before retrying to reduce churn
+                    wait_seconds = 5.0
 
                     logger.warning(
                         "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry ({}/{}).",

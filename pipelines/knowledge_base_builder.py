@@ -19,19 +19,22 @@ from toolkits.sub_agent_toolkit import (
 from prompts import prompts
 from utils.path_utils import ensure_directory
 
+__all__ = ["KnowledgeBaseBuilder", "DocumentationTarget", "AgentWorkspaceResult"]
+
 load_dotenv()
 
 CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
 KNOWLEDGE_BASE_OUTPUT_PATH = os.getenv("KNOWLEDGE_BASE_OUTPUT_PATH")
 SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
 TUTORIAL_OUTPUT_PATH = os.getenv("TUTORIAL_OUTPUT_PATH")
+DEFAULT_BASE_ROOT = Path("data/agent_workspace").expanduser().resolve()
 KNOWLEDGE_BASE_STEP_DELAY_SECONDS_ENV = "KNOWLEDGE_BASE_STEP_DELAY_SECONDS"
 KNOWLEDGE_BASE_MAX_TARGETS_ENV = "KNOWLEDGE_BASE_MAX_TARGETS"
 DEFAULT_KB_STEP_DELAY_SECONDS = 0.0
 DEFAULT_SUB_AGENT_MIN_INTERVAL = 5.0
-DEFAULT_ANCHOR_TOOL_CALLS = 6
+DEFAULT_ANCHOR_TOOL_CALLS = 5
 DEFAULT_ANCHOR_DIRECTORY_LISTINGS = 0
-MAX_FOCUS_FILES = 5
+MAX_FOCUS_FILES = 2  # keep KB focused and concise
 FOCUS_KEYWORDS: tuple[str, ...] = (
     "router",
     "routes",
@@ -74,14 +77,22 @@ TARGET_WHITELIST_ENV = "KNOWLEDGE_BASE_TARGET_WHITELIST"
 DEFAULT_TARGET_IDENTIFIERS: tuple[str, ...] = (
     "README.md",
     "src/api",
-    "src/config",
     "src/models",
+    "tests",
+)
+
+# Soft priority order for planner/fallback trimming
+PRIORITIZED_TARGETS: tuple[str, ...] = (
+    "README.md",
+    "src/api",
+    "src/models",
+    "src/config",
     "src/utils",
     "tests",
 )
 
 MIN_PLANNER_TARGETS = 3
-MAX_PLANNER_TARGETS = 8
+MAX_PLANNER_TARGETS = 6
 
 
 @dataclass(frozen=True)
@@ -115,31 +126,30 @@ class KnowledgeBaseBuilder:
         step_delay_seconds: float | None = None,
         max_targets: int | None = None,
     ):
-        env_codebase = codebase_root or os.getenv("CODEBASE_ROOT_PATH")
-        env_output = output_root or os.getenv("KNOWLEDGE_BASE_OUTPUT_PATH")
-        env_sub_agents = sub_agents_root or os.getenv("SUB_AGENTS_ROOT_PATH")
+        env_codebase = (
+            codebase_root or os.getenv("CODEBASE_ROOT_PATH") or DEFAULT_BASE_ROOT
+        )
+        env_output = (
+            output_root
+            or os.getenv("KNOWLEDGE_BASE_OUTPUT_PATH")
+            or (DEFAULT_BASE_ROOT / "knowledge_base")
+        )
+        env_sub_agents = (
+            sub_agents_root
+            or os.getenv("SUB_AGENTS_ROOT_PATH")
+            or (DEFAULT_BASE_ROOT / "sub_agents_workspace")
+        )
 
         self.dry_run = dry_run
         self.force_rebuild = force_rebuild
 
-        if not env_codebase:
-            raise RuntimeError("CODEBASE_ROOT_PATH is not configured.")
-        if not env_output:
-            raise RuntimeError("KNOWLEDGE_BASE_OUTPUT_PATH is not configured.")
-        if not env_sub_agents:
-            raise RuntimeError("SUB_AGENTS_ROOT_PATH is not configured.")
-
-        root_value = cast(str | Path, env_codebase)
-        output_value = cast(str | Path, env_output)
-        sub_agents_value = cast(str | Path, env_sub_agents)
-
-        self.codebase_root = Path(root_value).expanduser().resolve()
-        self.output_root = ensure_directory(output_value)
-        self.sub_agents_root = ensure_directory(sub_agents_value)
+        self.codebase_root = Path(env_codebase).expanduser().resolve()
+        self.output_root = ensure_directory(env_output)
+        self.sub_agents_root = ensure_directory(env_sub_agents)
         tutorial_output_value = (
             Path(TUTORIAL_OUTPUT_PATH).expanduser().resolve()
             if TUTORIAL_OUTPUT_PATH
-            else None
+            else (DEFAULT_BASE_ROOT / "tutorials")
         )
         self.tutorial_output_root = tutorial_output_value
         self.plan_path = self.output_root / "plan.md"
@@ -157,6 +167,7 @@ class KnowledgeBaseBuilder:
             max_targets,
             KNOWLEDGE_BASE_MAX_TARGETS_ENV,
             minimum=1,
+            default=MAX_PLANNER_TARGETS,
         )
         self._scouting_tree: str = ""
         self._context_summary: str = ""
@@ -359,7 +370,7 @@ class KnowledgeBaseBuilder:
             "Key tree excerpt (depth 2):\n"
             f"```markdown\n{scout_tree}\n```\n\n"
             f"{context_summary}\n\n"
-            "Based ONLY on this snapshot plus targeted file reads, select 3-8 distinct folders/files that should be documented.\n"
+            "Based ONLY on this snapshot plus targeted file reads, select 3-6 distinct folders/files that should be documented. Prioritize the defaults (README, src/api, src/models, tests) and stop once you have at most six.\n"
             "Return ONLY a JSON array of relative paths, nothing else."
         )
 
@@ -459,8 +470,11 @@ class KnowledgeBaseBuilder:
             seen.add(key)
             normalized.append(target)
 
-        if len(normalized) > MAX_PLANNER_TARGETS:
-            normalized = normalized[:MAX_PLANNER_TARGETS]
+        normalized.sort(key=self._target_priority)
+
+        cap = self._max_targets or MAX_PLANNER_TARGETS
+        if len(normalized) > cap:
+            normalized = normalized[:cap]
 
         if len(normalized) < MIN_PLANNER_TARGETS:
             fallback_candidates = self._discover_targets()
@@ -475,15 +489,30 @@ class KnowledgeBaseBuilder:
 
         return normalized
 
+    def _target_priority(self, target: DocumentationTarget) -> tuple[int, int, str]:
+        path_str = target.path.as_posix()
+        if path_str in PRIORITIZED_TARGETS:
+            return (0, PRIORITIZED_TARGETS.index(path_str), path_str)
+
+        lower = path_str.lower()
+        if "api" in lower or "routes" in lower:
+            return (1, len(path_str), path_str)
+        if "model" in lower:
+            return (2, len(path_str), path_str)
+        if lower.startswith("tests") or "test" in lower:
+            return (3, len(path_str), path_str)
+        return (4, len(path_str), path_str)
+
     def _fallback_target_selection(self) -> List[DocumentationTarget]:
         """Simple heuristic if planner fails."""
-        identifiers = ["README.md", "src", "tests"]
-        targets = []
+        identifiers = self._resolve_target_identifiers()
+        targets: List[DocumentationTarget] = []
         for ident in identifiers:
             rel_path = Path(ident)
             abs_path = (self.codebase_root / rel_path).resolve()
             if abs_path.exists():
                 targets.append(DocumentationTarget(path=rel_path, label=rel_path.name))
+
         if len(targets) < MIN_PLANNER_TARGETS:
             discovered = self._discover_targets()
             seen = {t.path.as_posix() for t in targets}
@@ -495,7 +524,10 @@ class KnowledgeBaseBuilder:
                 seen.add(key)
                 if len(targets) >= MIN_PLANNER_TARGETS:
                     break
-        return targets[:MAX_PLANNER_TARGETS]
+
+        normalized = self._normalize_planner_targets(targets)
+        capped = self._apply_target_cap(normalized)
+        return capped
 
     def _discover_targets(self) -> List[DocumentationTarget]:
         identifiers = self._resolve_target_identifiers()
@@ -705,12 +737,12 @@ class KnowledgeBaseBuilder:
         instructions = "\n".join(sections)
         tool_constraints = (
             "You have access to `read_codebase_file` for the listed focus files and `write_workspace_file` for outputs. "
-            "Directory listing tools are disabled—do not attempt to explore beyond the provided files."
+            "Directory listing tools are disabled—do not attempt to explore beyond the provided files. Keep the writeup high-level (aim < ~600 words), cite only short code snippets with line ranges, and include exactly one lightweight diagram (Mermaid or ASCII) for orientation."
         )
         return (
             f"Analyze the path `{relative}` within the codebase. Focus on files under `{directory_hint}`.\n"
             "Use descriptive markdown headings for each theme above so the output is ready for downstream tutorials."
-            " Favor paragraphs with short, labeled code snippets over bullet dumps, and cite files like `src/api/routes.py#L42`."
+            " Favor paragraphs with short, labeled code snippets over bullet dumps, and cite files like `src/api/routes.py#L42`. Keep summaries concise and architectural."
             " Save your main report as `summary.md` inside your workspace.\n"
             f"Directory hints: {directory_hint}.\n"
             f"{focus_section}"
@@ -1013,6 +1045,7 @@ class KnowledgeBaseBuilder:
         env_var: str,
         *,
         minimum: int = 1,
+        default: int | None = None,
     ) -> int | None:
         if override is not None:
             return max(minimum, override)
@@ -1026,7 +1059,7 @@ class KnowledgeBaseBuilder:
                     env_var,
                     raw,
                 )
-        return None
+                return default
 
     @staticmethod
     def _has_meaningful_content(content: str) -> bool:

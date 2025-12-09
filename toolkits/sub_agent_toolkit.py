@@ -26,6 +26,7 @@ __all__ = [
     "SubAgentTaskSpec",
     "run_typed_sub_agent_tasks",
     "ToolBudgetExceededError",
+    "SubAgentOutputError",
 ]
 
 load_dotenv()
@@ -54,6 +55,10 @@ _QUOTA_RESET_PATTERN = re.compile(
 
 class ToolBudgetExceededError(RuntimeError):
     """Raised when an agent exceeds its configured tool usage budget."""
+
+
+class SubAgentOutputError(RuntimeError):
+    """Raised when a sub-agent produces invalid or empty output."""
 
 
 @dataclass
@@ -97,6 +102,7 @@ class ToolUsageBudget:
 class SubAgentRole(str, Enum):
     ANALYZER = "analyzer"
     SUMMARIZER = "summarizer"
+    TUTORIAL_WRITER = "tutorial_writer"
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,7 @@ class SubAgentTaskSpec:
 DEFAULT_ROLE_PROMPTS: Dict[SubAgentRole, str] = {
     SubAgentRole.ANALYZER: prompts.SUB_AGENT_KB_PROMPT,
     SubAgentRole.SUMMARIZER: prompts.SUMMARIZER_KB_PROMPT,
+    SubAgentRole.TUTORIAL_WRITER: prompts.TUTORIAL_AGENT_PROMPT,
 }
 
 
@@ -158,21 +165,10 @@ def _resolve_sub_agent_rpm() -> float:
     return parsed
 
 
+from utils.llm_factory import create_model
+
 def _build_model() -> LiteLLMModel:
-    if not LITELLM_MODEL_ID or not LITELLM_API_KEY:
-        raise RuntimeError("LITELLM_MODEL_ID and LITELLM_API_KEY must be configured.")
-
-    # Configure automatic retries via environment variable
-    os.environ["LITELLM_NUM_RETRIES"] = "10"
-
-    logger.info(
-        "Initializing sub-agent model {} with 10 retries",
-        LITELLM_MODEL_ID,
-    )
-    return LiteLLMModel(
-        model_id=LITELLM_MODEL_ID,
-        api_key=LITELLM_API_KEY,
-    )
+    return create_model(model_id=LITELLM_MODEL_ID, api_key=LITELLM_API_KEY)
 
 
 def _extract_retry_after_seconds(exc: Exception, default: float = 25.0) -> float:
@@ -327,8 +323,8 @@ def _execute_sub_agent_runs(
             parse_error = False
             last_exc = None
 
+            step_start = time.monotonic()
             try:
-                step_start = time.monotonic()
                 agent.run(description)
                 step_end = time.monotonic()
                 request_timestamps.append(step_end)
@@ -383,8 +379,8 @@ def _execute_sub_agent_runs(
                         )
                         raise
 
-                    # For rate limits, always pause 5 seconds before retrying to reduce churn
-                    wait_seconds = 5.0
+                    # Use dynamic wait time from rate limit error message
+                    wait_seconds = _extract_retry_after_seconds(exc, default=5.0)
 
                     logger.warning(
                         "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry ({}/{}).",
@@ -399,8 +395,8 @@ def _execute_sub_agent_runs(
                 if attempt >= max_retries:
                     raise
 
-                # Generic error backoff
-                wait_seconds = min_interval_seconds * (2 ** (attempt - 1))
+                # Generic error backoff now fixed at 5 seconds per request to avoid exponential waits
+                wait_seconds = 5.0
                 logger.warning(
                     "Sub-agent {} failed on attempt {}/{}: {}. Retrying in {:.1f}s...",
                     index,

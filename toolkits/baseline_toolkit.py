@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -11,6 +12,7 @@ from smolagents import Tool, tool
 
 from toolkits.rag_store import SimpleChromaRAGStore
 from utils.path_utils import ensure_directory, resolve_within_root
+from utils.constants import IGNORED_DIRS
 
 __all__ = ["build_baseline_tools"]
 
@@ -18,17 +20,6 @@ _MAX_READ_LINES = 600
 _MAX_TREE_DEPTH = 3
 _MAX_TREE_ITEMS = 200
 _MAX_SEARCH_FILE_SIZE = 200_000
-_IGNORED_DIRS = {
-    "__pycache__",
-    "node_modules",
-    "venv",
-    ".git",
-    ".idea",
-    ".vscode",
-    "dist",
-    "build",
-    "target",
-}
 
 
 def _read_text_file_truncated(
@@ -76,23 +67,39 @@ def build_baseline_tools(
 
     rag_store: Optional[SimpleChromaRAGStore] = None
     try:
-        rag_storage_root = ensure_directory(output_path.parent / "rag_vector_store")
-        rag_store = SimpleChromaRAGStore(
-            codebase_root=codebase_path,
-            knowledge_base_root=kb_path,
-            persist_directory=rag_storage_root,
-        )
-        rag_store.ensure_index(
-            include_codebase=True,
-            include_knowledge_base=True,
-            force_rebuild=rag_force_rebuild,
-        )
+        # Check for shared cache
+        rag_cache_path = os.environ.get("RAG_CODEBASE_CACHE_DIR")
+        if rag_cache_path and Path(rag_cache_path).exists():
+            logger.info(f"Baseline toolkit using RAG cache at {rag_cache_path}")
+            rag_store = SimpleChromaRAGStore(
+                codebase_root=codebase_path,
+                knowledge_base_root=kb_path,
+                persist_directory=Path(rag_cache_path),
+                collection_name="codebase_rag_cache",
+            )
+            rag_store.ensure_index(
+                include_codebase=True,
+                include_knowledge_base=False,
+                force_rebuild=False,
+            )
+        else:
+            rag_storage_root = ensure_directory(output_path.parent / "rag_vector_store")
+            rag_store = SimpleChromaRAGStore(
+                codebase_root=codebase_path,
+                knowledge_base_root=kb_path,
+                persist_directory=rag_storage_root,
+            )
+            rag_store.ensure_index(
+                include_codebase=True,
+                include_knowledge_base=True,
+                force_rebuild=rag_force_rebuild,
+            )
     except Exception as exc:
         logger.warning("RAG store unavailable: {}", exc)
         rag_store = None
 
     def _is_safe_entry(entry: Path) -> bool:
-        return not entry.name.startswith(".") and entry.name not in _IGNORED_DIRS
+        return not entry.name.startswith(".") and entry.name not in IGNORED_DIRS
 
     @tool
     def read_file(

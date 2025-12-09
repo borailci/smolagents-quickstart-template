@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, List
@@ -80,15 +81,40 @@ def run_benchmarks(
     force_rebuild_kb: bool = False,
     skip_baseline: bool = False,
     skip_deep: bool = False,
+    use_supervisor: bool = False,
+    rag_cache_path: Path | str | None = None,
 ) -> Path:
     root = ensure_directory(output_root or DEFAULT_BENCH_ROOT)
     results: list[BenchRunResult] = []
+
+    # If an explicit global cache path is provided (e.g. for a single repo run), use it.
+    # Otherwise, we will try to auto-detect per codebase.
+    explicit_cache_path = None
+    if rag_cache_path:
+        explicit_cache_path = Path(rag_cache_path).expanduser().resolve()
 
     for codebase in codebases:
         cb_root = codebase.expanduser().resolve()
         if not cb_root.exists():
             logger.error("Codebase %s does not exist, skipping", cb_root)
             continue
+
+        # Determine RAG cache to use for this codebase
+        current_cache_path = explicit_cache_path
+        if not current_cache_path:
+            # Check default location: data/rag_cache/<codebase_name>
+            default_cache = Path("data/rag_cache") / cb_root.name
+            if default_cache.exists():
+                current_cache_path = default_cache.resolve()
+        
+        # Set environment variable for this iteration if a cache was found
+        if current_cache_path and current_cache_path.exists():
+             os.environ["RAG_CODEBASE_CACHE_DIR"] = str(current_cache_path)
+             logger.info(f"Using RAG cache: {current_cache_path} for {cb_root.name}")
+        else:
+             # Ensure we don't bleed cache from previous iteration
+             if "RAG_CODEBASE_CACHE_DIR" in os.environ:
+                 del os.environ["RAG_CODEBASE_CACHE_DIR"]
 
         bucket = ensure_directory(root / cb_root.name)
 
@@ -114,14 +140,20 @@ def run_benchmarks(
 
             kb_outputs: List[Path] = []
             try:
-                kb_outputs = KnowledgeBaseBuilder(
+                builder = KnowledgeBaseBuilder(
                     codebase_root=cb_root,
                     output_root=kb_root,
                     sub_agents_root=sub_agents_root,
                     force_rebuild=force_rebuild_kb,
-                ).generate()
+                )
+                if use_supervisor:
+                    kb_outputs = builder.generate_with_supervisor()
+                else:
+                    kb_outputs = builder.generate()
+                logger.info("KB generated {} files for {}", len(kb_outputs), cb_root.name)
             except Exception as exc:  # pragma: no cover - surfaced to logs
                 logger.error("KB build failed for %s: %s", cb_root, exc)
+                # Don't skip tutorial generation - it will run with empty/partial KB
 
             deep_result = _run_tutorial_variant(
                 codebase_root=cb_root,
@@ -140,5 +172,5 @@ def run_benchmarks(
 
     summary_path = root / "bench_results.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    logger.info("Bench summary written to %s", summary_path)
+    logger.info("Bench summary written to {}", summary_path)
     return summary_path

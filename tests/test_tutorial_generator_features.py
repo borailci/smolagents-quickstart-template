@@ -40,7 +40,6 @@ def _setup_env(
         knowledge_base_root=knowledge_base_root,
         output_root=output_root,
         outline=(outline_item,),
-        enable_code_search=True,
         enable_rag=True,
         rag_max_snippets=2,
     )
@@ -56,13 +55,12 @@ def test_prepare_state_includes_optional_tools(
     prepared = generator._prepare_tutorial_state({})
     tool_names = {tool.name for tool in prepared["tools"]}
 
-    assert "grep_codebase" in tool_names
+    # When RAG is enabled, retrieve_relevant_context should be available
     assert "retrieve_relevant_context" in tool_names
-    assert prepared["feature_flags"] == {
-        "code_search": True,
-        "rag": True,
-        "rag_max_snippets": 2,
-    }
+    # Core tools should always be present
+    assert "read_file" in tool_names
+    assert "list_knowledge_base" in tool_names
+    assert "read_knowledge_base_file" in tool_names
 
 
 def test_optional_guidance_in_task(
@@ -75,10 +73,15 @@ def test_optional_guidance_in_task(
         kb_summary="KB",
         style_guidance="Style",
         outline_brief="Brief",
+        codebase_context="Context",
     )
 
-    assert "grep_codebase" in task
-    assert "retrieve_relevant_context" in task
+    # Check that KB context is properly injected into task
+    assert "Knowledge Base Context" in task
+    assert "USE THIS FIRST" in task
+    # Check that outline item details are included
+    assert outline_item.title in task
+    assert outline_item.filename in task
 
 
 def test_disabled_helpers_omit_guidance(
@@ -109,7 +112,6 @@ def test_disabled_helpers_omit_guidance(
         knowledge_base_root=knowledge_base_root,
         output_root=output_root,
         outline=(outline_item,),
-        enable_code_search=False,
         enable_rag=False,
     )
 
@@ -118,6 +120,7 @@ def test_disabled_helpers_omit_guidance(
         kb_summary="KB",
         style_guidance="Style",
         outline_brief="Brief",
+        codebase_context="Context",
     )
 
     assert "grep_codebase" not in task

@@ -15,4 +15,5 @@ dependencies = [
     "flask>=3.1.2",
     "utils>=1.0.2",
     "tiktoken>=0.8.0",
+    "dotenv>=0.9.9",
 ]

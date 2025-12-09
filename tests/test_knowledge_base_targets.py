@@ -17,7 +17,8 @@ def _setup_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
 
     # Create default files/directories expected by the curated list.
     (codebase_root / "README.md").write_text("Project overview", encoding="utf-8")
-    for relative in ("src/api", "src/config", "src/models", "src/utils", "tests"):
+    # Support both src/ and app/ directory structures in defaults
+    for relative in ("src/api", "src/config", "src/models", "src/utils", "app/api", "app/models", "tests", "scripts"):
         (codebase_root / relative).mkdir(parents=True)
 
     output_root = tmp_path / "knowledge_base"
@@ -68,7 +69,7 @@ def test_exploratory_pass_writes_scouting_report(
 ) -> None:
     builder = _build_builder(tmp_path, monkeypatch)
 
-    report_path = builder._run_exploratory_pass()
+    report_path, context_summary = builder._run_exploratory_pass()
 
     assert report_path is not None
     assert report_path.exists()
@@ -77,3 +78,4 @@ def test_exploratory_pass_writes_scouting_report(
     assert "# Exploratory Scouting Report" in content
     assert "utils/" in content
     assert "README.md" in content
+    assert context_summary  # Verify context summary is populated

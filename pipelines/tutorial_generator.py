@@ -56,7 +56,7 @@ STRICT_TOOL_CALL_REMINDER = (
     "- Do not wrap JSON in backticks or add commentary before/after tool calls."
 )
 
-TUTORIAL_ENABLE_CODE_SEARCH_ENV = "TUTORIAL_ENABLE_CODE_SEARCH"
+
 TUTORIAL_ENABLE_RAG_ENV = "TUTORIAL_ENABLE_RAG"
 TUTORIAL_RAG_MAX_SNIPPETS_ENV = "TUTORIAL_RAG_MAX_SNIPPETS"
 TUTORIAL_STEP_DELAY_SECONDS_ENV = "TUTORIAL_STEP_DELAY_SECONDS"
@@ -459,7 +459,6 @@ class TutorialGenerator:
         knowledge_base_root: str | Path | None = None,
         output_root: str | Path | None = None,
         outline: Sequence[TutorialOutlineItem] | None = None,
-        enable_code_search: bool | None = None,
         enable_rag: bool | None = None,
         rag_max_snippets: int | None = None,
         step_delay_seconds: float | None = None,
@@ -501,10 +500,6 @@ class TutorialGenerator:
 
         self._outline_override = tuple(outline) if outline else None
         self.outline: Sequence[TutorialOutlineItem] | None = None
-
-        self.enable_code_search = self._resolve_bool_option(
-            enable_code_search, TUTORIAL_ENABLE_CODE_SEARCH_ENV, default=False
-        )
         self.enable_rag = self._resolve_bool_option(
             enable_rag, TUTORIAL_ENABLE_RAG_ENV, default=False
         )
@@ -514,6 +509,13 @@ class TutorialGenerator:
             default=DEFAULT_RAG_MAX_SNIPPETS,
         )
         self.rag_force_rebuild = rag_force_rebuild
+        
+        # Check for RAG cache path
+        self.rag_codebase_cache_path = None
+        if self.enable_rag:
+            env_cache = os.environ.get("RAG_CODEBASE_CACHE_DIR")
+            if env_cache:
+                 self.rag_codebase_cache_path = env_cache
 
         self._token_encoder = self._build_token_encoder(model_id)
 
@@ -589,6 +591,17 @@ class TutorialGenerator:
             or "too long" in lowered
         )
 
+    @staticmethod
+    def _is_rate_limit_error(message: str) -> bool:
+        lowered = message.lower()
+        return (
+            "resource exhausted" in lowered
+            or "rate limit" in lowered
+            or "quota" in lowered
+            or "too many requests" in lowered
+            or "429" in message
+        )
+
     def generate(self) -> List[Path]:
         if not self.knowledge_base_root.exists():
             raise FileNotFoundError(
@@ -637,10 +650,10 @@ class TutorialGenerator:
             codebase_root=str(self.codebase_root),
             knowledge_base_root=str(self.knowledge_base_root),
             tutorial_output_root=str(self.output_root),
-            enable_code_search=self.enable_code_search,
             enable_rag=self.enable_rag,
             rag_max_snippets=self.rag_max_snippets,
             rag_force_rebuild=self.rag_force_rebuild,
+            rag_codebase_cache_path=self.rag_codebase_cache_path,
             usage_callback=self._record_tool_usage,
         )
 
@@ -723,8 +736,16 @@ class TutorialGenerator:
         instructions = base_instructions
         agent = agent_factory(instructions)
         last_error: Exception | None = None
+        attempt = 0
 
-        for attempt in range(1, self._max_retries + 1):
+        while True:
+            # Only increment attempts for non-quota failures to allow unlimited rate-limit retries
+            counted_attempt = False
+            if attempt >= self._max_retries:
+                break
+
+            attempt += 1
+            counted_attempt = True
             self._respect_rate_limit()
             try:
                 agent.run(task)
@@ -745,7 +766,17 @@ class TutorialGenerator:
                         agent = agent_factory(instructions)
                         continue
 
-                wait_seconds = self._retry_backoff_seconds * attempt
+                if self._is_rate_limit_error(message):
+                    logger.warning(
+                        "Rate limit encountered during tutorial generation; sleeping 5.0s before retrying."
+                    )
+                    time.sleep(5.0)
+                    # Do not count this attempt against retry budget
+                    attempt -= 1 if counted_attempt else 0
+                    continue
+
+                # Use a fixed, bounded wait (no exponential/linear growth)
+                wait_seconds = min(5.0, self._retry_backoff_seconds)
                 if attempt < self._max_retries:
                     logger.warning(
                         f"Attempt {attempt} failed: {error}. Waiting {wait_seconds}s..."
@@ -877,11 +908,26 @@ class TutorialGenerator:
         wiki_path.write_text("\n".join(lines), encoding="utf-8")
         return wiki_path
 
-    def _summarize_knowledge_base(self, max_entries: int = 30) -> str:
+    def _summarize_knowledge_base(
+        self, max_entries: int = 30, max_chars_per_file: int = 800
+    ) -> str:
+        """Return a structured summary with actual KB content excerpts."""
         entries = sorted(self.knowledge_base_root.glob("*.md"))
         if not entries:
-            return "No files."
-        return "\n".join(f"- {e.name}" for e in entries[:max_entries])
+            return "No knowledge base files found."
+
+        sections = []
+        for entry in entries[:max_entries]:
+            try:
+                content = entry.read_text("utf-8")[:max_chars_per_file]
+                if len(content) >= max_chars_per_file:
+                    # Truncate at word boundary
+                    content = content.rsplit(" ", 1)[0] + "..."
+                sections.append(f"### {entry.stem}\n{content}")
+            except Exception:
+                sections.append(f"### {entry.stem}\n[Unable to read]")
+
+        return "\n\n".join(sections)
 
     def _build_outline_brief(self, items: Sequence[TutorialOutlineItem]) -> str:
         return "\n".join(f"- {item.filename}: {item.title}" for item in items)
@@ -1012,17 +1058,37 @@ class TutorialGenerator:
         outline_brief: str,
         codebase_context: str,
     ) -> str:
+        # Pre-read executive summary if available
+        exec_summary = self._get_executive_summary()
+
         return (
             f"Write a tutorial '{item.filename}' about '{item.title}'.\n"
-            f"Goal: {item.description}\n"
-            f"Reference these KB files if possible: {kb_summary}\n"
+            f"Goal: {item.description}\n\n"
+            "## Knowledge Base Context (USE THIS FIRST)\n"
+            f"{exec_summary}\n\n"
             f"Style: {style_guidance}\n"
-            f"Full Outline Context: {outline_brief}\n"
+            f"Full Outline Context: {outline_brief}\n\n"
             "Repository Snapshot (use this before calling navigation tools):\n"
-            f"{codebase_context}\n"
-            "Use the knowledge base as high-level orientation only. You MUST still explore the codebase: start with get_tree, then use file_search/semantic_search and read_file/read_file_bulk to pull real code with line numbers. Keep KB usage concise—do not copy it verbatim.\n"
+            f"{codebase_context}\n\n"
+            "The Knowledge Base above contains pre-analyzed documentation. Use it as your PRIMARY reference for architecture understanding, then verify specific code snippets using read_file. "
+            "Cite KB sections in your tutorial when relevant.\n"
             f"{self._optional_tool_guidance()}"
         )
+
+    def _get_executive_summary(self) -> str:
+        """Load the executive summary or overview from KB."""
+        priority_files = ["summary.md", "executive_summary.md", "overview.md"]
+        for name in priority_files:
+            path = self.knowledge_base_root / name
+            if path.exists():
+                try:
+                    content = path.read_text("utf-8")[:2000]
+                    if len(content) >= 2000:
+                        content = content.rsplit(" ", 1)[0] + "..."
+                    return content
+                except Exception:
+                    continue
+        return "No executive summary available. Use list_knowledge_base and read_knowledge_base_file tools to explore the knowledge base."
 
     def _sanitize_mermaid_blocks(self, content: str) -> str:
         mermaid_pattern = re.compile(r"```mermaid\n(.*?)\n```", re.DOTALL)
@@ -1299,6 +1365,57 @@ class TutorialGenerator:
             fixed = self._sanitize_mermaid_blocks(c)
             if fixed != c:
                 path.write_text(fixed, "utf-8")
+
+    def _create_supervisor_agent(self):
+        """Create the Tutorial Supervisor Agent."""
+        from toolkits.supervisor_toolkit import build_tutorial_supervisor_tools
+        from utils.llm_factory import create_model
+        
+        tools = build_tutorial_supervisor_tools(
+            codebase_root=self.codebase_root,
+            sub_agents_root=self.sub_agents_root,
+            output_root=self.output_root,
+            knowledge_base_root=self.knowledge_base_root,
+        )
+        
+        model = create_model()
+        
+        return ToolCallingAgent(
+            name="tutorial_supervisor",
+            description="Plans and oversees tutorial generation",
+            tools=tools,
+            model=model,
+            instructions=prompts.TUTORIAL_SUPERVISOR_PROMPT,
+        )
+
+    def generate_with_supervisor(self) -> List[Path]:
+        """Generate tutorials using the Supervisor Agent."""
+        logger.info("Starting supervised tutorial generation...")
+        
+        # Reset directories if not dry run (similar to KB builder)
+        if not self.dry_run:
+            if self.sub_agents_root.exists():
+                shutil.rmtree(self.sub_agents_root)
+            self.sub_agents_root.mkdir(parents=True, exist_ok=True)
+            
+            if self.output_root.exists():
+               shutil.rmtree(self.output_root)
+            self.output_root.mkdir(parents=True, exist_ok=True)
+
+        supervisor = self._create_supervisor_agent()
+        
+        try:
+            supervisor.run("Plan and generate the tutorial series.")
+        except Exception as e:
+            logger.error(f"Tutorial Supervisor failed: {e}")
+            if not self.dry_run:
+                 raise
+        
+        # Collect output
+        output_files = list(self.output_root.glob("*.md"))
+        logger.info(f"Generated {len(output_files)} tutorials.")
+        self._sanitize_tutorial_outputs(output_files)
+        return sorted(output_files, key=lambda p: p.name)
 
 
 __all__ = ["TutorialGenerator", "TutorialOutlineItem", "TutorialRunMetrics"]

@@ -24,6 +24,7 @@ except ImportError as exc:
     ) from exc
 
 try:
+    from litellm import RateLimitError
     from litellm import embedding as litellm_embedding
 except ImportError as exc:
     raise ImportError(
@@ -45,48 +46,35 @@ _DEFAULT_EMBEDDING_MODEL = os.getenv(
 )
 _DEFAULT_EMBEDDING_API_KEY = os.getenv("LITELLM_API_KEY")
 
+
+def _safe_int_env(key: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(key, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float_env(key: str, default: float, minimum: float = 0.0) -> float:
+    try:
+        return max(minimum, float(os.getenv(key, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+_EMBED_BATCH_SIZE = _safe_int_env("RAG_EMBED_BATCH_SIZE", 5, 1)
+_REQUEST_PAUSE_SECONDS = _safe_float_env("RAG_EMBED_REQUEST_PAUSE_SECONDS", 3.0, 0.0)
+_EMBED_MAX_RETRIES = _safe_int_env("RAG_EMBED_MAX_RETRIES", 10, 1)
+_EMBED_RETRY_BACKOFF_SECONDS = _safe_float_env(
+    "RAG_EMBED_RETRY_BACKOFF_SECONDS", 5.0, 0.1
+)
+
 __all__ = ["SimpleChromaRAGStore", "ChunkRecord"]
 
+from utils.constants import IGNORED_DIRS, ALLOWED_SUFFIXES, MAX_FILE_SIZE_BYTES
 
 # Text Splitting Config
 _CHUNK_SIZE = 1000  # Characters
 _CHUNK_OVERLAP = 200
-
-# File Filtering Config
-_MAX_FILE_SIZE_BYTES = 100_000
-_ALLOWED_SUFFIXES: Set[str] = {
-    ".py",
-    ".md",
-    ".txt",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".cfg",
-    ".ini",
-    ".js",
-    ".ts",
-    ".tsx",
-    ".jsx",
-    ".java",
-    ".go",
-    ".rs",
-    ".c",
-    ".cpp",
-    ".h",
-    ".cs",
-}
-_IGNORED_DIRS: Set[str] = {
-    "__pycache__",
-    "node_modules",
-    "venv",
-    ".git",
-    ".idea",
-    ".vscode",
-    "dist",
-    "build",
-    "target",
-}
 
 
 @dataclass(frozen=True)
@@ -109,8 +97,10 @@ class SimpleChromaRAGStore:
         persist_directory: Path,
         collection_name: str = "tutorial_rag",
         embedding_model: str = _DEFAULT_EMBEDDING_MODEL,
-        embed_batch_size: int = 20,  # Increased batch size for efficiency
-        request_pause_seconds: float = 0.0,
+        embed_batch_size: int = _EMBED_BATCH_SIZE,
+        request_pause_seconds: float = _REQUEST_PAUSE_SECONDS,
+        embed_max_retries: int | None = None,
+        embed_retry_backoff_seconds: float | None = None,
         embedding_fn: Optional[
             Callable[[Sequence[str]], Sequence[Sequence[float]]]
         ] = None,
@@ -122,6 +112,10 @@ class SimpleChromaRAGStore:
         self.embedding_model = embedding_model
         self.embed_batch_size = max(1, embed_batch_size)
         self.request_pause_seconds = max(0.0, request_pause_seconds)
+        self._embed_max_retries = max(1, embed_max_retries or _EMBED_MAX_RETRIES)
+        self._embed_retry_backoff_seconds = max(
+            0.0, embed_retry_backoff_seconds or _EMBED_RETRY_BACKOFF_SECONDS
+        )
         self._embedding_fn = embedding_fn
 
         self.persist_directory.mkdir(parents=True, exist_ok=True)
@@ -299,25 +293,55 @@ class SimpleChromaRAGStore:
         if self._embedding_fn:
             return list(self._embedding_fn(texts))
 
-        # LiteLLM supports list input for batching
-        try:
-            # We strictly pass the model and the list of texts
-            response = litellm_embedding(
-                model=self.embedding_model,
-                input=texts,
-                api_key=_DEFAULT_EMBEDDING_API_KEY,
-            )
+        last_error: Exception | None = None
 
-            # Extract embeddings preserving order
-            data = response.get("data", [])
-            # Sort by index just in case, though usually returned in order
-            data.sort(key=lambda x: x["index"])
-            return [item["embedding"] for item in data]
+        for attempt in range(1, self._embed_max_retries + 1):
+            try:
+                response = litellm_embedding(
+                    model=self.embedding_model,
+                    input=texts,
+                    api_key=_DEFAULT_EMBEDDING_API_KEY,
+                )
 
-        except Exception as exc:
-            logger.error(f"Embedding API error: {exc}")
-            # Fallback: empty vectors or re-raise. Re-raising is safer for consistency.
-            raise
+                data = response.get("data", [])
+                data.sort(key=lambda x: x["index"])
+                return [item["embedding"] for item in data]
+
+            except RateLimitError as exc:
+                last_error = exc
+                wait_seconds = min(self._embed_retry_backoff_seconds * attempt, 60.0)
+                logger.warning(
+                    "Embedding rate limited (attempt {}/{}) — sleeping {:.1f}s: {}",
+                    attempt,
+                    self._embed_max_retries,
+                    wait_seconds,
+                    exc,
+                )
+            except Exception as exc:
+                last_error = exc
+                if attempt >= self._embed_max_retries:
+                    logger.error(
+                        "Embedding API error after {} attempts: {}",
+                        attempt,
+                        exc,
+                    )
+                    raise
+
+                wait_seconds = min(self._embed_retry_backoff_seconds * attempt, 60.0)
+                logger.warning(
+                    "Embedding attempt {}/{} failed, retrying in {:.1f}s: {}",
+                    attempt,
+                    self._embed_max_retries,
+                    wait_seconds,
+                    exc,
+                )
+
+            time.sleep(wait_seconds)
+
+        if last_error:
+            raise last_error
+
+        return []
 
     def _collect_chunks(
         self, *, include_codebase: bool, include_knowledge_base: bool
@@ -357,7 +381,7 @@ class SimpleChromaRAGStore:
     def _is_valid_file(self, path: Path, root: Path) -> bool:
         """Centralized logic for file validity (used by collector AND fingerprinter)."""
         # Check if directory is ignored
-        if any(part in _IGNORED_DIRS for part in path.parts):
+        if any(part in IGNORED_DIRS for part in path.parts):
             return False
 
         # Must be a file
@@ -370,13 +394,13 @@ class SimpleChromaRAGStore:
 
         # Size limit
         try:
-            if path.stat().st_size > _MAX_FILE_SIZE_BYTES:
+            if path.stat().st_size > MAX_FILE_SIZE_BYTES:
                 return False
         except FileNotFoundError:
             return False
 
         # Suffix check
-        return path.suffix.lower() in _ALLOWED_SUFFIXES
+        return path.suffix.lower() in ALLOWED_SUFFIXES
 
     def _chunk_content_by_lines(
         self, content: str, source: str, relative_path: str
@@ -483,5 +507,3 @@ class SimpleChromaRAGStore:
 
         return hasher.hexdigest()
 
-
-__all__ = ["SimpleChromaRAGStore"]

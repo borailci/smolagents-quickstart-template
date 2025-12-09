@@ -1,0 +1,59 @@
+{
+  "root": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench",
+  "results": [
+    {
+      "codebase": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/deepagents",
+      "variant": "baseline",
+      "tutorial_outputs": [
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/baseline/tutorials/01_quickstart.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/baseline/tutorials/02_create_agent.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/baseline/tutorials/03_integrate_model.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/baseline/tutorials/04_design_environment.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/baseline/tutorials/05_multi_agent_simulation.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/baseline/tutorials/wiki.md"
+      ],
+      "metrics": {
+        "tool_calls": 52,
+        "tool_token_estimate": 37172,
+        "instructions_token_estimate": 2976,
+        "tutorial_token_estimate": 12037,
+        "total_estimated_tokens": 52185,
+        "context_overflow_events": 0,
+        "model_errors": [
+          "Error while generating output:\nlitellm.RateLimitError: litellm.RateLimitError: Vertex_aiException - {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Resource exhausted. Please try again later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.\",\n    \"status\": \"RESOURCE_EXHAUSTED\"\n  }\n}\n",
+          "Error while generating output:\nlitellm.RateLimitError: litellm.RateLimitError: Vertex_aiException - {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Resource exhausted. Please try again later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.\",\n    \"status\": \"RESOURCE_EXHAUSTED\"\n  }\n}\n"
+        ]
+      },
+      "error": null,
+      "knowledge_base_outputs": null
+    },
+    {
+      "codebase": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/deepagents",
+      "variant": "deep_with_kb",
+      "tutorial_outputs": [
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/deep/tutorials/01_quickstart_cli.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/deep/tutorials/02_building_a_custom_agent.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/deep/tutorials/03_evaluating_with_harbor.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/deep/tutorials/wiki.md"
+      ],
+      "metrics": {
+        "tool_calls": 16,
+        "tool_token_estimate": 7764,
+        "instructions_token_estimate": 3043,
+        "tutorial_token_estimate": 9116,
+        "total_estimated_tokens": 19923,
+        "context_overflow_events": 0,
+        "model_errors": [
+          "Error while generating output:\nlitellm.RateLimitError: litellm.RateLimitError: Vertex_aiException - {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Resource exhausted. Please try again later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.\",\n    \"status\": \"RESOURCE_EXHAUSTED\"\n  }\n}\n"
+        ]
+      },
+      "error": null,
+      "knowledge_base_outputs": [
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/deep/knowledge_base/executive_summary.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/deep/knowledge_base/libs_deepagents-cli_deepagents_cli.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/deep/knowledge_base/libs_deepagents_deepagents.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/deepagents/deep/knowledge_base/libs_harbor_deepagents_harbor.md"
+      ]
+    }
+  ]
+}

@@ -14,6 +14,7 @@ from loguru import logger
 from toolkits.sub_agent_toolkit import (
     SubAgentRole,
     SubAgentTaskSpec,
+    SubAgentOutputError,
     run_typed_sub_agent_tasks,
 )
 from prompts import prompts
@@ -74,11 +75,15 @@ _IGNORED_SCAN_DIRS = {
 TARGET_WHITELIST_ENV = "KNOWLEDGE_BASE_TARGET_WHITELIST"
 
 # Curated defaults cover the major RealWorld-style domains we document most.
+# Support both src/ and app/ directory structures.
 DEFAULT_TARGET_IDENTIFIERS: tuple[str, ...] = (
     "README.md",
     "src/api",
     "src/models",
+    "app/api",
+    "app/models",
     "tests",
+    "scripts",
 )
 
 # Soft priority order for planner/fallback trimming
@@ -88,11 +93,18 @@ PRIORITIZED_TARGETS: tuple[str, ...] = (
     "src/models",
     "src/config",
     "src/utils",
+    "app/api",
+    "app/models",
+    "app/services",
+    "app/core",
+    "app/db",
     "tests",
+    "scripts",
+    "postman",
 )
 
-MIN_PLANNER_TARGETS = 3
-MAX_PLANNER_TARGETS = 6
+MIN_PLANNER_TARGETS = 4
+MAX_PLANNER_TARGETS = 8  # increased for better codebase coverage
 
 
 @dataclass(frozen=True)
@@ -268,22 +280,118 @@ class KnowledgeBaseBuilder:
         if self.plan_path.exists():
             output_files.append(self.plan_path)
 
-        overview_path = self._write_overview(targets, output_files)
-        output_files.append(overview_path)
-
-        toc_path = self._write_table_of_contents(output_files)
-        output_files.append(toc_path)
-
         summary_path = self._run_summary_agent(output_files)
         if summary_path:
             output_files.append(summary_path)
-            # Regenerate TOC to include summary
-            toc_path = self._write_table_of_contents(output_files)
-            if toc_path not in output_files:
-                output_files.append(toc_path)
 
         logger.info("Knowledge base generated with {} files", len(output_files))
         return sorted(set(output_files), key=lambda path: path.name)
+
+    def generate_with_supervisor(self) -> List[Path]:
+        """Generate knowledge base using the Supervisor Agent.
+        
+        The Supervisor Agent handles planning, sub-agent coordination, output
+        evaluation, and retries autonomously.
+        """
+        logger.info("Starting supervised knowledge base generation from {}", self.codebase_root)
+        
+        # Reset directories
+        if not self.dry_run:
+            self._reset_directory(self.sub_agents_root)
+            self._reset_directory(self.output_root)
+            self._clear_rag_vector_store()
+        
+        self.output_root.mkdir(parents=True, exist_ok=True)
+        
+        if self.dry_run:
+            logger.debug("[DRY RUN] Would run Supervisor Agent")
+            return []
+        
+        # Create and run Supervisor Agent
+        supervisor = self._create_supervisor_agent()
+        task = f"""Create a comprehensive Knowledge Base for tutorial generation.
+
+TARGET CODEBASE: {self.codebase_root}
+
+GOAL: Generate documentation that enables high-quality tutorial creation. The Knowledge Base must provide information that a tutorial writer cannot easily derive from raw code alone.
+
+REQUIRED DIFFERENTIATORS (include in custom_instructions for each sub-agent):
+1. Entry Points - Where to start reading, initialization order
+2. Key Concepts - Define domain terms (Repository, DTO, Service, etc.)
+3. Dependencies & Relationships - What calls what (e.g., "Service → Repository → DB")
+4. Patterns & Conventions - Cross-cutting concerns, error handling, naming conventions
+5. Code Examples - Annotated snippets with "Why this matters" explanations
+6. Tutorial Hints - Common questions, pitfalls, prerequisites
+
+WORKFLOW:
+1. Scout the codebase structure first (get_codebase_overview)
+2. Identify ALL meaningful directories (app, tests, scripts, config, docs, etc.)
+3. Spawn sub-agents with specific custom_instructions for each target
+4. Evaluate each output for quality and required sections
+5. Retry with feedback if sections are missing
+6. Finalize by collecting all successful outputs
+
+QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and retry if incomplete.
+"""
+        
+        # Retry loop for rate limits
+        import time
+        max_retries = 10
+        retry_delay = 5.0  # seconds
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                result = supervisor.run(task)
+                logger.info("Supervisor Agent completed: {}", str(result)[:200])
+                break  # Success, exit retry loop
+            except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = "rate" in error_str or "429" in error_str or "exhausted" in error_str
+                
+                if is_rate_limit and attempt < max_retries:
+                    logger.warning(
+                        "Rate limit hit (attempt {}/{}). Waiting {}s before retry...",
+                        attempt, max_retries, retry_delay
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 1.5, 60.0)  # Exponential backoff, max 60s
+                else:
+                    logger.exception("Supervisor Agent failed: {}", e)
+                    raise RuntimeError(f"Supervisor Agent failed: {e}") from e
+        
+        # Collect output files from supervisor
+        output_files = list(self.output_root.glob("*.md"))
+        
+        # Run summary agent to create executive_summary.md for tutorial generator
+        if output_files:
+            summary_path = self._run_summary_agent(output_files)
+            if summary_path:
+                output_files.append(summary_path)
+        
+        logger.info("Knowledge base generated with {} files", len(output_files))
+        return sorted(output_files, key=lambda p: p.name)
+
+    def _create_supervisor_agent(self):
+        """Create the Supervisor Agent with its tools."""
+        from smolagents import ToolCallingAgent
+        from toolkits.supervisor_toolkit import build_supervisor_tools
+        from utils.llm_factory import create_model
+
+        tools = build_supervisor_tools(
+            codebase_root=str(self.codebase_root),
+            sub_agents_root=str(self.sub_agents_root),
+            output_root=str(self.output_root),
+        )
+
+        model = create_model()
+
+        return ToolCallingAgent(
+            name="knowledge_base_supervisor",
+            description="Supervises and coordinates knowledge base generation",
+            tools=tools,
+            model=model,
+            instructions=prompts.SUPERVISOR_AGENT_PROMPT,
+        )
 
     # ----- Target discovery -------------------------------------------------
 
@@ -737,7 +845,7 @@ class KnowledgeBaseBuilder:
         instructions = "\n".join(sections)
         tool_constraints = (
             "You have access to `read_codebase_file` for the listed focus files and `write_workspace_file` for outputs. "
-            "Directory listing tools are disabled—do not attempt to explore beyond the provided files. Keep the writeup high-level (aim < ~600 words), cite only short code snippets with line ranges, and include exactly one lightweight diagram (Mermaid or ASCII) for orientation."
+            "Directory listing tools are disabled—do not attempt to explore beyond the provided files. Keep the writeup high-level (aim < ~600 words) and cite only short code snippets with line ranges. Diagrams are NOT required for the knowledge base."
         )
         return (
             f"Analyze the path `{relative}` within the codebase. Focus on files under `{directory_hint}`.\n"
@@ -794,24 +902,81 @@ class KnowledgeBaseBuilder:
     def _run_single_target_agent(
         self, target: DocumentationTarget, context_summary: str = ""
     ) -> Path | None:
-        workspace_root = self.sub_agents_root / target.identifier
-        self._reset_directory(workspace_root)
+        """Run a single target analyzer with output validation and retry."""
+        max_retries = 2
+        last_error: str | None = None
+        
+        for attempt in range(max_retries + 1):
+            workspace_root = self.sub_agents_root / target.identifier
+            if attempt > 0:
+                # Use distinct directory for retries
+                workspace_root = self.sub_agents_root / f"retry_{attempt}_{target.identifier}"
+            self._reset_directory(workspace_root)
+            
+            # Build task description with retry feedback if needed
+            task_desc = self._build_task_description(target, context_summary)
+            if attempt > 0 and last_error:
+                task_desc += (
+                    f"\n\n⚠️ RETRY {attempt}/{max_retries}: Previous attempt failed: {last_error}\n"
+                    "You MUST write substantial markdown content (100+ chars) to your workspace.\n"
+                    "Do NOT write empty files or placeholder text."
+                )
+            
+            spec = SubAgentTaskSpec(
+                description=task_desc,
+                role=SubAgentRole.ANALYZER,
+            )
+            total_budget, directory_budget = self._determine_tool_budget(target)
+            
+            try:
+                workspaces = run_typed_sub_agent_tasks(
+                    [spec],
+                    codebase_root=self.codebase_root,
+                    sub_agents_root=workspace_root,
+                    min_interval_seconds=self._sub_agent_min_interval(),
+                    max_tool_calls=total_budget,
+                    max_directory_calls=directory_budget,
+                )
+                
+                if not workspaces:
+                    last_error = "No workspace returned"
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries + 1}: {last_error}")
+                    continue
+                
+                workspace = workspaces[0]
+                
+                # Validate workspace has meaningful output
+                self._validate_workspace_output(workspace)
+                
+                return workspace
+                
+            except SubAgentOutputError as e:
+                last_error = str(e)
+                logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} validation failed: {e}")
+                if attempt >= max_retries:
+                    raise
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed: {e}")
+                if attempt >= max_retries:
+                    raise
+        
+        return None
 
-        spec = SubAgentTaskSpec(
-            description=self._build_task_description(target, context_summary),
-            role=SubAgentRole.ANALYZER,
-        )
-        total_budget, directory_budget = self._determine_tool_budget(target)
-
-        workspaces = run_typed_sub_agent_tasks(
-            [spec],
-            codebase_root=self.codebase_root,
-            sub_agents_root=workspace_root,
-            min_interval_seconds=self._sub_agent_min_interval(),
-            max_tool_calls=total_budget,
-            max_directory_calls=directory_budget,
-        )
-        return workspaces[0] if workspaces else None
+    def _validate_workspace_output(self, workspace: Path, min_chars: int = 100) -> None:
+        """Validate that workspace contains meaningful output files."""
+        md_files = list(workspace.glob("*.md"))
+        if not md_files:
+            raise SubAgentOutputError(f"No markdown files in {workspace.name}")
+        
+        for md_file in md_files:
+            content = md_file.read_text(encoding="utf-8").strip()
+            if len(content) < min_chars:
+                raise SubAgentOutputError(
+                    f"{md_file.name}: {len(content)} chars < {min_chars} required"
+                )
+            if content.lower() in ("_no response_", "no response"):
+                raise SubAgentOutputError(f"Placeholder content in {md_file.name}")
 
     def _retry_target_workspace(self, target: DocumentationTarget) -> Path | None:
         # Use a distinct directory for retries to avoid file lock issues
@@ -877,18 +1042,16 @@ class KnowledgeBaseBuilder:
             return []
 
         exported: List[Path] = []
-        for index, file_path in enumerate(markdown_files):
+        for file_path in markdown_files:
             content = file_path.read_text(encoding="utf-8")
             if not self._has_meaningful_content(content):
                 continue
 
-            # Rename file to match target identifier to prevent collisions
-            suffix = f"_{index}" if index > 0 else ""
             clean_identifier = target.identifier
             if clean_identifier.endswith(".md"):
                 clean_identifier = clean_identifier[:-3]
 
-            output_name = f"{clean_identifier}{suffix}.md"
+            output_name = f"{clean_identifier}.md"
             output_path = self.output_root / output_name
 
             try:
@@ -896,6 +1059,10 @@ class KnowledgeBaseBuilder:
                 exported.append(output_path)
             except Exception as e:
                 logger.error(f"Failed to export {output_name}: {e}")
+
+            # Keep only the first meaningful markdown per target to cap KB size
+            if exported:
+                break
 
         return exported
 
@@ -921,12 +1088,19 @@ class KnowledgeBaseBuilder:
         if not workspaces:
             return None
 
-        # Check for summary.md
-        src = workspaces[0] / "summary.md"
-        if src.exists():
-            dest = self.output_root / "executive_summary.md"
-            dest.write_text(src.read_text("utf-8"), "utf-8")
-            return dest
+        # Check for output file - summarizer may write summary.md or executive_summary.md
+        workspace = workspaces[0]
+        possible_names = ["executive_summary.md", "summary.md"]
+        
+        for name in possible_names:
+            src = workspace / name
+            if src.exists():
+                dest = self.output_root / "executive_summary.md"
+                dest.write_text(src.read_text("utf-8"), "utf-8")
+                logger.info("Copied {} to {}", src, dest)
+                return dest
+        
+        logger.warning("Summary agent did not produce executive_summary.md or summary.md")
         return None
 
     def _build_summary_task_description(self, artifact_paths: Sequence[Path]) -> str:

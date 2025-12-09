@@ -7,8 +7,8 @@ from typing import Callable, List, Set
 
 from smolagents import Tool, tool
 
-# Assuming utils.path_utils is available as per original code
 from utils.path_utils import ensure_directory, resolve_within_root
+from utils.constants import IGNORED_DIRS, BLOCKED_EXTENSIONS
 
 __all__ = ["build_scoped_tools"]
 
@@ -16,25 +16,6 @@ __all__ = ["build_scoped_tools"]
 MAX_READ_LINES = 500
 MAX_TREE_DEPTH = 3
 MAX_TREE_ITEMS = 200
-IGNORED_DIRS: Set[str] = {
-    "__pycache__",
-    "node_modules",
-    "venv",
-    "env",
-    "dist",
-    "build",
-    "target",
-}
-BLOCKED_EXTENSIONS: Set[str] = {
-    ".pyc",
-    ".pyo",
-    ".pyd",
-    ".so",
-    ".dll",
-    ".exe",
-    ".bin",
-    ".lock",
-}
 
 
 def _read_text_file_truncated(path: Path, max_lines: int = MAX_READ_LINES) -> str:
@@ -134,6 +115,22 @@ def build_scoped_tools(
             append: When True, append instead of overwriting.
         """
         _record_tool_usage("write_workspace_file")
+        
+        # Validation: Reject empty or placeholder content
+        stripped = content.strip()
+        if not stripped:
+            raise ValueError(
+                "Cannot write empty content. You MUST generate real documentation first."
+            )
+        if stripped.lower() in ("_no response_", "no response", "_no response"):
+            raise ValueError(
+                "Placeholder content rejected. Write actual documentation."
+            )
+        if len(stripped) < 50 and not append:
+            raise ValueError(
+                f"Content too short ({len(stripped)} chars). Need at least 50 characters."
+            )
+        
         resolved = resolve_within_root(workspace_root_path, file_path)
         ensure_directory(resolved.parent)
         mode = "a" if append else "w"

@@ -295,6 +295,13 @@ class KnowledgeBaseBuilder:
         """
         logger.info("Starting supervised knowledge base generation from {}", self.codebase_root)
         
+        # Check existing content
+        if not self.force_rebuild and self.output_root.exists():
+            existing_files = list(self.output_root.glob("*.md"))
+            if existing_files:
+                logger.info("KB exists at {} ({} files). Skipping rebuild.", self.output_root, len(existing_files))
+                return sorted(existing_files, key=lambda p: p.name)
+        
         # Reset directories
         if not self.dry_run:
             self._reset_directory(self.sub_agents_root)

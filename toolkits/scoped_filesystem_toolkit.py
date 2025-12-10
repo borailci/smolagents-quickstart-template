@@ -52,11 +52,14 @@ def build_scoped_tools(
     allow_tree: bool = False,
     allow_mermaid: bool = False,
     allow_writes: bool = True,
+    allow_kb_read: bool = False,
+    knowledge_base_root: str | None = None,
 ) -> List[Tool]:
     """Create Smolagents tools bound to the provided codebase and workspace roots."""
 
     codebase_root_path = Path(codebase_root).expanduser().resolve()
     workspace_root_path = ensure_directory(workspace_root)
+    kb_root_path = Path(knowledge_base_root).resolve() if knowledge_base_root else None
 
     def _record_tool_usage(tool_name: str) -> None:
         if usage_callback:
@@ -220,6 +223,31 @@ def build_scoped_tools(
         walk(resolved, 0)
         return "```mermaid\n" + "\n".join(lines) + "\n```"
 
+    @tool
+    def list_knowledge_base() -> str:
+        """List available knowledge base files."""
+        _record_tool_usage("list_knowledge_base")
+        if not kb_root_path or not kb_root_path.exists():
+            return "Knowledge Base not found or not configured."
+        return "\n".join(f.name for f in kb_root_path.glob("*.md"))
+
+    @tool
+    def read_knowledge_base_file(filename: str) -> str:
+        """Read a file from the knowledge base.
+        
+        Args:
+            filename: Name of the file (e.g., 'executive_summary.md')
+        """
+        _record_tool_usage("read_knowledge_base_file")
+        if not kb_root_path:
+             return "Knowledge Base not configured."
+        
+        target = kb_root_path / filename
+        if not target.exists():
+            return "File not found in Knowledge Base."
+        
+        return target.read_text(encoding="utf-8")
+
     tools: List[Tool] = [read_codebase_file]
     if allow_directory_listing:
         tools.append(list_codebase_directory)
@@ -229,5 +257,8 @@ def build_scoped_tools(
         tools.append(get_codebase_tree)
     if allow_mermaid:
         tools.append(get_directory_mermaid)
+    if allow_kb_read:
+        tools.append(list_knowledge_base)
+        tools.append(read_knowledge_base_file)
 
     return tools

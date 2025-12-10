@@ -196,6 +196,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to pre-computed RAG cache.",
     )
+    deep_agent_parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Force regeneration of Knowledge Base and Tutorials.",
+    )
 
     return parser.parse_args()
 
@@ -342,6 +347,8 @@ def main() -> None:
             tutorial_sub_agents_path=output_root / "sub_agents_tutorials",
             enable_rag=True,
             rag_codebase_cache_path=args.rag_cache_path,
+            force_rebuild_kb=args.force_rebuild,
+            force_rebuild_tutorials=args.force_rebuild,
         )
         
         agent = DeepAgent(config)

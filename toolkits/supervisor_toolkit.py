@@ -44,11 +44,13 @@ class SupervisorContext:
         sub_agents_root: Path,
         output_root: Path,
         max_retries: int = 2,
+        knowledge_base_root: Path | None = None,
     ):
         self.codebase_root = codebase_root
         self.sub_agents_root = sub_agents_root
         self.output_root = output_root
         self.max_retries = max_retries
+        self.knowledge_base_root = knowledge_base_root
         self.spawned_agents: Dict[str, Dict[str, Any]] = {}
         self.retry_counts: Dict[str, int] = {}
 
@@ -535,6 +537,7 @@ Write your final tutorial to `{target_filename}` in your workspace.
                 min_interval_seconds=5.0,
                 max_tool_calls=20,
                 max_directory_calls=1, # KB lookup mostly
+                knowledge_base_root=self.ctx.knowledge_base_root,
             )
 
             workspace = workspaces[0] if workspaces else None
@@ -632,6 +635,7 @@ def build_tutorial_supervisor_tools(
         codebase_root=Path(codebase_root).expanduser().resolve(),
         sub_agents_root=ensure_directory(sub_agents_root),
         output_root=ensure_directory(output_root),
+        knowledge_base_root=Path(knowledge_base_root).expanduser().resolve(),
     )
     
     # We need to give the supervisor ability to read KB.
@@ -652,11 +656,16 @@ def build_tutorial_supervisor_tools(
     class ReadKBTool(Tool):
         name = "read_knowledge_base_file"
         description = "Read a knowledge base file."
-        inputs = {"filename": {"type": "string"}}
+        inputs = {
+            "filename": {
+                "type": "string",
+                "description": "Name of the file to read (e.g., executive_summary.md)",
+            }
+        }
         output_type = "string"
         def forward(self, filename: str) -> str:
             p = kb_path / filename
-            if p.exists(): return p.read_text()[:10000] # truncate
+            if p.exists(): return p.read_text(encoding="utf-8")[:10000] # truncate
             return "File not found."
 
     return [

@@ -458,11 +458,13 @@ class TutorialGenerator:
         codebase_root: str | Path | None = None,
         knowledge_base_root: str | Path | None = None,
         output_root: str | Path | None = None,
+        sub_agents_root: str | Path | None = None,
         outline: Sequence[TutorialOutlineItem] | None = None,
         enable_rag: bool | None = None,
         rag_max_snippets: int | None = None,
         step_delay_seconds: float | None = None,
         rag_force_rebuild: bool = False,
+        rag_codebase_cache_path: str | Path | None = None,
         dry_run: bool = False,
     ) -> None:
         model_id = _require_env("LITELLM_MODEL_ID", LITELLM_MODEL_ID)
@@ -490,7 +492,17 @@ class TutorialGenerator:
             output_root or TUTORIAL_OUTPUT_PATH or (base_root / "tutorials")
         )
 
-        if SUB_AGENTS_ROOT_PATH:
+        if sub_agents_root:
+            self.sub_agents_root = Path(sub_agents_root).expanduser().resolve()
+        else:
+            # Default for standalone usage
+            self.sub_agents_root = ensure_directory(
+                base_root / "sub_agents_tutorials"
+            )
+
+        if sub_agents_root:
+            polisher_root_base = self.sub_agents_root
+        elif SUB_AGENTS_ROOT_PATH:
             polisher_root_base = (
                 Path(SUB_AGENTS_ROOT_PATH).expanduser().resolve() / "tutorial_polishers"
             )
@@ -510,12 +522,15 @@ class TutorialGenerator:
         )
         self.rag_force_rebuild = rag_force_rebuild
         
-        # Check for RAG cache path
+        # Check for RAG cache path (arg takes precedence, then env)
         self.rag_codebase_cache_path = None
         if self.enable_rag:
-            env_cache = os.environ.get("RAG_CODEBASE_CACHE_DIR")
-            if env_cache:
-                 self.rag_codebase_cache_path = env_cache
+            if rag_codebase_cache_path:
+                 self.rag_codebase_cache_path = str(rag_codebase_cache_path)
+            else:
+                 env_cache = os.environ.get("RAG_CODEBASE_CACHE_DIR")
+                 if env_cache:
+                      self.rag_codebase_cache_path = env_cache
 
         self._token_encoder = self._build_token_encoder(model_id)
 
@@ -1102,11 +1117,24 @@ class TutorialGenerator:
 
     @staticmethod
     def _sanitize_mermaid_line(line: str) -> str:
+        """Fix common Mermaid syntax errors."""
         stripped = line.rstrip()
         indent = line[: len(line) - len(line.lstrip())]
         core = stripped.lstrip()
+        
         if not core:
             return line
+            
+        # Fix pipe instead of bracket for nodes: A|Label] -> A[Label]
+        # Regex to find ID|Label] or ID|Label| pattern common in some LLM halucinations
+        # Pattern: Word char + | + text + ]
+        core = re.sub(r'(\w+)\|([^\]|]+)\]', r'\1[\2]', core)
+        
+        # Pattern: Word char + | + text + |
+        # Only do this if it looks like a node definition (start of line)
+        if re.match(r'^\w+\|.*\|$', core):
+             core = re.sub(r'^(\w+)\|([^|]+)\|$', r'\1[\2]', core)
+
         return f"{indent}{core}"
 
     def _normalize_heading_tokens(self, tutorial_paths: Iterable[Path]) -> None:
@@ -1360,11 +1388,65 @@ class TutorialGenerator:
         path.mkdir(parents=True, exist_ok=True)
 
     def _sanitize_tutorial_outputs(self, paths: Iterable[Path]) -> None:
+        """Post-process generated tutorials to fix common LLM formatting errors."""
         for path in paths:
-            c = path.read_text("utf-8")
-            fixed = self._sanitize_mermaid_blocks(c)
-            if fixed != c:
-                path.write_text(fixed, "utf-8")
+            try:
+                c = path.read_text("utf-8")
+                
+                # 1. Clean LLM artifacts (wrapping quotes/backticks)
+                c = self._clean_llm_artifacts(c)
+                
+                # 2. Fix broken code blocks (unclosed)
+                c = self._fix_unclosed_code_blocks(c)
+                
+                # 3. Sanitize Mermaid (enhanced)
+                c = self._sanitize_mermaid_blocks(c)
+                
+                path.write_text(c, "utf-8")
+                logger.info(f"Sanitized {path.name}")
+            except Exception as e:
+                logger.warning(f"Failed to sanitize {path}: {e}")
+
+    def _clean_llm_artifacts(self, content: str) -> str:
+        s = content.strip()
+        
+        # Remove wrapping quote blocks (common artifact)
+        if s.startswith("'''") and s.endswith("'''"):
+             s = s[3:-3].strip()
+        elif s.startswith('"""') and s.endswith('"""'):
+             s = s[3:-3].strip()
+        elif s.startswith("'") and s.endswith("'"):
+             s = s[1:-1].strip()
+             
+        # Remove wrapping markdown code blocks if the entire content is wrapped
+        # e.g. ```markdown ... ```
+        if s.startswith("```") and s.endswith("```"):
+            lines = s.splitlines()
+            if len(lines) >= 2:
+                # Check if the first line is just opening fence (maybe with language)
+                if lines[0].strip().startswith("```") and " " not in lines[0].strip():
+                    # Check if last line is just closing fence
+                    if lines[-1].strip() == "```":
+                        # Return everything in between
+                        return "\n".join(lines[1:-1]).strip()
+
+        # Remove literal "Observations:" prefix causing invalid markdown
+        if s.startswith("Observations:"):
+            s = s.replace("Observations:", "", 1).strip()
+        
+        # Remove random leading '"' if present (sometimes happens with JSON string dumps)
+        if s.startswith('"') and s.endswith('"') and "\n" in s:
+             s = s[1:-1].replace('\\"', '"').replace("\\n", "\n")
+
+        return s
+
+    def _fix_unclosed_code_blocks(self, content: str) -> str:
+        # Count triple backticks
+        count = content.count("```")
+        if count % 2 != 0:
+            logger.warning("Found unclosed code block, appending closing fence.")
+            return content + "\n```"
+        return content
 
     def _create_supervisor_agent(self):
         """Create the Tutorial Supervisor Agent."""
@@ -1403,13 +1485,31 @@ class TutorialGenerator:
             self.output_root.mkdir(parents=True, exist_ok=True)
 
         supervisor = self._create_supervisor_agent()
-        
-        try:
-            supervisor.run("Plan and generate the tutorial series.")
-        except Exception as e:
-            logger.error(f"Tutorial Supervisor failed: {e}")
-            if not self.dry_run:
-                 raise
+    
+        # Retry loop for rate limits
+        import time
+        max_retries = 10
+        retry_delay = 5.0  # seconds
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                supervisor.run("Plan and generate the tutorial series.", max_steps=50)
+                break
+            except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = "rate" in error_str or "429" in error_str or "exhausted" in error_str
+                
+                if is_rate_limit and attempt < max_retries:
+                    logger.warning(
+                        "Rate limit hit (attempt {}/{}). Waiting {}s before retry...",
+                        attempt, max_retries, retry_delay
+                    )
+                    time.sleep(retry_delay)
+                    # retry_delay = min(retry_delay * 1.5, 60.0)  # Fixed delay as requested
+                else:
+                    logger.error(f"Tutorial Supervisor failed: {e}")
+                    if not self.dry_run:
+                         raise
         
         # Collect output
         output_files = list(self.output_root.glob("*.md"))

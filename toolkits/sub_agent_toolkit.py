@@ -202,6 +202,7 @@ def _execute_sub_agent_runs(
     min_interval_seconds: float = 5.0,
     max_tool_calls: int | None = None,
     max_directory_calls: int | None = None,
+    knowledge_base_root: Optional[str | Path] = None,
 ) -> List[Path]:
     if not task_payloads:
         return []
@@ -279,6 +280,8 @@ def _execute_sub_agent_runs(
                 allow_tree=False,
                 allow_mermaid=False,
                 allow_writes=True,
+                allow_kb_read=True if knowledge_base_root else False,
+                knowledge_base_root=str(knowledge_base_root) if knowledge_base_root else None,
             )
             return ToolCallingAgent(
                 name=f"sub_agent_{index}",
@@ -440,6 +443,7 @@ def run_sub_agent_tasks(
         min_interval_seconds=min_interval_seconds,
         max_tool_calls=max_tool_calls,
         max_directory_calls=max_directory_calls,
+        knowledge_base_root=knowledge_base_root,
     )
 
 
@@ -455,6 +459,7 @@ def run_typed_sub_agent_tasks(
     role_prompts: Optional[Dict[SubAgentRole, str]] = None,
     max_tool_calls: int | None = None,
     max_directory_calls: int | None = None,
+    knowledge_base_root: Optional[str | Path] = None,
 ) -> List[Path]:
     """Execute sub-agents with explicit roles and return their workspace paths."""
 
@@ -484,6 +489,7 @@ def run_typed_sub_agent_tasks(
         min_interval_seconds=min_interval_seconds,
         max_tool_calls=max_tool_calls,
         max_directory_calls=max_directory_calls,
+        knowledge_base_root=knowledge_base_root,
     )
 
 

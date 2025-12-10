@@ -80,3 +80,19 @@ When enabled, the tutorial agent instructions remind it to call these helpers be
 ## License
 
 MIT
+
+## Web UI
+
+A modern web interface is available for browsing and editing generated tutorials.
+
+### Quick Start (UI)
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to view the tutorial browser.
+
+See [ui/GUIDE.md](ui/GUIDE.md) for detailed setup instructions.

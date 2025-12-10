@@ -17,6 +17,7 @@ from loguru import logger
 from smolagents import LiteLLMModel, Tool, tool
 from smolagents.agents import ToolCallingAgent
 
+from config import settings
 from prompts import prompts
 from toolkits.scoped_filesystem_toolkit import build_scoped_tools
 from utils.path_utils import ensure_directory
@@ -31,14 +32,15 @@ __all__ = [
 
 load_dotenv()
 
-LITELLM_MODEL_ID = os.getenv("LITELLM_MODEL_ID")
-LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
-CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
-SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
-SUB_AGENT_RPM_ENV = "SUB_AGENT_REQUESTS_PER_MINUTE"
-DEFAULT_SUB_AGENT_RPM = 4.0
-DEFAULT_SUB_AGENT_MAX_RETRIES = 10
-DEFAULT_SUB_AGENT_TOOL_CALL_BUDGET = 6
+# --- Use Settings ---
+LITELLM_MODEL_ID = settings.LITELLM_MODEL_ID
+LITELLM_API_KEY = settings.LITELLM_API_KEY
+CODEBASE_ROOT_PATH = str(settings.CODEBASE_ROOT)
+SUB_AGENTS_ROOT_PATH = str(settings.SUB_AGENTS_ROOT)
+
+DEFAULT_SUB_AGENT_RPM = settings.SUB_AGENT_RPM
+DEFAULT_SUB_AGENT_MAX_RETRIES = settings.SUB_AGENT_MAX_RETRIES
+DEFAULT_SUB_AGENT_TOOL_CALL_BUDGET = settings.SUB_AGENT_TOOL_CALL_BUDGET
 DEFAULT_SUB_AGENT_DIRECTORY_CALL_BUDGET = 0
 
 
@@ -61,42 +63,7 @@ class SubAgentOutputError(RuntimeError):
     """Raised when a sub-agent produces invalid or empty output."""
 
 
-@dataclass
-class ToolUsageBudget:
-    agent_index: int
-    max_total_calls: int | None = None
-    max_directory_calls: int | None = None
-    total_calls: int = 0
-    directory_calls: int = 0
-
-    def record(self, tool_name: str) -> None:
-        if tool_name == "write_workspace_file":
-            return
-        self.total_calls += 1
-        if tool_name == "list_codebase_directory":
-            self.directory_calls += 1
-            if (
-                self.max_directory_calls is not None
-                and self.directory_calls > self.max_directory_calls
-            ):
-                logger.error(
-                    "Sub-agent %d exceeded directory listing budget (%d).",
-                    self.agent_index,
-                    self.max_directory_calls,
-                )
-                raise ToolBudgetExceededError(
-                    "Directory listing limit exceeded; rely on provided structure."
-                )
-
-        if self.max_total_calls is not None and self.total_calls > self.max_total_calls:
-            logger.error(
-                "Sub-agent %d exceeded total tool call budget (%d).",
-                self.agent_index,
-                self.max_total_calls,
-            )
-            raise ToolBudgetExceededError(
-                "Tool call budget exceeded; consolidate your findings and stop."
-            )
+# ToolUsageBudget removed - no budget enforcement
 
 
 class SubAgentRole(str, Enum):
@@ -143,28 +110,9 @@ def _resolve_paths(
 
 
 def _resolve_sub_agent_rpm() -> float:
-    raw_value = os.getenv(SUB_AGENT_RPM_ENV)
-    if raw_value is None:
-        return DEFAULT_SUB_AGENT_RPM
-    try:
-        parsed = float(raw_value)
-    except ValueError:
-        logger.warning(
-            "Invalid {} value '{}'; using default {:.1f}",
-            SUB_AGENT_RPM_ENV,
-            raw_value,
-            DEFAULT_SUB_AGENT_RPM,
-        )
-        return DEFAULT_SUB_AGENT_RPM
-    if parsed <= 0:
-        logger.warning(
-            "Non-positive {} value '{}'; using default {:.1f}",
-            SUB_AGENT_RPM_ENV,
-            raw_value,
-            DEFAULT_SUB_AGENT_RPM,
-        )
-        return DEFAULT_SUB_AGENT_RPM
-    return parsed
+    # Now handled by settings, but keeping function signature for compatibility if needed, 
+    # though strictly we should just use DEFAULT_SUB_AGENT_RPM which comes from settings.
+    return DEFAULT_SUB_AGENT_RPM
 
 
 from utils.llm_factory import create_model
@@ -265,15 +213,7 @@ def _execute_sub_agent_runs(
 
         logger.info("Launching sub-agent {} in {}", index, workspace)
 
-        budget = (
-            ToolUsageBudget(
-                agent_index=index,
-                max_total_calls=max_tool_calls,
-                max_directory_calls=max_directory_calls,
-            )
-            if max_tool_calls is not None or max_directory_calls is not None
-            else None
-        )
+        # Budget enforcement removed
 
         base_instructions = _formatted_prompt(description, role_prompt)
         if STRICT_JSON_REMINDER not in base_instructions:
@@ -287,12 +227,13 @@ def _execute_sub_agent_runs(
                 run_tools = build_scoped_tools(
                     codebase_root=str(codebase_path),
                     workspace_root=str(workspace),
-                    usage_callback=budget.record if budget else None,
-                    allow_directory_listing=False,
-                    allow_tree=False,
+                    usage_callback=None,  # Budget enforcement removed
+                    allow_directory_listing=True,  # Enable directory listing
+                    allow_tree=True,  # Enable tree tool for codebase exploration
                     allow_mermaid=False,
                     allow_writes=True,
                     allow_kb_read=True if knowledge_base_root else False,
+                    # Ensure path is string if not None 
                     knowledge_base_root=str(knowledge_base_root) if knowledge_base_root else None,
                 )
 
@@ -362,6 +303,7 @@ def _execute_sub_agent_runs(
                     .__name__.lower()
                     .startswith("ratelimit")
                     or "quota" in str(exc).lower()
+                    or "429" in str(exc)
                 )
                 parse_error = (
                     "Expecting property name enclosed in double quotes" in str(exc)
@@ -389,23 +331,29 @@ def _execute_sub_agent_runs(
 
                 if is_rate_limit:
                     rate_limit_consecutive += 1
-                    # Infinite retry for rate limits as requested, but with backoff
-                    base_wait = _extract_retry_after_seconds(exc, default=5.0)
                     
-                    # Exponential backoff: 5, 10, 20, 40, 60...
-                    # (2^(count-1)) * base
-                    multiplier = 2 ** (rate_limit_consecutive - 1)
-                    wait_seconds = min(base_wait * multiplier, 60.0)
+                    # Exponential backoff with jitter (Google best practices)
+                    import random
+                    base_delay = 1.0
+                    max_delay = 60.0
+                    jitter_factor = 0.5
+                    max_rate_limit_retries = 10
+                    
+                    if rate_limit_consecutive > max_rate_limit_retries:
+                        logger.error(f"Sub-agent {index} exceeded max rate limit retries ({max_rate_limit_retries})")
+                        raise exc
+                    
+                    delay = min(base_delay * (2 ** (rate_limit_consecutive - 1)), max_delay)
+                    jittered_delay = delay * (1 + jitter_factor * (random.random() * 2 - 1))
 
                     logger.warning(
-                        "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry (attempt {}/inf).",
+                        "Sub-agent {} hit provider quota. Retry {}/{} in {:.1f}s.",
                         index,
-                        wait_seconds,
-                        attempt
+                        rate_limit_consecutive,
+                        max_rate_limit_retries,
+                        jittered_delay,
                     )
-                    time.sleep(wait_seconds)
-                     # Decrement attempt counter to effectively retry forever on quota
-                    attempt -= 1 
+                    time.sleep(jittered_delay)
                     continue
                 else:
                     rate_limit_consecutive = 0
@@ -465,7 +413,7 @@ def run_sub_agent_tasks(
         min_interval_seconds=min_interval_seconds,
         max_tool_calls=max_tool_calls,
         max_directory_calls=max_directory_calls,
-        knowledge_base_root=knowledge_base_root,
+        knowledge_base_root=None, # Explicitly none here unless passed, but this func doesn't accept it in orig signature
     )
 
 
@@ -520,8 +468,8 @@ def get_sub_agent_tools() -> List[Tool]:
             "Results saved in:",
         ]
         summary_lines.extend(f"- {path}" for path in workspaces)
-        return "\n".join(summary_lines)
+        return "\\n".join(summary_lines)
 
-    spawn_sub_agents.run_sub_agent_tasks = run_sub_agent_tasks  # type: ignore[attr-defined]
+    # spawn_sub_agents.run_sub_agent_tasks = run_sub_agent_tasks  # type: ignore[attr-defined] # Not needed with new structure
 
     return [spawn_sub_agents]

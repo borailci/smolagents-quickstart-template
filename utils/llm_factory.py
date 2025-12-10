@@ -25,8 +25,25 @@ def create_model(model_id: str | None = None, api_key: str | None = None) -> Lit
     # Infinite-ish retries to handle long blocks
     os.environ["LITELLM_NUM_RETRIES"] = "30" 
     # Add longer backoff to handle Vertex AI quotas
-    os.environ["LITELLM_RETRY_MIN_WAIT"] = "10"
-    os.environ["LITELLM_RETRY_MAX_WAIT"] = "120"
+    os.environ["LITELLM_RETRY_MIN_WAIT"] = "1"
+    os.environ["LITELLM_RETRY_MAX_WAIT"] = "60"
     
     logger.debug(f"Initializing model {mid}")
+    
+    # Special handling for Vertex AI Model Garden (Claude, Llama, etc.)
+    # identifying via 'vertex_ai/' prefix
+    if mid.startswith("vertex_ai/"):
+        vertex_project = os.getenv("VERTEXAI_PROJECT")
+        vertex_location = os.getenv("VERTEXAI_LOCATION")
+        
+        # If the user has these set, pass them explicitly. 
+        # LiteLLM also looks for them in env, but explicit passing ensures smolagents usage.
+        if vertex_project and vertex_location:
+             return LiteLLMModel(
+                 model_id=mid, 
+                 api_key=key,
+                 vertex_ai_project=vertex_project,
+                 vertex_ai_location=vertex_location
+             )
+
     return LiteLLMModel(model_id=mid, api_key=key)

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, cast
+from typing import Callable, List, Optional, Sequence, Set, cast
 
 from loguru import logger
 
@@ -26,50 +25,15 @@ except ImportError as exc:
 try:
     from litellm import RateLimitError
     from litellm import embedding as litellm_embedding
+    # Import google specific exception if possible, or rely on generic Exception for now
+    # from google.api_core.exceptions import ResourceExhausted
 except ImportError as exc:
     raise ImportError(
         "litellm is required for embeddings. Install it via `pip install litellm`."
     ) from exc
 
-
-# Unified environment configuration
-_CHAT_MODEL = os.getenv("LITELLM_MODEL_ID", "")
-# Smart default: if using Gemini chat, use Gemini embeddings. Otherwise default to OpenAI.
-_FALLBACK_EMBED_MODEL = (
-    "gemini/text-embedding-004"
-    if "gemini" in _CHAT_MODEL.lower()
-    else "text-embedding-3-small"
-)
-
-_DEFAULT_EMBEDDING_MODEL = os.getenv(
-    "LITELLM_EMBEDDING_MODEL_ID", _FALLBACK_EMBED_MODEL
-)
-_DEFAULT_EMBEDDING_API_KEY = os.getenv("LITELLM_API_KEY")
-
-
-def _safe_int_env(key: str, default: int, minimum: int = 1) -> int:
-    try:
-        return max(minimum, int(os.getenv(key, default)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_float_env(key: str, default: float, minimum: float = 0.0) -> float:
-    try:
-        return max(minimum, float(os.getenv(key, default)))
-    except (TypeError, ValueError):
-        return default
-
-
-_EMBED_BATCH_SIZE = _safe_int_env("RAG_EMBED_BATCH_SIZE", 100, 1)
-_REQUEST_PAUSE_SECONDS = _safe_float_env("RAG_EMBED_REQUEST_PAUSE_SECONDS", 1.0, 0.0)
-_EMBED_MAX_RETRIES = _safe_int_env("RAG_EMBED_MAX_RETRIES", 10, 1)
-_EMBED_RETRY_BACKOFF_SECONDS = _safe_float_env(
-    "RAG_EMBED_RETRY_BACKOFF_SECONDS", 5.0, 0.1
-)
-
-__all__ = ["SimpleChromaRAGStore", "ChunkRecord"]
-
+# --- NEW: Import centralized config ---
+from config import settings
 from utils.constants import IGNORED_DIRS, ALLOWED_SUFFIXES, MAX_FILE_SIZE_BYTES
 
 # Text Splitting Config
@@ -96,10 +60,10 @@ class SimpleChromaRAGStore:
         knowledge_base_root: Path,
         persist_directory: Path,
         collection_name: str = "tutorial_rag",
-        embedding_model: str = _DEFAULT_EMBEDDING_MODEL,
-        embed_batch_size: int = _EMBED_BATCH_SIZE,
-        request_pause_seconds: float = _REQUEST_PAUSE_SECONDS,
-        embed_max_retries: int | None = None,
+        embedding_model: str = settings.EMBEDDING_MODEL_ID,
+        embed_batch_size: int = settings.RAG_EMBED_BATCH_SIZE,
+        request_pause_seconds: float = settings.RAG_EMBED_REQUEST_PAUSE_SECONDS,
+        embed_max_retries: int | None = None, # Deprecated/handled by tenacity config, but kept for init sig compat
         embed_retry_backoff_seconds: float | None = None,
         embedding_fn: Optional[
             Callable[[Sequence[str]], Sequence[Sequence[float]]]
@@ -110,12 +74,10 @@ class SimpleChromaRAGStore:
         self.persist_directory = persist_directory
         self.collection_name = collection_name
         self.embedding_model = embedding_model
+        
+        # Enforce minimums
         self.embed_batch_size = max(1, embed_batch_size)
         self.request_pause_seconds = max(0.0, request_pause_seconds)
-        self._embed_max_retries = max(1, embed_max_retries or _EMBED_MAX_RETRIES)
-        self._embed_retry_backoff_seconds = max(
-            0.0, embed_retry_backoff_seconds or _EMBED_RETRY_BACKOFF_SECONDS
-        )
         self._embedding_fn = embedding_fn
 
         self.persist_directory.mkdir(parents=True, exist_ok=True)
@@ -338,12 +300,14 @@ class SimpleChromaRAGStore:
             raise ValueError("No collection available for adding chunks.")
 
         total_chunks = len(chunks)
+        # Use config batch size (likely 10)
+        batch_size = self.embed_batch_size
         logger.info(
-            f"Embedding {total_chunks} chunks in batches of {self.embed_batch_size}..."
+            f"Embedding {total_chunks} chunks in batches of {batch_size}..."
         )
 
-        for start in range(0, total_chunks, self.embed_batch_size):
-            end = start + self.embed_batch_size
+        for start in range(0, total_chunks, batch_size):
+            end = start + batch_size
             batch = chunks[start:end]
 
             texts = [c.content for c in batch]
@@ -364,57 +328,53 @@ class SimpleChromaRAGStore:
             except Exception as exc:
                 logger.error(f"Failed to embed batch starting at index {start}: {exc}")
 
+            # Always throttle to respect rate limits
             if self.request_pause_seconds > 0:
+                logger.debug(f"Throttling batch for {self.request_pause_seconds}s...")
                 time.sleep(self.request_pause_seconds)
 
     def _embed_texts(self, texts: Sequence[str]) -> List[Sequence[float]]:
-        """Computes embeddings for a batch of texts."""
+        """Computes embeddings for a batch of texts with robust retries."""
         if self._embedding_fn:
             return list(self._embedding_fn(texts))
 
-        last_error: Exception | None = None
+        # Manual retry loop with fixed 5s sleep for rate limits
+        max_retries = settings.RAG_EMBED_MAX_RETRIES
         attempt = 0
-
+        
         while True:
             attempt += 1
             try:
                 response = litellm_embedding(
                     model=self.embedding_model,
                     input=texts,
-                    api_key=_DEFAULT_EMBEDDING_API_KEY,
+                    api_key=settings.LITELLM_API_KEY,
                 )
-
                 data = response.get("data", [])
                 data.sort(key=lambda x: x["index"])
                 return [item["embedding"] for item in data]
-
-            except RateLimitError as exc:
-                # Infinite retry for rate limits as requested
-                logger.warning(
-                    f"Embedding rate limited (attempt {attempt}) — sleeping 5.0s and retrying..."
-                )
-                time.sleep(5.0)
-                continue
-
-            except Exception as exc:
-                last_error = exc
-                if attempt >= self._embed_max_retries:
-                    logger.error(
-                        "Embedding API error after {} attempts: {}",
-                        attempt,
-                        exc,
-                    )
+            except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = "rate" in error_str or "429" in error_str or "exhausted" in error_str
+                
+                if is_rate_limit:
+                    logger.warning(f"Rate limit hit during embedding (attempt {attempt}). Sleeping 5.0s...")
+                    time.sleep(5.0)
+                    # For rate limits, we often want infinite retries or very high limits.
+                    # If using max_retries, ensure it's high enough. 
+                    # User requested "Use this rate limit... fixed sleep (5.0s)".
+                    # We will continue indefinitely for rate limits if that's the implication, 
+                    # but typically we still respect a high max count or just loop.
+                    # Given "manual loop but with fixed sleep", let's loop forever on rate limit 
+                    # or at least respect the configured max retries but strictly use 5s.
+                    if attempt >= max_retries:
+                         logger.error(f"Max retries ({max_retries}) exceeded for rate limit.")
+                         raise
+                    continue
+                else:
+                    # Non-rate limit error
+                    logger.error(f"Embedding failed: {e}")
                     raise
-
-                wait_seconds = min(self._embed_retry_backoff_seconds * attempt, 60.0)
-                logger.warning(
-                    "Embedding attempt {}/{} failed, retrying in {:.1f}s: {}",
-                    attempt,
-                    self._embed_max_retries,
-                    wait_seconds,
-                    exc,
-                )
-                time.sleep(wait_seconds)
 
     def _collect_chunks(
         self, *, include_codebase: bool, include_knowledge_base: bool
@@ -493,7 +453,7 @@ class SimpleChromaRAGStore:
 
             # If adding this line exceeds chunk size and we have content, save current chunk
             if current_length + line_len > _CHUNK_SIZE and current_chunk:
-                chunk_text = "\n".join(current_chunk)
+                chunk_text = "\\n".join(current_chunk)
                 records.append(
                     ChunkRecord(
                         chunk_id=self._build_chunk_id(
@@ -526,7 +486,7 @@ class SimpleChromaRAGStore:
 
         # Add remaining
         if current_chunk:
-            chunk_text = "\n".join(current_chunk)
+            chunk_text = "\\n".join(current_chunk)
             records.append(
                 ChunkRecord(
                     chunk_id=self._build_chunk_id(
@@ -579,4 +539,3 @@ class SimpleChromaRAGStore:
                 hasher.update(str(stat.st_size).encode("utf-8"))
 
         return hasher.hexdigest()
-

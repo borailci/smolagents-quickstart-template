@@ -223,7 +223,7 @@ data/sub_agents_workspace/
 filtered_log*.txt
 
 # Deep Agent Framework Generated Data
-data/bench/
-data/rag_cache/
-data/agent_workspace/
 data/deep_agent_output/
+data/agent_workspace/
+data/baseline-tutorials/
+data/

@@ -22,7 +22,11 @@ def create_model(model_id: str | None = None, api_key: str | None = None) -> Lit
 
     # Configure automatic retries via environment variable
     # This is a global side-effect for litellm, but consistent with our robustness goals
-    os.environ["LITELLM_NUM_RETRIES"] = "10"
+    # Infinite-ish retries to handle long blocks
+    os.environ["LITELLM_NUM_RETRIES"] = "30" 
+    # Add longer backoff to handle Vertex AI quotas
+    os.environ["LITELLM_RETRY_MIN_WAIT"] = "10"
+    os.environ["LITELLM_RETRY_MAX_WAIT"] = "120"
     
     logger.debug(f"Initializing model {mid}")
     return LiteLLMModel(model_id=mid, api_key=key)

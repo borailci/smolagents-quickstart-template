@@ -1,0 +1,47 @@
+codebases:
+  - id: "smolagents-tutorial"
+    name: "SmolAgents Intro"
+    description: "Learn the basics of the SmolAgents framework and agentic AI."
+    icon: "bot-message-square"
+    color: "#8B5CF6"
+    files:
+      - path: "tutorials/test-codebase-1/intro.md"
+        title: "Introduction"
+      - path: "tutorials/test-codebase-1/advanced.md"
+        title: "Advanced Patterns"
+
+  - id: "project-alpha"
+    name: "Project Alpha"
+    description: "A microservices-based architecture guide."
+    icon: "server"
+    color: "#06B6D4"
+    files:
+      - path: "tutorials/test-codebase-2/guide.md"
+        title: "Getting Started"
+
+  - id: "deep-learning"
+    name: "DeepLearning FW"
+    description: "Custom framework for tensor operations."
+    icon: "brain-circuit"
+    color: "#F43F5E"
+    files:
+      - path: "tutorials/test-codebase-3/readme.md"
+        title: "Documentation"
+
+  - id: "high-avail-sys"
+    name: "High Availability System"
+    description: "Architecture diagrams and scaling strategies."
+    icon: "network"
+    color: "#10B981"
+    files:
+      - path: "tutorials/test-codebase-4/architecture.md"
+        title: "System Architecture"
+
+  - id: "api-reference"
+    name: "API Reference"
+    description: "REST API endpoints and usage flow."
+    icon: "webhook"
+    color: "#F59E0B"
+    files:
+      - path: "tutorials/test-codebase-5/api.md"
+        title: "API Docs"

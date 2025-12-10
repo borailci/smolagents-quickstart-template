@@ -222,8 +222,14 @@ data/sub_agents_workspace/
 # Local filtered logs
 filtered_log*.txt
 
-# Deep Agent Framework Generated Data
 data/bench/
 data/rag_cache/
 data/agent_workspace/
 data/deep_agent_output/
+
+# UI (Next.js) specific
+ui/.next/
+ui/node_modules/
+ui/.env.local
+ui/out/
+

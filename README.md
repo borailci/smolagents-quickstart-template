@@ -67,6 +67,60 @@ During knowledge-base generation the pipeline now writes a `scouting_report.md` 
 
 When enabled, the tutorial agent instructions remind it to call these helpers before guessing, leading to more grounded guides that include inline code samples from the repo.
 
+## 🎨 Web UI
+
+A modern, AI-themed web interface is available for browsing and editing generated tutorials.
+
+![UI Preview](https://img.shields.io/badge/Next.js-14-black?logo=next.js) ![Tailwind](https://img.shields.io/badge/Tailwind-CSS-06B6D4?logo=tailwindcss) ![TypeScript](https://img.shields.io/badge/TypeScript-Ready-3178C6?logo=typescript)
+
+![Landing Page](ui/public/screenshots/landing-page.png)
+
+*The interactive landing page with tutorial cards*
+
+![Tutorial Page](ui/public/screenshots/tutorial-page.png)
+
+*The comprehensive tutorial viewer with sidebar and markdown rendering*
+
+
+### Features
+
+- ✨ **Stunning UI** - Modern glassmorphism design with smooth animations
+- 📚 **Tutorial Browser** - Interactive card grid for all your codebases
+- 🎯 **Mermaid Diagrams** - Full support for flowcharts and diagrams
+- ✏️ **Built-in Editor** - Toggle between preview and edit mode
+- 🌙 **Dark/Light Themes** - Beautiful themes with one-click switching
+- 📱 **Responsive** - Works on desktop, tablet, and mobile
+
+### Quick Start (UI)
+
+```bash
+# Navigate to UI directory
+cd ui
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to view the tutorial browser.
+
+### Configuration
+
+Edit `ui/.env.local` to customize:
+
+```env
+# Loading animation duration (in milliseconds)
+NEXT_PUBLIC_LOADING_DURATION_MS=3500
+
+# Developer credits
+NEXT_PUBLIC_DEVELOPER_1_NAME="Your Name"
+NEXT_PUBLIC_DEVELOPER_1_GITHUB="https://github.com/yourusername"
+```
+
+See [ui/GUIDE.md](ui/GUIDE.md) for detailed setup instructions, customization options, and troubleshooting.
+
 ## Documentation
 
 - **[How to Use Guide](docs/how_to.md)** - Student-friendly tutorials and exercises

@@ -343,10 +343,11 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
         
         # Retry loop for rate limits
         import time
-        max_retries = 10
-        retry_delay = 5.0  # seconds
+        retry_delay = 5.0
+        attempt = 0
         
-        for attempt in range(1, max_retries + 1):
+        while True:
+            attempt += 1
             try:
                 result = supervisor.run(task)
                 logger.info("Supervisor Agent completed: {}", str(result)[:200])
@@ -355,13 +356,12 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
                 error_str = str(e).lower()
                 is_rate_limit = "rate" in error_str or "429" in error_str or "exhausted" in error_str
                 
-                if is_rate_limit and attempt < max_retries:
+                if is_rate_limit:
                     logger.warning(
-                        "Rate limit hit (attempt {}/{}). Waiting {}s before retry...",
-                        attempt, max_retries, retry_delay
+                        "Rate limit hit (attempt {}). Waiting {}s before retry...",
+                        attempt, retry_delay
                     )
                     time.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 1.5, 60.0)  # Exponential backoff, max 60s
                 else:
                     logger.exception("Supervisor Agent failed: {}", e)
                     raise RuntimeError(f"Supervisor Agent failed: {e}") from e

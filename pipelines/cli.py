@@ -201,6 +201,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force regeneration of Knowledge Base and Tutorials.",
     )
+    deep_agent_parser.add_argument(
+        "--mode",
+        choices=["standard", "baseline"],
+        default="standard",
+        help="Run mode: 'standard' (full KB + tutorials) or 'baseline' (tutorials from codebase exploration only).",
+    )
 
     return parser.parse_args()
 
@@ -338,6 +344,27 @@ def main() -> None:
         else:
             output_root = (Path("data/deep_agent_output") / codebase_path.name).resolve()
             
+        if hasattr(args, "mode") and args.mode == "baseline":
+            logger.info("Running in BASELINE mode (No Knowledge Base Generation)")
+            from pipelines.tutorial_generator import TutorialGenerator
+            
+            # Baseline uses explicit output path structure similar to DeepAgent but skips KB
+            tutorial_output = output_root / "tutorials"
+            sub_agents_path = output_root / "sub_agents_tutorials"
+            
+            generator = TutorialGenerator(
+                codebase_root=codebase_path,
+                knowledge_base_root=output_root / "knowledge_base", # Dummy, ignored by baseline supervisor tools
+                output_root=tutorial_output,
+                sub_agents_root=sub_agents_path,
+                enable_rag=True,
+                rag_codebase_cache_path=args.rag_cache_path,
+                dry_run=False,
+            )
+            outputs = generator.generate_baseline_with_supervisor()
+            logger.info("Baseline tutorials written to:\n{}", _format_paths(outputs))
+            return
+
         config = DeepAgentConfig(
             codebase_root=codebase_path,
             output_root=output_root,
@@ -358,4 +385,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Process interrupted by user.")
+        sys.exit(0)

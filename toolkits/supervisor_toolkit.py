@@ -27,6 +27,7 @@ from toolkits.sub_agent_toolkit import (
     SubAgentOutputError,
     run_typed_sub_agent_tasks,
 )
+from toolkits.baseline_toolkit import build_baseline_tools
 from utils.constants import IGNORED_DIRS, BLOCKED_EXTENSIONS
 from utils.path_utils import ensure_directory
 
@@ -555,6 +556,88 @@ Write your final tutorial to `{target_filename}` in your workspace.
             return json.dumps({"workspace": str(workspace_root), "status": "failed", "error": str(e)})
 
 
+class SpawnBaselineAgentTool(Tool):
+    name = "spawn_tutorial_agent"  # Re-use name so supervisor prompt works
+    description = "Spawn a baseline tutorial writer sub-agent (No KB access) for a specific topic."
+    inputs = {
+        "topic": {
+            "type": "string",
+            "description": "Title or topic of the tutorial",
+        },
+        "target_filename": {
+            "type": "string",
+            "description": "Desired filename (e.g., '01_getting_started.md')",
+        },
+        "focus_instructions": {
+            "type": "string",
+            "description": "Specific instructions on what to cover in this chapter",
+        },
+    }
+    output_type = "string"
+
+    def __init__(self, ctx: SupervisorContext, **kwargs):
+        super().__init__(**kwargs)
+        self.ctx = ctx
+
+    def forward(self, topic: str, target_filename: str, focus_instructions: str) -> str:
+        safe_name = target_filename.replace(".md", "").replace("/", "_").strip("_")
+        workspace_root = self.ctx.sub_agents_root / safe_name
+
+        if workspace_root.exists():
+            shutil.rmtree(workspace_root)
+        workspace_root.mkdir(parents=True, exist_ok=True)
+
+        task_desc = f"""Write a tutorial: "{topic}"
+Target file: {target_filename}
+
+INSTRUCTIONS:
+{focus_instructions}
+
+Write your final tutorial to `{target_filename}` in your workspace.
+"""
+        
+        # Build baseline tools for this specific agent
+        # Note: We pass workspace_root as tutorial_output_root so write_file goes there
+        baseline_tools = build_baseline_tools(
+            codebase_root=self.ctx.codebase_root,
+            tutorial_output_root=workspace_root,
+            knowledge_base_root=self.ctx.knowledge_base_root or self.ctx.output_root, 
+            # Baseline tools may use RAG if enabled in environment (RAG_CODEBASE_CACHE_DIR)
+        )
+
+        spec = SubAgentTaskSpec(
+            description=task_desc,
+            role=SubAgentRole.TUTORIAL_WRITER,
+            output_format="Markdown file",
+            tools=baseline_tools, 
+        )
+
+        try:
+            # We use run_typed_sub_agent_tasks but override the prompt with our BASELINE prompt
+            workspaces = run_typed_sub_agent_tasks(
+                [spec],
+                codebase_root=self.ctx.codebase_root,
+                sub_agents_root=workspace_root,
+                min_interval_seconds=10.0,
+                max_tool_calls=30, # Baseline needs more steps to explore
+                max_directory_calls=1,
+            )
+
+            workspace = workspaces[0] if workspaces else None
+            if workspace and workspace.exists():
+                self.ctx.spawned_agents[target_filename] = {
+                    "workspace": str(workspace_root),
+                    "status": "completed",
+                }
+                return json.dumps({"workspace": str(workspace_root), "status": "completed"})
+            else:
+                return json.dumps({"workspace": str(workspace_root), "status": "failed", "error": "No output"})
+
+        except Exception as e:
+            logger.warning(f"spawn_tutorial_agent (baseline) failed for {target_filename}: {e}")
+            return json.dumps({"workspace": str(workspace_root), "status": "failed", "error": str(e)})
+
+
 class FinalizeTutorialsTool(Tool):
     name = "finalize_tutorials"
     description = "Collect all successful tutorials into the final output directory."
@@ -626,23 +709,29 @@ def build_tutorial_supervisor_tools(
     codebase_root: str | Path,
     sub_agents_root: str | Path,
     output_root: str | Path,
-    knowledge_base_root: str | Path, # Tutorial supervisor needs KB access tools?
-    # Actually the tutorial sub-agents need KB access. 
-    # The Supervisor needs to READ KB to Plan.
+    knowledge_base_root: str | Path, 
+    baseline_mode: bool = False,
 ) -> List[Tool]:
     """Create tools for the Tutorial Supervisor."""
     ctx = SupervisorContext(
         codebase_root=Path(codebase_root).expanduser().resolve(),
         sub_agents_root=ensure_directory(sub_agents_root),
         output_root=ensure_directory(output_root),
-        knowledge_base_root=Path(knowledge_base_root).expanduser().resolve(),
+        knowledge_base_root=Path(knowledge_base_root).expanduser().resolve() if knowledge_base_root else None,
     )
     
-    # We need to give the supervisor ability to read KB.
-    # We can reuse `read_knowledge_base_file` from tutorial_toolkit if we import it,
-    # or recreate a simple version here.
-    # Let's import the tool factory if possible, or just wrap simple functions.
+    if baseline_mode:
+        # Baseline mode: No KB tools, specialized spawn tool
+        return [
+            GetCodebaseOverviewTool(ctx), # Baseline needs to explore codebase explicitly
+            SpawnBaselineAgentTool(ctx),
+            ReadAgentOutputTool(),
+            EvaluateOutputQualityTool(),
+            RetryAgentTool(ctx),
+            FinalizeTutorialsTool(ctx),
+        ]
     
+    # Standard mode
     kb_path = Path(knowledge_base_root).resolve()
     
     class ListKBTool(Tool):

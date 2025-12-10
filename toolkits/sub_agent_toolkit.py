@@ -110,6 +110,8 @@ class SubAgentTaskSpec:
     description: str
     role: SubAgentRole = SubAgentRole.ANALYZER
     instructions: Optional[str] = None
+    tools: Optional[Sequence[Tool]] = None
+    output_format: Optional[str] = None
 
 
 DEFAULT_ROLE_PROMPTS: Dict[SubAgentRole, str] = {
@@ -192,7 +194,7 @@ STRICT_JSON_REMINDER = (
 
 
 def _execute_sub_agent_runs(
-    task_payloads: Sequence[Tuple[str, str]],
+    task_specs: Sequence[SubAgentTaskSpec],
     *,
     codebase_root: Optional[str | Path] = None,
     sub_agents_root: Optional[str | Path] = None,
@@ -204,11 +206,15 @@ def _execute_sub_agent_runs(
     max_directory_calls: int | None = None,
     knowledge_base_root: Optional[str | Path] = None,
 ) -> List[Path]:
-    if not task_payloads:
+    if not task_specs:
         return []
 
     codebase_path, sub_agents_path = _resolve_paths(codebase_root, sub_agents_root)
     model = _build_model()
+    
+    # Pre-calculate prompts
+    prompt_map = dict(DEFAULT_ROLE_PROMPTS)
+
 
     workspaces: List[Path] = []
     request_timestamps: Deque[float] = deque()
@@ -228,7 +234,10 @@ def _execute_sub_agent_runs(
         )
         time.sleep(remaining)
 
-    for index, (description, instruction_prompt) in enumerate(task_payloads, start=1):
+    for index, spec in enumerate(task_specs, start=1):
+        description = spec.description
+        role_prompt = spec.instructions or prompt_map.get(spec.role, prompts.SUB_AGENT_KB_PROMPT)
+
         workspace_dir = sub_agents_path / f"sub_agent_{index}"
         workspace_exists = workspace_dir.exists()
         workspace = ensure_directory(workspace_dir)
@@ -266,27 +275,31 @@ def _execute_sub_agent_runs(
             else None
         )
 
-        base_instructions = _formatted_prompt(description, instruction_prompt)
+        base_instructions = _formatted_prompt(description, role_prompt)
         if STRICT_JSON_REMINDER not in base_instructions:
             base_instructions += STRICT_JSON_REMINDER
         current_instructions = base_instructions
 
         def _build_agent(instructions: str) -> ToolCallingAgent:
-            scoped_tools = build_scoped_tools(
-                codebase_root=str(codebase_path),
-                workspace_root=str(workspace),
-                usage_callback=budget.record if budget else None,
-                allow_directory_listing=False,
-                allow_tree=False,
-                allow_mermaid=False,
-                allow_writes=True,
-                allow_kb_read=True if knowledge_base_root else False,
-                knowledge_base_root=str(knowledge_base_root) if knowledge_base_root else None,
-            )
+            if spec.tools:
+                run_tools = spec.tools
+            else:
+                run_tools = build_scoped_tools(
+                    codebase_root=str(codebase_path),
+                    workspace_root=str(workspace),
+                    usage_callback=budget.record if budget else None,
+                    allow_directory_listing=False,
+                    allow_tree=False,
+                    allow_mermaid=False,
+                    allow_writes=True,
+                    allow_kb_read=True if knowledge_base_root else False,
+                    knowledge_base_root=str(knowledge_base_root) if knowledge_base_root else None,
+                )
+
             return ToolCallingAgent(
                 name=f"sub_agent_{index}",
                 description=f"Knowledge-base agent for task {index}",
-                tools=scoped_tools,
+                tools=run_tools,
                 model=model,
                 instructions=instructions,
             )
@@ -294,6 +307,7 @@ def _execute_sub_agent_runs(
         agent = _build_agent(current_instructions)
 
         attempt = 0
+        rate_limit_consecutive = 0
         while True:
             attempt += 1
             now = time.monotonic()
@@ -374,26 +388,27 @@ def _execute_sub_agent_runs(
                     continue
 
                 if is_rate_limit:
-                    if attempt >= max_retries:
-                        logger.error(
-                            "Sub-agent {} exhausted retries after quota errors: {}.",
-                            index,
-                            last_exc,
-                        )
-                        raise
-
-                    # Use dynamic wait time from rate limit error message
-                    wait_seconds = _extract_retry_after_seconds(exc, default=5.0)
+                    rate_limit_consecutive += 1
+                    # Infinite retry for rate limits as requested, but with backoff
+                    base_wait = _extract_retry_after_seconds(exc, default=5.0)
+                    
+                    # Exponential backoff: 5, 10, 20, 40, 60...
+                    # (2^(count-1)) * base
+                    multiplier = 2 ** (rate_limit_consecutive - 1)
+                    wait_seconds = min(base_wait * multiplier, 60.0)
 
                     logger.warning(
-                        "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry ({}/{}).",
+                        "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry (attempt {}/inf).",
                         index,
                         wait_seconds,
-                        attempt,
-                        max_retries,
+                        attempt
                     )
                     time.sleep(wait_seconds)
+                     # Decrement attempt counter to effectively retry forever on quota
+                    attempt -= 1 
                     continue
+                else:
+                    rate_limit_consecutive = 0
 
                 if attempt >= max_retries:
                     raise
@@ -432,9 +447,16 @@ def run_sub_agent_tasks(
     if not isinstance(task_descriptions, list) or not task_descriptions:
         return []
 
-    payloads = [(description, instruction_prompt) for description in task_descriptions]
+    specs = [
+        SubAgentTaskSpec(
+            description=desc,
+            role=SubAgentRole.ANALYZER,
+            instructions=instruction_prompt
+        ) for desc in task_descriptions
+    ]
+
     return _execute_sub_agent_runs(
-        payloads,
+        specs,
         codebase_root=codebase_root,
         sub_agents_root=sub_agents_root,
         max_retries=max_retries,
@@ -466,21 +488,9 @@ def run_typed_sub_agent_tasks(
     if not task_specs:
         return []
 
-    prompt_map = dict(DEFAULT_ROLE_PROMPTS)
-    if role_prompts:
-        prompt_map.update(role_prompts)
-
-    payloads: List[Tuple[str, str]] = []
-    for spec in task_specs:
-        prompt_text = spec.instructions or prompt_map.get(spec.role)
-        if not prompt_text:
-            raise RuntimeError(
-                f"No instruction prompt configured for role '{spec.role}'."
-            )
-        payloads.append((spec.description, prompt_text))
-
+    # Pass specs directly
     return _execute_sub_agent_runs(
-        payloads,
+        task_specs,
         codebase_root=codebase_root,
         sub_agents_root=sub_agents_root,
         max_retries=max_retries,

@@ -59,7 +59,10 @@ def _run_tutorial_variant(
     outputs: List[Path] = []
     error: str | None = None
     try:
-        outputs = generator.generate()
+        if label == "baseline":
+            outputs = generator.generate_baseline_with_supervisor()
+        else:
+            outputs = generator.generate()
     except Exception as exc:  # pragma: no cover - surfaced to caller/logs
         error = str(exc)
         logger.error("%s run failed for %s: %s", label, codebase_root, exc)
@@ -102,10 +105,15 @@ def run_benchmarks(
         # Determine RAG cache to use for this codebase
         current_cache_path = explicit_cache_path
         if not current_cache_path:
-            # Check default location: data/rag_cache/<codebase_name>
-            default_cache = Path("data/rag_cache") / cb_root.name
-            if default_cache.exists():
-                current_cache_path = default_cache.resolve()
+            # Fallback to env var if present
+            from_env = os.environ.get("RAG_CODEBASE_CACHE_DIR")
+            if from_env:
+                current_cache_path = Path(from_env).resolve()
+            else:
+                # Check default location: data/rag_cache/<codebase_name>
+                default_cache = Path("data/rag_cache") / cb_root.name
+                if default_cache.exists():
+                    current_cache_path = default_cache.resolve()
         
         # Set environment variable for this iteration if a cache was found
         if current_cache_path and current_cache_path.exists():

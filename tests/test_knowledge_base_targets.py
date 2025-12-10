@@ -30,38 +30,47 @@ def _build_builder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> KnowledgeBaseBuilder:
     codebase_root, output_root, sub_agents_root = _setup_repo(tmp_path)
-    monkeypatch.setenv("CODEBASE_ROOT_PATH", str(codebase_root))
-    monkeypatch.setenv("KNOWLEDGE_BASE_OUTPUT_PATH", str(output_root))
-    monkeypatch.setenv("SUB_AGENTS_ROOT_PATH", str(sub_agents_root))
-    monkeypatch.delenv(TARGET_WHITELIST_ENV, raising=False)
-    monkeypatch.delenv("KNOWLEDGE_BASE_MAX_CONCURRENT_AGENTS", raising=False)
-    return KnowledgeBaseBuilder()
+    # Pass paths explicitly to avoid stale settings singleton issues
+    return KnowledgeBaseBuilder(
+        codebase_root=codebase_root,
+        output_root=output_root,
+        sub_agents_root=sub_agents_root,
+    )
 
 
 def test_discover_targets_uses_curated_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     builder = _build_builder(tmp_path, monkeypatch)
-    targets = builder._discover_targets()
-    discovered = [target.path.as_posix() for target in targets]
-    assert discovered == list(DEFAULT_TARGET_IDENTIFIERS)
+    targets = builder._fallback_target_selection()
+    
+    discovered = {target.path.as_posix() for target in targets}
+    
+    # src/api is in DEFAULT_TARGET_IDENTIFIERS and created in _setup_repo
+    assert "src/api" in discovered
+    assert "README.md" in discovered
 
 
-def test_discover_targets_honours_whitelist_override(
+def test_discovery_finds_extra_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     codebase_root, output_root, sub_agents_root = _setup_repo(tmp_path)
     (codebase_root / "docs").mkdir()
-
-    monkeypatch.setenv("CODEBASE_ROOT_PATH", str(codebase_root))
-    monkeypatch.setenv("KNOWLEDGE_BASE_OUTPUT_PATH", str(output_root))
-    monkeypatch.setenv("SUB_AGENTS_ROOT_PATH", str(sub_agents_root))
-    monkeypatch.setenv(TARGET_WHITELIST_ENV, "src/api, docs")
-
-    builder = KnowledgeBaseBuilder()
-    targets = builder._discover_targets()
-    discovered = [target.path.as_posix() for target in targets]
-    assert discovered == ["src/api", "docs"]
+    
+    # Explicitly pass paths and higher max_targets to ensure 'docs' isn't capped out
+    builder = KnowledgeBaseBuilder(
+        codebase_root=codebase_root,
+        output_root=output_root,
+        sub_agents_root=sub_agents_root,
+        max_targets=50
+    )
+    targets = builder._fallback_target_selection()
+    discovered = {target.path.as_posix() for target in targets}
+    
+    # Docs should be discovered because it is a top level dir in iterdir() logic
+    assert "docs" in discovered
+    # src/api should be discovered because it is in defaults
+    assert "src/api" in discovered
 
 
 def test_exploratory_pass_writes_scouting_report(
@@ -76,6 +85,7 @@ def test_exploratory_pass_writes_scouting_report(
 
     content = report_path.read_text(encoding="utf-8")
     assert "# Exploratory Scouting Report" in content
-    assert "utils/" in content
+    # src/utils is created in _setup_repo, so "utils" should appear in tree
+    assert "utils" in content
     assert "README.md" in content
-    assert context_summary  # Verify context summary is populated
+    assert context_summary

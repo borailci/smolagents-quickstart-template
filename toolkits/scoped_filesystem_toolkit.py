@@ -12,10 +12,10 @@ from utils.constants import IGNORED_DIRS, BLOCKED_EXTENSIONS
 
 __all__ = ["build_scoped_tools"]
 
-# Configurable limits to prevent context overflow
-MAX_READ_LINES = 500
-MAX_TREE_DEPTH = 3
-MAX_TREE_ITEMS = 200
+# Configurable limits to prevent context overflow - REDUCED for token savings
+MAX_READ_LINES = 200  # Reduced from 500 to save tokens
+MAX_TREE_DEPTH = 2    # Reduced from 3 to save tokens
+MAX_TREE_ITEMS = 100  # Reduced from 200 to save tokens
 
 
 def _read_text_file_truncated(path: Path, max_lines: int = MAX_READ_LINES) -> str:
@@ -83,7 +83,13 @@ def build_scoped_tools(
         if resolved.suffix.lower() in BLOCKED_EXTENSIONS:
             raise ValueError(f"File type '{resolved.suffix}' is not supported.")
 
-        return _read_text_file_truncated(resolved)
+        content = _read_text_file_truncated(resolved)
+        
+        # Handle empty files to prevent wasted follow-up calls
+        if not content.strip():
+            return f"[EMPTY FILE] '{file_path}' exists but contains no code. Skip this file and try other files in the directory."
+        
+        return content
 
     @tool
     def list_codebase_directory(dir_path: str = ".") -> List[str]:

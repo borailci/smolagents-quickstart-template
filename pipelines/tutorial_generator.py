@@ -1510,9 +1510,15 @@ class TutorialGenerator:
 
         supervisor = self._create_baseline_supervisor_agent()
     
-        # No retry loop here. We rely on LiteLLMModel's internal retries.
+        # Use centralized rate limit retry wrapper
+        from pipelines.checkpoint import run_with_rate_limit_retry
+        
         try:
-            supervisor.run("Plan and generate the tutorial series based on CODEBASE EXPLORATION.", max_steps=50)
+            run_with_rate_limit_retry(
+                supervisor.run, 
+                "Plan and generate the tutorial series based on CODEBASE EXPLORATION.", 
+                max_steps=50
+            )
         except Exception as e:
             logger.error(f"Baseline Supervisor failed: {e}")
             if not self.dry_run:
@@ -1540,30 +1546,19 @@ class TutorialGenerator:
 
         supervisor = self._create_supervisor_agent()
     
-        # Retry loop for rate limits
-        import time
-        max_retries = 10
-        retry_delay = 5.0  # seconds
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                supervisor.run("Plan and generate the tutorial series.", max_steps=50)
-                break
-            except Exception as e:
-                error_str = str(e).lower()
-                is_rate_limit = "rate" in error_str or "429" in error_str or "exhausted" in error_str
-                
-                if is_rate_limit and attempt < max_retries:
-                    logger.warning(
-                        "Rate limit hit (attempt {}/{}). Waiting {}s before retry...",
-                        attempt, max_retries, retry_delay
-                    )
-                    time.sleep(retry_delay)
-                    # retry_delay = min(retry_delay * 1.5, 60.0)  # Fixed delay as requested
-                else:
-                    logger.error(f"Tutorial Supervisor failed: {e}")
-                    if not self.dry_run:
-                         raise
+        # Use centralized rate limit retry wrapper
+        from pipelines.checkpoint import run_with_rate_limit_retry
+        
+        try:
+            run_with_rate_limit_retry(
+                supervisor.run, 
+                "Plan and generate the tutorial series.", 
+                max_steps=50
+            )
+        except Exception as e:
+            logger.error(f"Tutorial Supervisor failed: {e}")
+            if not self.dry_run:
+                raise
         
         # Collect output
         output_files = list(self.output_root.glob("*.md"))

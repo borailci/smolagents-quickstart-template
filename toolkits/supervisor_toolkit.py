@@ -243,7 +243,7 @@ Write your documentation to `summary.md` in your workspace.
                 codebase_root=self.ctx.codebase_root,
                 sub_agents_root=workspace_root,
                 min_interval_seconds=5.0,
-                max_tool_calls=20,  # Increased from 10 to allow tree + reads
+                max_tool_calls=10,  # Keep low for speed
                 max_directory_calls=2,  # Allow tree calls
             )
 
@@ -407,7 +407,7 @@ You MUST address the issues above. Write comprehensive documentation to `summary
                 codebase_root=self.ctx.codebase_root,
                 sub_agents_root=retry_workspace,
                 min_interval_seconds=5.0,
-                max_tool_calls=20,  # Match spawn_analyzer_agent budget
+                max_tool_calls=10,  # Keep low for speed
                 max_directory_calls=2,
             )
 
@@ -536,7 +536,7 @@ Write your final tutorial to `{target_filename}` in your workspace.
                 codebase_root=self.ctx.codebase_root,
                 sub_agents_root=workspace_root,
                 min_interval_seconds=5.0,
-                max_tool_calls=20,
+                max_tool_calls=10,
                 max_directory_calls=1, # KB lookup mostly
                 knowledge_base_root=self.ctx.knowledge_base_root,
             )

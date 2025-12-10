@@ -178,24 +178,7 @@ def parse_args() -> argparse.Namespace:
         help="Run the unified Deep Agent pipeline (KB + Tutorials).",
     )
     deep_agent_parser.set_defaults(command="deep-agent")
-    deep_agent_parser.add_argument(
-        "--codebase",
-        type=Path,
-        required=True,
-        help="Path to the codebase to analyze.",
-    )
-    deep_agent_parser.add_argument(
-        "--output",
-        type=Path,
-        default=None,
-        help="Output root directory (defaults to data/deep_agent_output/{codebase_name}).",
-    )
-    deep_agent_parser.add_argument(
-        "--rag-cache-path",
-        type=Path,
-        default=None,
-        help="Path to pre-computed RAG cache.",
-    )
+
     deep_agent_parser.add_argument(
         "--force-rebuild",
         action="store_true",
@@ -338,44 +321,56 @@ def main() -> None:
     elif args.command == "deep-agent":
         from pipelines.deep_agent import DeepAgent, DeepAgentConfig
         
-        codebase_path = args.codebase.expanduser().resolve()
-        if args.output:
-            output_root = args.output.expanduser().resolve()
-        else:
-            output_root = (Path("data/deep_agent_output") / codebase_path.name).resolve()
-            
+        from config import settings
+        
+        # Enforce defaults strictly.
+        codebase_path = settings.CODEBASE_ROOT
+        
+        # Get codebase name for project-specific output folder
+        codebase_name = codebase_path.name  # e.g., "fastapi-realworld-example-app"
+        
+        # Determine strict output root based on mode
         if hasattr(args, "mode") and args.mode == "baseline":
+            base_output_root = settings.BASELINE_OUTPUT_ROOT
+            output_root = base_output_root / codebase_name
+            
             logger.info("Running in BASELINE mode (No Knowledge Base Generation)")
+            logger.info(f"Output directory: {output_root}")
             from pipelines.tutorial_generator import TutorialGenerator
             
-            # Baseline uses explicit output path structure similar to DeepAgent but skips KB
-            tutorial_output = output_root / "tutorials"
-            sub_agents_path = output_root / "sub_agents_tutorials"
-            
+            # Baseline output structure
             generator = TutorialGenerator(
                 codebase_root=codebase_path,
-                knowledge_base_root=output_root / "knowledge_base", # Dummy, ignored by baseline supervisor tools
-                output_root=tutorial_output,
-                sub_agents_root=sub_agents_path,
+                knowledge_base_root=output_root / "knowledge_base", # Dummy
+                output_root=output_root,
+                sub_agents_root=output_root / "sub_agents_tutorials",
                 enable_rag=True,
-                rag_codebase_cache_path=args.rag_cache_path,
                 dry_run=False,
             )
+            # Use wrapped baseline generator
             outputs = generator.generate_baseline_with_supervisor()
             logger.info("Baseline tutorials written to:\n{}", _format_paths(outputs))
             return
 
+        # Standard Deep Agent
+        base_output_root = settings.DEEP_AGENT_OUTPUT_ROOT
+        output_root = base_output_root / codebase_name
+        
+        logger.info(f"Output directory: {output_root}")
+        
         config = DeepAgentConfig(
             codebase_root=codebase_path,
             output_root=output_root,
+            # Sub-paths fully inspectable in data/<codebase-name>/ folder
             kb_output_path=output_root / "knowledge_base",
             tutorial_output_path=output_root / "tutorials",
             kb_sub_agents_path=output_root / "sub_agents_kb",
             tutorial_sub_agents_path=output_root / "sub_agents_tutorials",
             enable_rag=True,
-            rag_codebase_cache_path=args.rag_cache_path,
-            force_rebuild_kb=args.force_rebuild,
-            force_rebuild_tutorials=args.force_rebuild,
+            rag_codebase_cache_path=None, 
+            force_rebuild_kb=args.force_rebuild if hasattr(args, "force_rebuild") else False,
+            force_rebuild_tutorials=args.force_rebuild if hasattr(args, "force_rebuild") else False,
+            dry_run=False,
         )
         
         agent = DeepAgent(config)

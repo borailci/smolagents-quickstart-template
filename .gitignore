@@ -135,15 +135,6 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
 
 # Spyder project settings
 .spyderproject
@@ -223,7 +214,3 @@ data/sub_agents_workspace/
 filtered_log*.txt
 
 # Deep Agent Framework Generated Data
-data/deep_agent_output/
-data/agent_workspace/
-data/baseline-tutorials/
-data/

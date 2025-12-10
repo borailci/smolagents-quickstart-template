@@ -86,9 +86,9 @@ MIT
 A modern web interface is available for browsing and editing generated tutorials.
 
 <div align="center">
-  <img src="assets/ui-landing.png" alt="UI Landing Page" width="800" />
+  <img src="assets/ui_landing.png" alt="UI Landing Page" width="800" />
   <br/><br/>
-  <img src="assets/ui-tutorial.png" alt="UI Tutorial View" width="800" />
+  <img src="assets/ui_tutorial.png" alt="UI Tutorial View" width="800" />
 </div>
 
 ### Quick Start (UI)

@@ -23,6 +23,12 @@ from toolkits.sub_agent_toolkit import (
     SubAgentTaskSpec,
     run_typed_sub_agent_tasks,
 )
+from toolkits.scoped_filesystem_toolkit import (
+    WriteWorkspaceFileTool, 
+    ReadCodebaseFileTool, # Renaming ReadWorkspaceFileTool to use standard codebase read if needed? No, wait.
+    # Actually, let's keep ReadWorkspaceFileTool defined here for SUB-AGENT workspace reading
+    # But for writing the plan, we use WriteWorkspaceFileTool pointing to OUTPUT_ROOT
+)
 from utils.constants import IGNORED_DIRS
 from utils.path_utils import ensure_directory
 
@@ -252,18 +258,23 @@ class ReadCodebaseFileTool(Tool):
             return f"ERROR: '{file_path}' is not a text file."
 
 
-class WritePlanFileTool(Tool):
-    """Allow supervisor to write plan files to output directory."""
-    name = "write_plan_file"
-    description = "Write a plan file (e.g., compilation_plan.md) to the output directory. Use this to document your plan before spawning agents."
+        except Exception as e:
+            return f"ERROR writing file: {e}"
+
+
+# Removed WritePlanFileTool in favor of WriteWorkspaceFileTool
+# defined in scoped_filesystem_toolkit.py and instantiated in build_supervisor_tools
+
+
+
+class ReadWorkspaceFileTool(Tool):
+    """Allow supervisor to read files from sub-agent workspaces for verification/fixing."""
+    name = "read_workspace_file"
+    description = "Read a file from a sub-agent's workspace (e.g., to verify content or fix issues)."
     inputs = {
-        "filename": {
+        "file_path": {
             "type": "string",
-            "description": "Filename to write (e.g., 'compilation_plan.md')",
-        },
-        "content": {
-            "type": "string",
-            "description": "Content to write to the file",
+            "description": "Path to the file relative to sub-agents root (e.g., 'libs_core/sub_agent_1/summary.md')",
         }
     }
     output_type = "string"
@@ -272,17 +283,56 @@ class WritePlanFileTool(Tool):
         super().__init__(**kwargs)
         self.ctx = ctx
 
-    def forward(self, filename: str, content: str) -> str:
-        # Validate content is not empty
-        if not content or len(content.strip()) < 50:
-            return "ERROR: Plan content is too short or empty. Include at least: a heading and a to-do list with file paths. Example:\n# Compilation Plan\n\n## Core Library\n- [ ] packages/lib/src/main.ts"
-        
+    def forward(self, file_path: str) -> str:
         try:
-            target_path = self.ctx.output_root / filename
-            target_path.write_text(content, encoding="utf-8")
-            return f"Successfully wrote {len(content)} characters to {filename}"
+            # Handle both full absolute paths (if provided by agent) or relative paths
+            if file_path.startswith(str(self.ctx.sub_agents_root)):
+                full_path = Path(file_path)
+            else:
+                full_path = self.ctx.sub_agents_root / file_path
+                
+            if not full_path.exists():
+                return f"ERROR: File not found at {file_path}"
+                
+            return full_path.read_text(encoding="utf-8")
         except Exception as e:
-            return f"ERROR writing file: {e}"
+            return f"ERROR reading file: {e}"
+
+
+class RewriteWorkspaceFileTool(Tool):
+    """Allow supervisor to rewrite a file in a sub-agent's workspace to fix issues."""
+    name = "rewrite_workspace_file"
+    description = "Overwrite a file in a sub-agent's workspace with fixed content. Use this to fix minor validation issues (headers, formatting) without respawning the agent."
+    inputs = {
+        "file_path": {
+            "type": "string",
+            "description": "Path to the file relative to sub-agents root",
+        },
+        "content": {
+            "type": "string",
+            "description": "New content for the file",
+        }
+    }
+    output_type = "string"
+
+    def __init__(self, ctx: SupervisorContext, **kwargs):
+        super().__init__(**kwargs)
+        self.ctx = ctx
+
+    def forward(self, file_path: str, content: str) -> str:
+        try:
+            if file_path.startswith(str(self.ctx.sub_agents_root)):
+                full_path = Path(file_path)
+            else:
+                full_path = self.ctx.sub_agents_root / file_path
+                
+            if not full_path.parent.exists():
+                return f"ERROR: Directory does not exist: {full_path.parent}"
+                
+            full_path.write_text(content, encoding="utf-8")
+            return f"Successfully rewrote {full_path.name} ({len(content)} chars)"
+        except Exception as e:
+            return f"ERROR rewriting file: {e}"
 
 
 class SpawnAnalyzerAgentTool(Tool):
@@ -1104,12 +1154,14 @@ def build_supervisor_tools(
         output_root=ensure_directory(output_root),
     )
 
-    # Validation is now integrated into SpawnAnalyzerAgentTool, so read_agent_output and evaluate_output_quality are removed
     return [
         GetCodebaseOverviewTool(ctx),
         ListCodebaseDirectoryTool(ctx),
         ReadCodebaseFileTool(ctx),
-        WritePlanFileTool(ctx),
+        # Use generic WriteWorkspaceFileTool bound to supervisor's output_root
+        WriteWorkspaceFileTool(workspace_root=ctx.output_root),
+        ReadWorkspaceFileTool(ctx),
+        RewriteWorkspaceFileTool(ctx),
         SpawnAnalyzerAgentTool(ctx),
         RetryAgentTool(ctx),
         FinalizeKnowledgeBaseTool(ctx),

@@ -1,11 +1,4 @@
 model_list:
-  # --- 1. MODEL: EMBEDDING ---
-  - model_name: text-embedding-004
-    litellm_params:
-      model: vertex_ai/text-embedding-004
-      vertex_project: os.environ/VERTEX_PROJECT
-      vertex_location: os.environ/VERTEX_LOCATION
-
   # --- 2. MODEL: GEMINI 2.5 FLASH (Sub-agents, high volume) ---
   - model_name: gemini-2.5-flash
     litellm_params:

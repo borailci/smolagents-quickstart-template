@@ -12,13 +12,14 @@ from smolagents import Tool
 
 from utils.path_utils import ensure_directory, resolve_within_root
 from utils.constants import IGNORED_DIRS, BLOCKED_EXTENSIONS
+from config import settings
 
 __all__ = ["build_scoped_tools"]
 
-# Configurable limits to prevent context overflow
-MAX_READ_LINES = 350
-MAX_TREE_DEPTH = 5
-MAX_TREE_ITEMS = 200
+# Use centralized config for limits
+MAX_READ_LINES = settings.MAX_READ_LINES
+MAX_TREE_DEPTH = settings.MAX_TREE_DEPTH
+MAX_TREE_ITEMS = settings.MAX_TREE_ITEMS
 
 
 def _read_text_file_truncated(path: Path, start_line: int = 1, max_lines: int = MAX_READ_LINES) -> str:
@@ -150,11 +151,11 @@ class WriteWorkspaceFileTool(Tool):
     """Write content to workspace file."""
     
     name = "write_workspace_file"
-    description = "Write content to workspace file. Min 50 chars required."
+    description = """Write content to workspace file. IMPORTANT: You must FIRST read source files using read_codebase_file() to gather information, then generate your content, and ONLY THEN call this tool with the actual content. Content must be at least 50 chars. Empty content will be rejected."""
     
     inputs = {
         "file_path": {"type": "string", "description": "Target file path."},
-        "content": {"type": "string", "description": "Text to write."},
+        "content": {"type": "string", "description": "Text to write. MUST NOT BE EMPTY. Generate your full content first, then pass it here."},
         "append": {"type": "boolean", "description": "Append instead of overwrite.", "nullable": True},
     }
     output_type = "string"
@@ -167,35 +168,6 @@ class WriteWorkspaceFileTool(Tool):
     def forward(self, file_path: str, content: str, append: bool = False) -> str:
         if self.usage_callback:
             self.usage_callback("write_workspace_file")
-        
-        stripped = content.strip()
-        
-        if not stripped:
-            raise ValueError(
-                "EMPTY CONTENT REJECTED. You must first read source files and generate actual documentation. "
-                "Use read_codebase_file() to gather information, then write real content."
-            )
-        
-        fallback_patterns = (
-            "_no response_", 
-            "no response", 
-            "_no response was received",
-            "no response was received from the model",
-        )
-        
-        # Only check for fallback patterns if content is short or it's an exact match line
-        if len(stripped) < 200 or any(stripped.lower() == p for p in fallback_patterns):
-            if any(pattern in stripped.lower() for pattern in fallback_patterns):
-                raise ValueError(
-                    "MODEL FALLBACK DETECTED. The previous generation failed. "
-                    "Try again: read source files first, then generate content."
-                )
-        
-        if len(stripped) < 50 and not append:
-            raise ValueError(
-                f"CONTENT TOO SHORT ({len(stripped)} chars, need 50+). "
-                "Write comprehensive documentation with code examples."
-            )
         
         resolved = resolve_within_root(self.workspace_root, file_path)
         ensure_directory(resolved.parent)
@@ -315,55 +287,9 @@ class GetDirectoryMermaidTool(Tool):
         return "```mermaid\n" + "\n".join(lines) + "\n```"
 
 
-class ListKnowledgeBaseTool(Tool):
-    """List available knowledge base files."""
-    
-    name = "list_knowledge_base"
-    description = "List available knowledge base files."
-    
-    inputs = {}
-    output_type = "string"
-    
-    def __init__(self, kb_root: Optional[Path], usage_callback: Optional[Callable] = None):
-        super().__init__()
-        self.kb_root = kb_root
-        self.usage_callback = usage_callback
-    
-    def forward(self) -> str:
-        if self.usage_callback:
-            self.usage_callback("list_knowledge_base")
-        if not self.kb_root or not self.kb_root.exists():
-            return "Knowledge Base not found or not configured."
-        return "\n".join(f.name for f in self.kb_root.glob("*.md"))
+# ListKnowledgeBaseTool and ReadKnowledgeBaseFileTool removed - use ReadCodebaseFileTool with KB path instead
 
 
-class ReadKnowledgeBaseFileTool(Tool):
-    """Read KB file by name."""
-    
-    name = "read_knowledge_base_file"
-    description = "Read KB file by name."
-    
-    inputs = {
-        "filename": {"type": "string", "description": "KB file name (e.g., 'api.md')."},
-    }
-    output_type = "string"
-    
-    def __init__(self, kb_root: Optional[Path], usage_callback: Optional[Callable] = None):
-        super().__init__()
-        self.kb_root = kb_root
-        self.usage_callback = usage_callback
-    
-    def forward(self, filename: str) -> str:
-        if self.usage_callback:
-            self.usage_callback("read_knowledge_base_file")
-        if not self.kb_root:
-             return "Knowledge Base not configured."
-        
-        target = self.kb_root / filename
-        if not target.exists():
-            return "File not found in Knowledge Base."
-        
-        return target.read_text(encoding="utf-8")
 
 
 # ============================================================================
@@ -379,14 +305,11 @@ def build_scoped_tools(
     allow_tree: bool = False,
     allow_mermaid: bool = False,
     allow_writes: bool = True,
-    allow_kb_read: bool = False,
-    knowledge_base_root: str | None = None,
 ) -> List[Tool]:
     """Create Smolagents tools bound to the provided codebase and workspace roots."""
 
     codebase_root_path = Path(codebase_root).expanduser().resolve()
     workspace_root_path = ensure_directory(workspace_root)
-    kb_root_path = Path(knowledge_base_root).resolve() if knowledge_base_root else None
 
     tools: List[Tool] = [
         ReadCodebaseFileTool(codebase_root_path, workspace_root_path, usage_callback)
@@ -400,8 +323,6 @@ def build_scoped_tools(
         tools.append(GetCodebaseTreeTool(codebase_root_path, usage_callback))
     if allow_mermaid:
         tools.append(GetDirectoryMermaidTool(codebase_root_path, usage_callback))
-    if allow_kb_read:
-        tools.append(ListKnowledgeBaseTool(kb_root_path, usage_callback))
-        tools.append(ReadKnowledgeBaseFileTool(kb_root_path, usage_callback))
 
     return tools
+

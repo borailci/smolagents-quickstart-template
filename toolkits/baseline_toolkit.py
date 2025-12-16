@@ -10,39 +10,32 @@ from typing import Callable, Dict, List, Optional
 from loguru import logger
 from smolagents import Tool, tool
 
+from config import settings
 from toolkits.rag_store import SimpleChromaRAGStore
 from utils.path_utils import ensure_directory, resolve_within_root
 from utils.constants import IGNORED_DIRS
+from utils.file_utils import read_text_file_truncated
 
 __all__ = ["build_baseline_tools"]
 
-_MAX_READ_LINES = 600
-_MAX_TREE_DEPTH = 3
-_MAX_TREE_ITEMS = 200
+# Use centralized config
+_MAX_READ_LINES = settings.MAX_READ_LINES
+_MAX_TREE_DEPTH = settings.MAX_TREE_DEPTH
+_MAX_TREE_ITEMS = settings.MAX_TREE_ITEMS
 _MAX_SEARCH_FILE_SIZE = 200_000
 
 
-def _read_text_file_truncated(
+def _read_file_with_range(
     path: Path, start_line: int = 1, end_line: Optional[int] = None
 ) -> str:
-    start = max(1, start_line)
-    stop = end_line if end_line and end_line >= start else start + _MAX_READ_LINES - 1
+    """Wrapper for utils.file_utils.read_text_file_truncated with range support."""
+    return read_text_file_truncated(
+        path, 
+        start_line=start_line, 
+        end_line=end_line,
+        max_lines=_MAX_READ_LINES
+    )
 
-    lines: List[str] = []
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            for idx, line in enumerate(handle, start=1):
-                if idx < start:
-                    continue
-                if idx > stop:
-                    lines.append(
-                        f"\n... [Truncated after {_MAX_READ_LINES} lines or end_line limit] ..."
-                    )
-                    break
-                lines.append(line)
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"File '{path.name}' is not UTF-8 decodable.") from exc
-    return "".join(lines)
 
 
 def build_baseline_tools(
@@ -116,7 +109,7 @@ def build_baseline_tools(
         resolved = resolve_within_root(codebase_path, path)
         if not resolved.is_file():
             raise FileNotFoundError(f"'{path}' does not exist.")
-        output = _read_text_file_truncated(
+        output = _read_file_with_range(
             resolved, start_line=start_line, end_line=end_line
         )
         _record_tool_usage("read_file", output)
@@ -137,7 +130,7 @@ def build_baseline_tools(
                 if not resolved.is_file():
                     outputs.append(f"{item}: [missing]")
                     continue
-                outputs.append(f"=== {item} ===\n{_read_text_file_truncated(resolved)}")
+                outputs.append(f"=== {item} ===\n{_read_file_with_range(resolved)}")
             except Exception as exc:
                 outputs.append(f"{item}: [error] {exc}")
         _record_tool_usage("read_file_bulk", "\n".join(outputs))

@@ -1,278 +1,260 @@
-"""Tools for tutorial generation leveraging the knowledge base, codebase access, and optional RAG."""
+"""Toolkit for Tutorial Supervisor Agent.
+
+This toolkit provides tools for managing tutorial writer sub-agents and consolidating their outputs.
+It is separated from the main supervisor_toolkit to allow independent pipeline execution.
+"""
 
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import List, Optional
 
 from loguru import logger
-from smolagents import Tool, tool
+from smolagents import Tool
 
-from toolkits.baseline_toolkit import build_baseline_tools
-from toolkits.rag_store import SimpleChromaRAGStore
-from utils.path_utils import ensure_directory, resolve_within_root
-from utils.constants import IGNORED_DIRS
-
-__all__ = ["build_tutorial_tools"]
-
-_MAX_READ_LINES = 500  # Limit KB reads to protect context
-_DEFAULT_RAG_MAX_SNIPPETS = 5
+from toolkits.sub_agent_toolkit import (
+    SubAgentRole,
+    SubAgentTaskSpec,
+    run_typed_sub_agent_tasks,
+)
+from toolkits.supervisor_toolkit import SupervisorContext
+from utils.path_utils import ensure_directory
 
 
-def _read_text_file_truncated(path: Path) -> str:
-    """Reads file content with line limits."""
+class SpawnTutorialAgentTool(Tool):
+    name = "spawn_tutorial_agent"
+    description = "Spawn tutorial writer sub-agent. Returns JSON {workspace, status}."
+    inputs = {
+        "topic": {
+            "type": "string",
+            "description": "Title or topic of the tutorial",
+        },
+        "target_filename": {
+            "type": "string",
+            "description": "Desired filename (e.g., '01_getting_started.md')",
+        },
+        "focus_instructions": {
+            "type": "string",
+            "description": "Specific instructions on what to cover in this chapter",
+        },
+        "focus_files": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of key KB files or source files to pre-load for the agent.",
+            "nullable": True
+        },
+    }
+    output_type = "string"
 
-    try:
-        lines = []
-        with path.open("r", encoding="utf-8") as handle:
-            for i, line in enumerate(handle):
-                if i >= _MAX_READ_LINES:
-                    lines.append(f"\n... [Truncated after {_MAX_READ_LINES} lines] ...")
-                    break
-                lines.append(line)
-        return "".join(lines)
-    except UnicodeDecodeError as exc:
-        raise ValueError(
-            f"File '{path.name}' is binary or not UTF-8 decodable."
-        ) from exc
+    def __init__(self, ctx: SupervisorContext, **kwargs):
+        super().__init__(**kwargs)
+        self.ctx = ctx
 
+    def forward(self, topic: str, target_filename: str, focus_instructions: str, focus_files: list[str] = None) -> str:
+        safe_name = target_filename.replace(".md", "").replace("/", "_").strip("_")
+        workspace_root = self.ctx.sub_agents_root / safe_name
 
-def _write_text_file(path: Path, content: str, append: bool = False) -> None:
-    ensure_directory(path.parent)
-    mode = "a" if append else "w"
-    with path.open(mode, encoding="utf-8") as handle:
-        handle.write(content)
+        if workspace_root.exists():
+            shutil.rmtree(workspace_root)
+        workspace_root.mkdir(parents=True, exist_ok=True)
 
+        # PRE-LOAD DISABLED - Agent reads files on its own
+        focus_list = "\n".join(f"- `{f}`" for f in focus_files) if focus_files else "(none)"
 
-def build_tutorial_tools(
-    *,
-    codebase_root: str,
-    knowledge_base_root: str,
-    tutorial_output_root: str,
-    enable_rag: bool = False,
-    rag_max_snippets: int = _DEFAULT_RAG_MAX_SNIPPETS,
-    rag_force_rebuild: bool = False,
-    rag_codebase_cache_path: str | None = None,
-    usage_callback: Callable[[str, str | None], None] | None = None,
-) -> List[Tool]:
-    codebase_path = Path(codebase_root).expanduser().resolve()
-    kb_path = Path(knowledge_base_root).expanduser().resolve()
-    output_path = ensure_directory(tutorial_output_root)
-
-    def _record_tool_usage(tool_name: str, content: str | None = None) -> None:
-        if usage_callback:
-            try:
-                usage_callback(tool_name, content)
-            except Exception:
-                pass
-
-    base_tools = build_baseline_tools(
-        codebase_root=str(codebase_path),
-        tutorial_output_root=str(output_path),
-        knowledge_base_root=str(kb_path),
-        rag_force_rebuild=rag_force_rebuild,
-        usage_callback=usage_callback,
-    )
-
-    rag_store_kb: Optional[SimpleChromaRAGStore] = None
-    rag_store_codebase: Optional[SimpleChromaRAGStore] = None
-
-    if enable_rag:
-        # 1. Setup KB Store (Always local and specific to this run)
-        rag_storage_root_kb = ensure_directory(
-            (output_path.parent if output_path.parent != output_path else output_path)
-            / "rag_store_kb"
+        # Use centralized task template
+        from prompts import prompts
+        task_desc = prompts.TUTORIAL_SPAWN_TASK_TEMPLATE.format(
+            topic=topic,
+            target_filename=target_filename,
+            focus_list=focus_list,
+            focus_instructions=focus_instructions
         )
+
+        spec = SubAgentTaskSpec(
+            description=task_desc,
+            role=SubAgentRole.TUTORIAL_WRITER,
+        )
+
         try:
-            rag_store_kb = SimpleChromaRAGStore(
-                codebase_root=codebase_path,
-                knowledge_base_root=kb_path,
-                persist_directory=rag_storage_root_kb,
-                collection_name="kb_rag"
+            workspaces = run_typed_sub_agent_tasks(
+                [spec],
+                codebase_root=self.ctx.codebase_root,
+                sub_agents_root=workspace_root,
+                min_interval_seconds=5.0,
+                max_tool_calls=None,  # No limit
+                max_directory_calls=None,  # No limit
+                knowledge_base_root=self.ctx.knowledge_base_root,
+                minimal_tools=False,  # Allow exploration + RAG for tutorial writers
             )
-            rag_store_kb.ensure_index(
-                include_codebase=False,
-                include_knowledge_base=True,
-                force_rebuild=rag_force_rebuild,
-            )
-        except Exception as exc:
-            logger.warning("Failed to initialize KB RAG store: {}", exc)
-            rag_store_kb = None
 
-        # 2. Setup Codebase Store (Either cached or local-combined)
-        if rag_codebase_cache_path and Path(rag_codebase_cache_path).exists():
-            # Use shared cache for codebase
-            logger.info(f"Using pre-computed Codebase RAG cache at {rag_codebase_cache_path}")
-            try:
-                rag_store_codebase = SimpleChromaRAGStore(
-                    codebase_root=codebase_path,
-                    knowledge_base_root=kb_path,
-                    persist_directory=Path(rag_codebase_cache_path),
-                    collection_name="codebase_rag_cache" # Must match what generated it
-                )
-                # We assume the cache is ready, but calling ensure_index(include_kb=False)
-                # verifies the codebase fingerprint matches.
-                rag_store_codebase.ensure_index(
-                    include_codebase=True,
-                    include_knowledge_base=False,
-                    force_rebuild=False # Never rebuild the cache here
-                )
-            except Exception as exc:
-                logger.warning("Failed to load Codebase RAG cache: {}", exc)
-                rag_store_codebase = None
-        else:
-            # No cache: extend KB store to include codebase
-            if rag_store_kb:
-                rag_store_kb.ensure_index(
-                    include_codebase=True,
-                    include_knowledge_base=True,
-                    force_rebuild=rag_force_rebuild
-                )
+            workspace = workspaces[0] if workspaces else None
+            if workspace and workspace.exists():
+                # Perform immediate validation
+                from utils.validation import validate_content
+                
+                # Tutorial writer creates target_filename, not summary.md
+                # We need to find the markdown file
+                output_file = workspace / target_filename
+                if not output_file.exists():
+                    # Fallback search
+                    md_files = list(workspace.glob("*.md"))
+                    if md_files:
+                        output_file = md_files[0]
+                
+                validation_info = "Validation: N/A (file not found)"
+                is_valid = False
+                
+                if output_file.exists():
+                    try:
+                        content = output_file.read_text(encoding="utf-8")
+                        res = validate_content(content, min_chars=500, check_mermaid=True)
+                        is_valid = res.is_valid
+                        validation_info = f"Valid: {res.is_valid}. Issues: {res.issues}"
+                    except Exception as ve:
+                        validation_info = f"Validation failed: {ve}"
 
-    max_snippets = max(1, rag_max_snippets)
+                status = "completed" if is_valid else "completed_with_issues"
 
-    def _is_safe_entry(entry: Path) -> bool:
-        return not entry.name.startswith(".") and entry.name not in IGNORED_DIRS
-
-    @tool
-    def list_knowledge_base(dir_path: str = ".") -> List[str]:
-        """List markdown files in the knowledge base.
-
-        Args:
-            dir_path: Relative directory path within the knowledge base to inspect.
-        """
-        # Handle None explicitly (LLM sometimes sends None instead of using default)
-        if dir_path is None:
-            dir_path = "."
-        
-        resolved = resolve_within_root(kb_path, dir_path)
-
-        if not resolved.is_dir():
-            return []
-        entries = sorted(
-            entry.name for entry in resolved.iterdir() if _is_safe_entry(entry)
-        )
-        _record_tool_usage("list_knowledge_base", "\n".join(entries))
-        return entries
-
-    @tool
-    def read_knowledge_base_file(file_path: str) -> str:
-        """Read a markdown file from the knowledge base.
-
-        Args:
-            file_path: Relative path to the markdown file inside the knowledge base directory.
-        """
-        resolved = resolve_within_root(kb_path, file_path)
-        output = _read_text_file_truncated(resolved)
-        _record_tool_usage("read_knowledge_base_file", output)
-        return output
-
-    @tool
-    def write_tutorial_file(file_path: str, content: str, append: bool = False) -> str:
-        """Write tutorial content to the tutorials output directory.
-
-        Args:
-            file_path: Relative path for the tutorial markdown file to create.
-            content: Markdown content to write into the file.
-            append: When True, append instead of overwriting.
-        """
-        # Validation: Reject empty or placeholder content
-        stripped = content.strip()
-        
-        if not stripped:
-            raise ValueError(
-                "EMPTY CONTENT REJECTED. You must first read source files and KB, "
-                "then generate actual tutorial content with code examples."
-            )
-        
-        # Smolagents fallback message detection
-        fallback_patterns = (
-            "_no response_", 
-            "no response", 
-            "_no response was received",
-            "no response was received from the model",
-        )
-        if any(pattern in stripped.lower() for pattern in fallback_patterns):
-            raise ValueError(
-                "MODEL FALLBACK DETECTED. The previous generation failed. "
-                "Try again: use RAG and read files first, then generate content."
-            )
-        
-        # Minimum length for tutorials (more than workspace files)
-        if len(stripped) < 100 and not append:
-            raise ValueError(
-                f"TUTORIAL TOO SHORT ({len(stripped)} chars, need 100+). "
-                "Tutorials must be comprehensive with code examples and diagrams."
-            )
-        
-        resolved = resolve_within_root(output_path, file_path)
-        _write_text_file(resolved, content, append=append)
-        _record_tool_usage("write_tutorial_file", None)
-        return str(resolved)
-
-
-    tools: List[Tool] = list(base_tools) + [
-        list_knowledge_base,
-        read_knowledge_base_file,
-        write_tutorial_file,
-    ]
-
-    if enable_rag:
-
-        @tool
-        def retrieve_relevant_context(
-            query: str,
-            max_snippets: int = max_snippets,
-        ) -> List[Dict[str, str]]:
-            """Retrieve semantic snippets (codebase or KB) via RAG.
-
-            Args:
-                query: Free-text query to match against files.
-                max_snippets: Maximum number of snippets to return in total.
-            """
-            normalized_query = query.strip()
-            if not normalized_query:
-                return []
-
-            limit = max(1, max_snippets)
-            results = []
-
-            # 1. Query Codebase Store (from Cache or if separate)
-            if rag_store_codebase:
-                try:
-                    results.extend(rag_store_codebase.query(
-                         normalized_query,
-                         top_k=limit,
-                         include_codebase=True,
-                         include_knowledge_base=False
-                    ))
-                except Exception as e:
-                    logger.error(f"Codebase RAG query failed: {e}")
-
-            # Query KB Store (or Combined Store)
-            if rag_store_kb:
-                try:
-                    inc_cb = rag_store_codebase is None
-                    results.extend(rag_store_kb.query(
-                        normalized_query,
-                        top_k=limit,
-                        include_codebase=inc_cb,
-                        include_knowledge_base=True
-                    ))
-                except Exception as e:
-                    logger.error(f"KB RAG query failed: {e}")
-            final_results = results[:limit]
-            
-            if final_results:
-                _record_tool_usage("retrieve_relevant_context", str(final_results))
-                return final_results
-
-            return [
-                {
-                    "error": "No relevant snippets found via RAG.",
+                self.ctx.spawned_agents[target_filename] = {
+                    "workspace": str(workspace),
+                    "status": status,
+                    "validation": validation_info
                 }
-            ]
+                return json.dumps({
+                    "workspace": str(workspace), 
+                    "status": status, 
+                    "validation": validation_info,
+                    "preview": f"File checked: {output_file.name}. {validation_info}"
+                })
+            else:
+                return json.dumps({"workspace": str(workspace_root), "status": "failed", "error": "No output"})
 
-        tools.append(retrieve_relevant_context)
+        except Exception as e:
+            logger.warning(f"spawn_tutorial_agent failed for {target_filename}: {e}")
+            return json.dumps({"workspace": str(workspace_root), "status": "failed", "error": str(e)})
 
-    return tools
+
+class FinalizeTutorialsTool(Tool):
+    name = "finalize_tutorials"
+    description = "Collect all tutorial outputs into final directory."
+    inputs = {
+        "workspaces": {
+            "type": "array",
+            "description": "List of workspace paths to collect from",
+        },
+    }
+    output_type = "string"
+
+    def __init__(self, ctx: SupervisorContext, **kwargs):
+        super().__init__(**kwargs)
+        self.ctx = ctx
+
+    def forward(self, workspaces: List[str]) -> str:
+        # Group workspaces and collect files
+        # Logic restored from supervisor_toolkit
+        
+        # Sort workspaces: non-retries first, then retries sorted by N to ensure overwrites work correctly
+        def sort_key(p):
+            name = Path(p).name
+            if name.startswith("retry_"):
+                try:
+                    n = int(name.split("_")[1])
+                    return 1000 + n # Retries come after originals
+                except:
+                    return 999
+            return 0 # Originals first
+            
+        sorted_workspaces = sorted(workspaces, key=sort_key)
+        
+        collected_files = []
+        for ws_path in sorted_workspaces:
+            workspace = Path(ws_path)
+            if not workspace.exists():
+                continue
+
+            md_files = list(workspace.glob("*.md"))
+            
+            for md_file in md_files:
+                if md_file.name == "summary.md": continue 
+                
+                try:
+                    content = md_file.read_text(encoding="utf-8")
+                    if len(content.strip()) < 50: continue
+
+                    out_path = self.ctx.output_root / md_file.name
+                    out_path.write_text(content, encoding="utf-8")
+                    
+                    # Log if we are overwriting
+                    if md_file.name in collected_files:
+                        logger.info(f"Overwriting {md_file.name} with version from {workspace.name}")
+                    else:
+                        collected_files.append(md_file.name)
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to collect {md_file}: {e}")
+
+        return f"Collected {len(collected_files)} tutorials to {self.ctx.output_root}: {collected_files}"
+
+
+def build_tutorial_supervisor_tools(
+    codebase_root: str | Path,
+    sub_agents_root: str | Path,
+    output_root: str | Path,
+    knowledge_base_root: str | Path | None = None,
+    baseline_mode: bool = False,
+) -> List[Tool]:
+    """Create tools for the Tutorial Supervisor."""
+    from toolkits.supervisor_toolkit import RetryAgentTool
+    
+    ctx = SupervisorContext(
+        codebase_root=Path(codebase_root).expanduser().resolve(),
+        sub_agents_root=ensure_directory(sub_agents_root),
+        output_root=ensure_directory(output_root),
+        knowledge_base_root=Path(knowledge_base_root).expanduser().resolve() if knowledge_base_root else None,
+    )
+    
+    # Handle KB path safely
+    kb_path = None
+    if knowledge_base_root:
+        kb_path = Path(knowledge_base_root).resolve()
+
+    class ListKBTool(Tool):
+        name = "list_knowledge_base"
+        description = "List available knowledge base files."
+        inputs = {}
+        output_type = "string"
+        def forward(self) -> str:
+            if baseline_mode:
+                return "[Knowledge Base Not Available in Baseline Mode - Use Codebase Tools]"
+            if not kb_path or not kb_path.exists():
+                return "Knowledge Base directory not found."
+            return "\n".join(f.name for f in kb_path.glob("*.md"))
+
+    class ReadKBTool(Tool):
+        name = "read_knowledge_base_file"
+        description = "Read a knowledge base file."
+        inputs = {
+            "filename": {
+                "type": "string",
+                "description": "Name of the file to read (e.g., executive_summary.md)",
+            }
+        }
+        output_type = "string"
+        def forward(self, filename: str) -> str:
+            if baseline_mode:
+                return "[Knowledge Base Not Available in Baseline Mode]"
+            if not kb_path or not kb_path.exists():
+                return "Knowledge Base directory not found."
+            p = kb_path / filename
+            if p.exists(): return p.read_text(encoding="utf-8")[:30000] # Truncate large files
+            return "File not found."
+
+    return [
+        ListKBTool(),
+        ReadKBTool(),
+        SpawnTutorialAgentTool(ctx),
+        RetryAgentTool(ctx),
+        FinalizeTutorialsTool(ctx),
+    ]

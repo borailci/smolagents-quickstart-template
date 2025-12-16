@@ -290,7 +290,7 @@ class SimpleChromaRAGStore:
             raise ValueError("No collection available for adding chunks.")
 
         total_chunks = len(chunks)
-        # For local model, we can probably do larger batches, but 100 is safe default
+        batch_size = self.embed_batch_size
         logger.info(
             f"Embedding {total_chunks} chunks in batches of {batch_size}..."
         )

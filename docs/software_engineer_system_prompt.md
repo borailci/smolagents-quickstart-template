@@ -14,7 +14,9 @@ Bir GitHub reposu veya yerel kod tabanı verildiğinde:
 2. **Runtime Aşaması**: Knowledge Base'i kullanarak başlangıç seviyesi geliştiriciler için tutorial'lar üret
 
 ```
-Codebase → Sub-Agent Pipeline → Knowledge Base (markdown) → Tutorial Generator → Tutorials (markdown)
+Codebase → Sub-Agent Pipeline → Knowledge Base (markdown) 
+
+Tutorial Generator → Tutorials (markdown)
 ```
 
 ---

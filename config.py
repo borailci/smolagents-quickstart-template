@@ -40,4 +40,16 @@ class Settings:
     SUB_AGENT_MAX_RETRIES: int = int(os.getenv("SUB_AGENT_MAX_RETRIES", "10"))
     SUB_AGENT_TOOL_CALL_BUDGET: int = 6
 
+    # --- File Reading Limits ---
+    MAX_READ_LINES: int = int(os.getenv("MAX_READ_LINES", "250"))  # Reduced from 350
+    MAX_TREE_DEPTH: int = int(os.getenv("MAX_TREE_DEPTH", "5"))
+    MAX_TREE_ITEMS: int = int(os.getenv("MAX_TREE_ITEMS", "200"))
+    MIN_WRITE_CHARS: int = int(os.getenv("MIN_WRITE_CHARS", "50"))
+    MAX_PRELOAD_FILES: int = int(os.getenv("MAX_PRELOAD_FILES", "5"))  # Limit files pre-loaded per spawn
+
+    # --- Rate Limiting ---
+    RATE_LIMIT_WINDOW_SECONDS: float = float(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "90.0"))
+    RATE_LIMIT_MAX_REQUESTS: int = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "4"))
+    RATE_LIMIT_MIN_INTERVAL: float = float(os.getenv("RATE_LIMIT_MIN_INTERVAL", "5.0"))
+
 settings = Settings()

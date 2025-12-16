@@ -21,28 +21,30 @@ from config import settings
 from prompts import prompts
 from toolkits.scoped_filesystem_toolkit import build_scoped_tools
 from utils.path_utils import ensure_directory
+from utils.llm_factory import create_model
 
 __all__ = [
     "SubAgentRole",
     "SubAgentTaskSpec",
+    "SubAgentOutputError",
     "run_typed_sub_agent_tasks",
     "ToolBudgetExceededError",
-    "SubAgentOutputError",
+    "validate_markdown_output",
 ]
+
+
+class SubAgentOutputError(Exception):
+    """Error raised when sub-agent output validation fails."""
+    pass
 
 load_dotenv()
 
-# --- Use Settings ---
-LITELLM_MODEL_ID = settings.LITELLM_MODEL_ID
-LITELLM_API_KEY = settings.LITELLM_API_KEY
-CODEBASE_ROOT_PATH = str(settings.CODEBASE_ROOT)
-SUB_AGENTS_ROOT_PATH = str(settings.SUB_AGENTS_ROOT)
+LITELLM_MODEL_ID = os.getenv("LITELLM_MODEL_ID")
+LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
+CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
+SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
 
-DEFAULT_SUB_AGENT_RPM = settings.SUB_AGENT_RPM
-DEFAULT_SUB_AGENT_MAX_RETRIES = settings.SUB_AGENT_MAX_RETRIES
-DEFAULT_SUB_AGENT_TOOL_CALL_BUDGET = settings.SUB_AGENT_TOOL_CALL_BUDGET
-DEFAULT_SUB_AGENT_DIRECTORY_CALL_BUDGET = 0
-
+DEFAULT_SUB_AGENT_MAX_RETRIES = 10
 
 _RETRY_IN_PATTERN = re.compile(
     r"retry\s+(?:in|after)\s+([0-9]+(?:\.[0-9]+)?)\s*s", re.IGNORECASE
@@ -59,8 +61,30 @@ class ToolBudgetExceededError(RuntimeError):
     """Raised when an agent exceeds its configured tool usage budget."""
 
 
-class SubAgentOutputError(RuntimeError):
-    """Raised when a sub-agent produces invalid or empty output."""
+def validate_markdown_output(
+    content: str,
+    expected_title: str | None = None,
+    min_length: int = 200,
+) -> tuple[bool, list[str]]:
+    """
+    Validate sub-agent markdown output structural integrity.
+    
+    Returns (is_valid, list_of_errors).
+    This catches broken outputs from truncated generation, bad concatenation, etc.
+    
+    Note: Uses core validation from utils/validation.py.
+    """
+    from utils.validation import validate_content
+    
+    result = validate_content(
+        content,
+        min_chars=min_length,
+        expected_title=expected_title,
+        check_mermaid=False,  # Sub-agent outputs may not have mermaid
+        strict_heading_start=True,
+    )
+    
+    return (result.is_valid, list(result.issues))
 
 
 # ToolUsageBudget removed - no budget enforcement
@@ -109,16 +133,10 @@ def _resolve_paths(
     return codebase_path, sub_agents_path
 
 
-def _resolve_sub_agent_rpm() -> float:
-    # Now handled by settings, but keeping function signature for compatibility if needed, 
-    # though strictly we should just use DEFAULT_SUB_AGENT_RPM which comes from settings.
-    return DEFAULT_SUB_AGENT_RPM
-
-
-from utils.llm_factory import create_model
-
 def _build_model() -> LiteLLMModel:
-    return create_model(model_id=LITELLM_MODEL_ID, api_key=LITELLM_API_KEY)
+    # Sub-agents use Flash model for high volume (hybrid strategy)
+    return create_model(role="sub_agent")
+
 
 
 def _extract_retry_after_seconds(exc: Exception, default: float = 25.0) -> float:
@@ -153,6 +171,7 @@ def _execute_sub_agent_runs(
     max_tool_calls: int | None = None,
     max_directory_calls: int | None = None,
     knowledge_base_root: Optional[str | Path] = None,
+    minimal_tools: bool = True,  # Disable exploration by default
 ) -> List[Path]:
     if not task_specs:
         return []
@@ -221,22 +240,18 @@ def _execute_sub_agent_runs(
         current_instructions = base_instructions
 
         def _build_agent(instructions: str) -> ToolCallingAgent:
-            if spec.tools:
-                run_tools = spec.tools
-            else:
-                run_tools = build_scoped_tools(
-                    codebase_root=str(codebase_path),
-                    workspace_root=str(workspace),
-                    usage_callback=None,  # Budget enforcement removed
-                    allow_directory_listing=True,  # Enable directory listing
-                    allow_tree=True,  # Enable tree tool for codebase exploration
-                    allow_mermaid=False,
-                    allow_writes=True,
-                    allow_kb_read=True if knowledge_base_root else False,
-                    # Ensure path is string if not None 
-                    knowledge_base_root=str(knowledge_base_root) if knowledge_base_root else None,
-                )
-
+            # When minimal_tools=True, disable exploration to save tokens
+            scoped_tools = build_scoped_tools(
+                codebase_root=str(codebase_path),
+                workspace_root=str(workspace),
+                usage_callback=budget.record if budget else None,
+                allow_directory_listing=not minimal_tools,
+                allow_tree=not minimal_tools,
+                allow_mermaid=False,
+                allow_writes=True,
+                allow_kb_read=True if knowledge_base_root else False,
+                knowledge_base_root=str(knowledge_base_root) if knowledge_base_root else None,
+            )
             return ToolCallingAgent(
                 name=f"sub_agent_{index}",
                 description=f"Knowledge-base agent for task {index}",
@@ -330,21 +345,15 @@ def _execute_sub_agent_runs(
                     continue
 
                 if is_rate_limit:
-                    rate_limit_consecutive += 1
-                    
-                    # Exponential backoff with jitter (Google best practices)
-                    import random
-                    base_delay = 1.0
-                    max_delay = 60.0
-                    jitter_factor = 0.5
-                    max_rate_limit_retries = 10
-                    
-                    if rate_limit_consecutive > max_rate_limit_retries:
-                        logger.error(f"Sub-agent {index} exceeded max rate limit retries ({max_rate_limit_retries})")
-                        raise exc
-                    
-                    delay = min(base_delay * (2 ** (rate_limit_consecutive - 1)), max_delay)
-                    jittered_delay = delay * (1 + jitter_factor * (random.random() * 2 - 1))
+                    if attempt >= max_retries:
+                        logger.error(
+                            "Sub-agent {} exhausted retries after quota errors: {}.",
+                            index,
+                            last_exc,
+                        )
+                        raise
+
+                    wait_seconds = _extract_retry_after_seconds(exc, default=5.0)
 
                     logger.warning(
                         "Sub-agent {} hit provider quota. Retry {}/{} in {:.1f}s.",
@@ -361,7 +370,6 @@ def _execute_sub_agent_runs(
                 if attempt >= max_retries:
                     raise
 
-                # Generic error backoff now fixed at 5 seconds per request to avoid exponential waits
                 wait_seconds = 5.0
                 logger.warning(
                     "Sub-agent {} failed on attempt {}/{}: {}. Retrying in {:.1f}s...",
@@ -389,8 +397,15 @@ def run_sub_agent_tasks(
     instruction_prompt: str = prompts.SUB_AGENT_KB_PROMPT,
     max_tool_calls: int | None = None,
     max_directory_calls: int | None = None,
+    knowledge_base_root: Optional[str | Path] = None,
+    minimal_tools: bool = True,  # Disable exploration by default
 ) -> List[Path]:
-    """Execute analyzer-style sub-agents and return their workspace paths."""
+    """
+    Execute analyzer-style sub-agents and return their workspace paths.
+    
+    .. deprecated::
+        Use `run_typed_sub_agent_tasks` instead for explicit role-based execution.
+    """
 
     if not isinstance(task_descriptions, list) or not task_descriptions:
         return []
@@ -413,7 +428,8 @@ def run_sub_agent_tasks(
         min_interval_seconds=min_interval_seconds,
         max_tool_calls=max_tool_calls,
         max_directory_calls=max_directory_calls,
-        knowledge_base_root=None, # Explicitly none here unless passed, but this func doesn't accept it in orig signature
+        knowledge_base_root=knowledge_base_root,
+        minimal_tools=minimal_tools,
     )
 
 
@@ -430,6 +446,7 @@ def run_typed_sub_agent_tasks(
     max_tool_calls: int | None = None,
     max_directory_calls: int | None = None,
     knowledge_base_root: Optional[str | Path] = None,
+    minimal_tools: bool = True,  # Disable exploration by default
 ) -> List[Path]:
     """Execute sub-agents with explicit roles and return their workspace paths."""
 
@@ -448,11 +465,18 @@ def run_typed_sub_agent_tasks(
         max_tool_calls=max_tool_calls,
         max_directory_calls=max_directory_calls,
         knowledge_base_root=knowledge_base_root,
+        minimal_tools=minimal_tools,
     )
 
 
 def get_sub_agent_tools() -> List[Tool]:
-    """Return tools for managing sub-agent execution."""
+    """
+    Return tools for managing sub-agent execution.
+    
+    .. deprecated::
+        This function is not actively used. Use direct calls to
+        `run_typed_sub_agent_tasks` instead for production code.
+    """
 
     @tool
     def spawn_sub_agents(task_descriptions: List[str]) -> str:

@@ -165,9 +165,11 @@ def build_baseline_tools(
             except re.error as exc:
                 return [f"Invalid regex: {exc}"]
         for path in sorted(codebase_path.rglob("*")):
+            # Skip directories entirely (rglob returns them too)
             if path.is_dir():
-                if not _is_safe_entry(path):
-                    continue
+                continue
+            # Skip files in ignored directories
+            if not all(_is_safe_entry(p) for p in path.parents if p != codebase_path):
                 continue
             if path.stat().st_size > _MAX_SEARCH_FILE_SIZE:
                 continue
@@ -263,9 +265,16 @@ def build_baseline_tools(
 
         Args:
             path: Relative output path under the tutorials directory.
-            content: Content to write.
+            content: Content to write (min 50 chars for new files).
             append: Whether to append instead of overwrite.
         """
+        from utils.validation import validate_content
+        
+        # Validate content for new files
+        if not append:
+            result = validate_content(content, min_chars=50, check_mermaid=False)
+            if not result.is_valid:
+                raise ValueError(f"Content validation failed: {', '.join(result.issues)}")
 
         resolved = resolve_within_root(output_path, path)
         ensure_directory(resolved.parent)

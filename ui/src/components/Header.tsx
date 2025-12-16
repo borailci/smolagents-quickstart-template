@@ -1,23 +1,43 @@
-"use client";
+'use client';
 
-import Link from 'next/link';
-import { Sparkles, Github } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Moon, Sun, Sparkles } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Button } from '@/components/ui/button';
 
-export default function Header() {
+export function Header() {
+    const [isDark, setIsDark] = useState(true);
+
+    useEffect(() => {
+        document.documentElement.classList.toggle('dark', isDark);
+    }, [isDark]);
+
     return (
-        <header className="fixed top-0 left-0 right-0 z-50 h-16 glass-panel border-b border-white/5">
-            <div className="container mx-auto h-full flex items-center justify-between px-4">
-                <Link href="/" className="flex items-center gap-2 group">
-                    <div className="p-2 bg-gradient-to-br from-purple-600 to-cyan-500 rounded-lg group-hover:scale-110 transition-transform">
-                        <Sparkles className="w-5 h-5 text-white" />
-                    </div>
-                    <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
+        <motion.header
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-slate-900/80 backdrop-blur-xl"
+        >
+            <div className="container mx-auto flex h-16 items-center justify-between px-6">
+                <motion.div
+                    className="flex items-center gap-3"
+                    whileHover={{ scale: 1.02 }}
+                >
+                    <Sparkles className="h-6 w-6 text-violet-400" />
+                    <h1 className="bg-gradient-to-r from-violet-400 via-cyan-400 to-violet-400 bg-clip-text text-xl font-bold text-transparent">
                         Codebase Tutorial Generator
-                    </span>
-                </Link>
+                    </h1>
+                </motion.div>
 
-                {/* Placeholder for future nav items or theme toggle */}
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsDark(!isDark)}
+                    className="text-slate-300 hover:text-white"
+                >
+                    {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                </Button>
             </div>
-        </header>
+        </motion.header>
     );
 }

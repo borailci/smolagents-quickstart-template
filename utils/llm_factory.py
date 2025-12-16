@@ -1,9 +1,27 @@
 """Factory for initializing LiteLLM models with standardized configuration."""
 import os
-from typing import Literal
+from typing import List, Dict, Any, Optional, Literal
 from loguru import logger
 from smolagents import LiteLLMModel
 from dotenv import load_dotenv
+from pipelines.usage_tracker import throttled_api_call
+
+
+class RateLimitedLiteLLMModel(LiteLLMModel):
+    """Wrapper around LiteLLMModel that enforces rate limits."""
+    
+    def __call__(self, messages: List[Dict[str, Any]], *args, **kwargs) -> Any:
+        # Estimate input tokens (rough approximation)
+        est_tokens = sum(len(str(m.get("content", ""))) for m in messages) // 4
+        est_tokens += 1000  # Buffer for output
+        
+        return throttled_api_call(
+            super().__call__, 
+            messages, 
+            *args, 
+            estimated_tokens=est_tokens, 
+            **kwargs
+        )
 
 load_dotenv()
 
@@ -95,7 +113,7 @@ def create_model(
         except Exception as e:
             logger.warning("Failed to load VERTEX_CREDENTIALS: {}", e)
 
-    return LiteLLMModel(
+    return RateLimitedLiteLLMModel(
         model_id=mid, 
         api_key=key,
         **kwargs

@@ -21,12 +21,13 @@ from smolagents.utils import AgentGenerationError
 from smolagents.models import ChatMessage, MessageRole
 
 from prompts import prompts
+from pipelines.types import TutorialOutlineItem, TutorialRunMetrics
 from toolkits.sub_agent_toolkit import (
     SubAgentRole,
     SubAgentTaskSpec,
     run_typed_sub_agent_tasks,
 )
-from toolkits.tutorial_toolkit import build_tutorial_tools
+from toolkits.tutorial_toolkit import build_tutorial_supervisor_tools
 from utils.path_utils import ensure_directory, resolve_within_root, PathTraversalError
 
 try:
@@ -1565,7 +1566,7 @@ INSTRUCTIONS:
 
     def _create_supervisor_agent(self):
         """Create the Tutorial Supervisor Agent."""
-        from toolkits.supervisor_toolkit import build_tutorial_supervisor_tools
+        from toolkits.tutorial_toolkit import build_tutorial_supervisor_tools
         from utils.llm_factory import create_model
         
         tools = build_tutorial_supervisor_tools(
@@ -1590,7 +1591,7 @@ INSTRUCTIONS:
 
     def _create_baseline_supervisor_agent(self):
         """Create the Baseline Tutorial Supervisor Agent."""
-        from toolkits.supervisor_toolkit import build_tutorial_supervisor_tools
+        from toolkits.tutorial_toolkit import build_tutorial_supervisor_tools
         from utils.llm_factory import create_model
         
         tools = build_tutorial_supervisor_tools(
@@ -1600,6 +1601,7 @@ INSTRUCTIONS:
             knowledge_base_root=self.knowledge_base_root, # Passed but unused by baseline tools
             baseline_mode=True,
         )
+
         
         model = create_model(role="supervisor")
         

@@ -65,24 +65,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore cache and regenerate all targets.",
     )
-    kb_parser.add_argument(
-        "--step-delay",
-        type=float,
-        default=None,
-        help="Seconds to sleep between sub-agent steps (default 0).",
-    )
-    kb_parser.add_argument(
-        "--max-targets",
-        type=int,
-        default=None,
-        help="Hard cap on planner-selected targets (defaults to MAX_PLANNER_TARGETS).",
-    )
-    kb_parser.add_argument(
-        "--supervisor",
-        action="store_true",
-        help="Use the Supervisor Agent for intelligent planning and coordination.",
-    )
-
     tutorial_parser = subparsers.add_parser(
         "tutorials",
         aliases=["build-tutorials", "tutorial"],
@@ -119,29 +101,6 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument(
         "--models", type=str, default=None,
         help="Comma-separated list of models to use as judges.",
-    )
-
-    gen_rag_parser = subparsers.add_parser(
-        "gen-rag",
-        help="Pre-compute a RAG store for the codebase to be used as a cache.",
-    )
-    gen_rag_parser.set_defaults(command="gen-rag")
-    gen_rag_parser.add_argument(
-        "--codebase",
-        type=Path,
-        required=True,
-        help="Path to the codebase root.",
-    )
-    gen_rag_parser.add_argument(
-        "--output",
-        type=Path,
-        default=None,
-        help="Output directory for the RAG store (cache). Defaults to data/rag_cache/<codebase_name>.",
-    )
-    gen_rag_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force rebuild of the cache even if present.",
     )
 
     deep_agent_parser = subparsers.add_parser(

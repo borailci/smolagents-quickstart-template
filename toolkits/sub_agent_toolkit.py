@@ -165,14 +165,22 @@ def _execute_sub_agent_runs(
     codebase_root: Optional[str | Path] = None,
     sub_agents_root: Optional[str | Path] = None,
     max_retries: int = DEFAULT_SUB_AGENT_MAX_RETRIES,
-    window_seconds: float = 90.0,
-    max_requests_per_window: int = 4,
-    min_interval_seconds: float = 5.0,
+    window_seconds: float = None,  # Uses settings.RATE_LIMIT_WINDOW_SECONDS
+    max_requests_per_window: int = None,  # Uses settings.RATE_LIMIT_MAX_REQUESTS
+    min_interval_seconds: float = None,  # Uses settings.RATE_LIMIT_MIN_INTERVAL
     max_tool_calls: int | None = None,
     max_directory_calls: int | None = None,
     knowledge_base_root: Optional[str | Path] = None,
     minimal_tools: bool = True,  # Disable exploration by default
 ) -> List[Path]:
+    # Apply config defaults if not specified
+    if window_seconds is None:
+        window_seconds = settings.RATE_LIMIT_WINDOW_SECONDS
+    if max_requests_per_window is None:
+        max_requests_per_window = settings.RATE_LIMIT_MAX_REQUESTS
+    if min_interval_seconds is None:
+        min_interval_seconds = settings.RATE_LIMIT_MIN_INTERVAL
+    
     if not task_specs:
         return []
 
@@ -205,7 +213,12 @@ def _execute_sub_agent_runs(
         description = spec.description
         role_prompt = spec.instructions or prompt_map.get(spec.role, prompts.SUB_AGENT_KB_PROMPT)
 
-        workspace_dir = sub_agents_path / f"sub_agent_{index}"
+        # Use sub_agents_path directly - caller controls naming
+        # Only create subdirs if multiple tasks in same batch
+        if len(task_specs) > 1:
+            workspace_dir = sub_agents_path / f"sub_agent_{index}"
+        else:
+            workspace_dir = sub_agents_path
         workspace_exists = workspace_dir.exists()
         workspace = ensure_directory(workspace_dir)
 
@@ -322,8 +335,27 @@ def _execute_sub_agent_runs(
                 )
                 parse_error = (
                     "Expecting property name enclosed in double quotes" in str(exc)
-                    or "Message contains no content" in str(exc)
                 )
+                empty_response = (
+                    "Message contains no content" in str(exc)
+                    or "no tool calls" in str(exc).lower()
+                )
+
+                # Handle empty LLM responses - wait and retry
+                if empty_response:
+                    wait_seconds = 5.0  # Wait before retry
+                    logger.warning(
+                        "Sub-agent {} received empty response. Retry {}/{} in {:.1f}s.",
+                        index,
+                        attempt,
+                        max_retries,
+                        wait_seconds,
+                    )
+                    if attempt >= max_retries:
+                        raise
+                    time.sleep(wait_seconds)
+                    _enforce_min_step_duration(elapsed)
+                    continue
 
                 if parse_error:
                     if STRICT_JSON_REMINDER not in current_instructions:
@@ -354,15 +386,16 @@ def _execute_sub_agent_runs(
                         raise
 
                     wait_seconds = _extract_retry_after_seconds(exc, default=5.0)
+                    rate_limit_consecutive += 1
 
                     logger.warning(
                         "Sub-agent {} hit provider quota. Retry {}/{} in {:.1f}s.",
                         index,
-                        rate_limit_consecutive,
-                        max_rate_limit_retries,
-                        jittered_delay,
+                        attempt,
+                        max_retries,
+                        wait_seconds,
                     )
-                    time.sleep(jittered_delay)
+                    time.sleep(wait_seconds)
                     continue
                 else:
                     rate_limit_consecutive = 0

@@ -185,16 +185,26 @@ You are the **Knowledge Base Orchestrator**. PLAN, DELEGATE, REVIEW - do NOT wri
 <plan_format>
 # Compilation Plan
 
-## Core Library
-- [ ] packages/lib/src/main.ts
-- [ ] packages/lib/src/utils.ts
+## Status Overview
+- [ ] Phase 1: Core Library
+- [ ] Phase 2: CLI Tools
+- [ ] Phase 3: Adapters
 
-## CLI
-- [ ] packages/cli/src/cli.ts
+## Detailed Tasks
 
-## Adapters
-- [ ] request_adapter.py
-- [ ] response_adapter.py
+### Task 1: Core Library Analysis
+- **Target:** `packages/lib/src`
+- **Status:** [ ] Not Started
+- **Focus Files:** `main.ts`, `utils.ts`
+- **Goal:** Document core classes and utility functions.
+- **Output:** `packages_lib_src/summary.md`
+
+### Task 2: CLI Analysis
+- **Target:** `packages/cli`
+- **Status:** [ ] Not Started
+- **Focus Files:** `cli.ts`, `commands.ts`
+- **Goal:** Explain CLI entry points and command structure.
+- **Output:** `packages_cli/summary.md`
 </plan_format>
 
 <tools>

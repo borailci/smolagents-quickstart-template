@@ -359,12 +359,20 @@ class SpawnAnalyzerAgentTool(Tool):
         super().__init__(**kwargs)
         self.ctx = ctx
 
-    def _preload_file_content(self, file_path: str, max_chars: int = 100000) -> str:
-        """Pre-load file content to reduce sub-agent tool calls."""
+    def _preload_file_content(self, file_path: str, target_path_str: str = "", max_chars: int = 100000) -> str:
+        """Pre-load file content, trying both direct path and target-relative path."""
         try:
+            # 1. Try exact path (relative to codebase root)
             full_path = self.ctx.codebase_root / file_path
+            
+            # 2. If not found, try relative to target_path
+            if not full_path.exists() and target_path_str:
+                target_relative = self.ctx.codebase_root / target_path_str / file_path
+                if target_relative.exists():
+                    full_path = target_relative
+            
             if not full_path.exists():
-                return f"[File not found: {file_path}]"
+                return f"[File not found: {file_path} (checked relative to root and target)]"
             
             file_size = full_path.stat().st_size
             if file_size > max_chars:
@@ -390,7 +398,7 @@ class SpawnAnalyzerAgentTool(Tool):
         # PRE-LOAD file contents to reduce sub-agent tool calls
         preloaded_sections = []
         for f in focus_files:
-            content = self._preload_file_content(f)
+            content = self._preload_file_content(f, target_path_str=target_path)
             preloaded_sections.append(f"### `{f}`\n```python\n{content}\n```")
         
         preloaded_content = "\n\n".join(preloaded_sections) if preloaded_sections else "(no files provided)"
@@ -429,6 +437,8 @@ IMPORTANT: The source code is already provided above. Write directly to summary.
         )
 
         try:
+            import time
+            start_time = time.monotonic()
             workspaces = run_typed_sub_agent_tasks(
                 [spec],
                 codebase_root=self.ctx.codebase_root,
@@ -436,8 +446,25 @@ IMPORTANT: The source code is already provided above. Write directly to summary.
                 min_interval_seconds=5.0,
                 max_tool_calls=None,
                 max_directory_calls=None,
-                minimal_tools=False,  # Enable all tools per architecture spec
+            minimal_tools=False,  # Enable all tools per architecture spec
             )
+            
+            # --- METRICS LOGGING ---
+            duration = time.monotonic() - start_time
+            try:
+                metrics_file = self.ctx.output_root / "metrics.md"
+                if not metrics_file.exists():
+                    metrics_file.write_text("# Agent Execution Metrics\n\n| Date | Agent | Target | Duration |\n|---|---|---|---|\n", encoding="utf-8")
+                
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                target_name = target_path if len(target_path) < 40 else f"...{target_path[-37:]}"
+                metrics_line = f"| {timestamp} | Analyzer | `{target_name}` | {duration:.2f}s |\n"
+                
+                with metrics_file.open("a", encoding="utf-8") as f:
+                    f.write(metrics_line)
+            except Exception as e:
+                logger.warning(f"Failed to write metrics: {e}")
+            # -----------------------
 
             workspace = workspaces[0] if workspaces else None
             if workspace and workspace.exists():

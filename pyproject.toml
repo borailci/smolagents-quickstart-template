@@ -16,4 +16,5 @@ dependencies = [
     "utils>=1.0.2",
     "tiktoken>=0.8.0",
     "dotenv>=0.9.9",
+    "sentence-transformers>=5.1.2",
 ]

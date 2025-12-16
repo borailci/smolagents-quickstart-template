@@ -1,13 +1,11 @@
-"""Chroma-backed vector store for retrieval-augmented generation."""
+"""Local embedding RAG store using ChromaDB and sentence-transformers."""
 
 from __future__ import annotations
 
 import hashlib
-import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, cast
+from typing import Callable, Dict, List, Optional, Sequence, cast
 
 from loguru import logger
 
@@ -19,62 +17,18 @@ try:
     from chromadb.api.models.Collection import Collection
     from chromadb.api.types import Metadata, Where
 except ImportError as exc:
-    raise ImportError(
-        "chromadb is required. Install it or check your dependencies."
-    ) from exc
+    raise ImportError("chromadb is required. Install via `uv add chromadb`.") from exc
 
-try:
-    from litellm import RateLimitError
-    from litellm import embedding as litellm_embedding
-except ImportError as exc:
-    raise ImportError(
-        "litellm is required for embeddings. Install it via `pip install litellm`."
-    ) from exc
+from utils.constants import IGNORED_DIRS, ALLOWED_SUFFIXES, MAX_FILE_SIZE_BYTES, IGNORED_FILES, BLOCKED_EXTENSIONS
 
-
-# Unified environment configuration
-_CHAT_MODEL = os.getenv("LITELLM_MODEL_ID", "")
-# Smart default: if using Gemini chat, use Gemini embeddings. Otherwise default to OpenAI.
-_FALLBACK_EMBED_MODEL = (
-    "gemini/text-embedding-004"
-    if "gemini" in _CHAT_MODEL.lower()
-    else "text-embedding-3-small"
-)
-
-_DEFAULT_EMBEDDING_MODEL = os.getenv(
-    "LITELLM_EMBEDDING_MODEL_ID", _FALLBACK_EMBED_MODEL
-)
-_DEFAULT_EMBEDDING_API_KEY = os.getenv("LITELLM_API_KEY")
-
-
-def _safe_int_env(key: str, default: int, minimum: int = 1) -> int:
-    try:
-        return max(minimum, int(os.getenv(key, default)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_float_env(key: str, default: float, minimum: float = 0.0) -> float:
-    try:
-        return max(minimum, float(os.getenv(key, default)))
-    except (TypeError, ValueError):
-        return default
-
-
-_EMBED_BATCH_SIZE = _safe_int_env("RAG_EMBED_BATCH_SIZE", 5, 1)
-_REQUEST_PAUSE_SECONDS = _safe_float_env("RAG_EMBED_REQUEST_PAUSE_SECONDS", 3.0, 0.0)
-_EMBED_MAX_RETRIES = _safe_int_env("RAG_EMBED_MAX_RETRIES", 10, 1)
-_EMBED_RETRY_BACKOFF_SECONDS = _safe_float_env(
-    "RAG_EMBED_RETRY_BACKOFF_SECONDS", 5.0, 0.1
-)
 
 __all__ = ["SimpleChromaRAGStore", "ChunkRecord"]
 
-from utils.constants import IGNORED_DIRS, ALLOWED_SUFFIXES, MAX_FILE_SIZE_BYTES
-
-# Text Splitting Config
-_CHUNK_SIZE = 1000  # Characters
-_CHUNK_OVERLAP = 200
+# Configuration
+DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+CHUNK_SIZE = 2000
+CHUNK_OVERLAP = 200
+EMBED_BATCH_SIZE = 100
 
 
 @dataclass(frozen=True)
@@ -87,7 +41,7 @@ class ChunkRecord:
 
 
 class SimpleChromaRAGStore:
-    """Wrapper around ChromaDB with efficient batching and smart filtering."""
+    """ChromaDB-backed vector store with local sentence-transformers embedding."""
 
     def __init__(
         self,
@@ -96,30 +50,28 @@ class SimpleChromaRAGStore:
         knowledge_base_root: Path,
         persist_directory: Path,
         collection_name: str = "tutorial_rag",
-        embedding_model: str = _DEFAULT_EMBEDDING_MODEL,
-        embed_batch_size: int = _EMBED_BATCH_SIZE,
-        request_pause_seconds: float = _REQUEST_PAUSE_SECONDS,
-        embed_max_retries: int | None = None,
-        embed_retry_backoff_seconds: float | None = None,
-        embedding_fn: Optional[
-            Callable[[Sequence[str]], Sequence[Sequence[float]]]
-        ] = None,
+        embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+        embed_batch_size: int = EMBED_BATCH_SIZE,
+        embedding_fn: Optional[Callable[[Sequence[str]], Sequence[Sequence[float]]]] = None,
     ) -> None:
         self.codebase_root = codebase_root
         self.knowledge_base_root = knowledge_base_root
         self.persist_directory = persist_directory
         self.collection_name = collection_name
-        self.embedding_model = embedding_model
+        self.embedding_model_name = embedding_model
         self.embed_batch_size = max(1, embed_batch_size)
-        self.request_pause_seconds = max(0.0, request_pause_seconds)
-        self._embed_max_retries = max(1, embed_max_retries or _EMBED_MAX_RETRIES)
-        self._embed_retry_backoff_seconds = max(
-            0.0, embed_retry_backoff_seconds or _EMBED_RETRY_BACKOFF_SECONDS
-        )
         self._embedding_fn = embedding_fn
 
+        # Load local embedding model
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info(f"Loading embedding model: {embedding_model}...")
+            self.local_model = SentenceTransformer(embedding_model)
+            logger.info(f"Model loaded on device: {self.local_model.device}")
+        except ImportError:
+            raise ImportError("sentence-transformers required. Install via `uv add sentence-transformers`.")
+
         self.persist_directory.mkdir(parents=True, exist_ok=True)
-        # Using the standard client interface
         self.client: ClientAPI = PersistentClient(path=str(self.persist_directory))
         self.collection: Optional[Collection] = None
 
@@ -248,7 +200,7 @@ class SimpleChromaRAGStore:
             name=self.collection_name,
             metadata={
                 "fingerprint": fingerprint,
-                "embedding_model": self.embedding_model,
+                "embedding_model": self.embedding_model_name,
             },
         )
 
@@ -257,6 +209,7 @@ class SimpleChromaRAGStore:
 
         # Batch Processing
         total_chunks = len(chunks)
+        # For local model, we can probably do larger batches, but 100 is safe default
         logger.info(
             f"Embedding {total_chunks} chunks in batches of {self.embed_batch_size}..."
         )
@@ -283,65 +236,19 @@ class SimpleChromaRAGStore:
             except Exception as exc:
                 logger.error(f"Failed to embed batch starting at index {start}: {exc}")
 
-            if self.request_pause_seconds > 0:
-                time.sleep(self.request_pause_seconds)
+            # No sleep for local model
 
         return collection
 
     def _embed_texts(self, texts: Sequence[str]) -> List[Sequence[float]]:
-        """Computes embeddings for a batch of texts."""
+        """Computes embeddings for a batch of texts using local model."""
         if self._embedding_fn:
             return list(self._embedding_fn(texts))
-
-        last_error: Exception | None = None
-
-        for attempt in range(1, self._embed_max_retries + 1):
-            try:
-                response = litellm_embedding(
-                    model=self.embedding_model,
-                    input=texts,
-                    api_key=_DEFAULT_EMBEDDING_API_KEY,
-                )
-
-                data = response.get("data", [])
-                data.sort(key=lambda x: x["index"])
-                return [item["embedding"] for item in data]
-
-            except RateLimitError as exc:
-                last_error = exc
-                wait_seconds = min(self._embed_retry_backoff_seconds * attempt, 60.0)
-                logger.warning(
-                    "Embedding rate limited (attempt {}/{}) — sleeping {:.1f}s: {}",
-                    attempt,
-                    self._embed_max_retries,
-                    wait_seconds,
-                    exc,
-                )
-            except Exception as exc:
-                last_error = exc
-                if attempt >= self._embed_max_retries:
-                    logger.error(
-                        "Embedding API error after {} attempts: {}",
-                        attempt,
-                        exc,
-                    )
-                    raise
-
-                wait_seconds = min(self._embed_retry_backoff_seconds * attempt, 60.0)
-                logger.warning(
-                    "Embedding attempt {}/{} failed, retrying in {:.1f}s: {}",
-                    attempt,
-                    self._embed_max_retries,
-                    wait_seconds,
-                    exc,
-                )
-
-            time.sleep(wait_seconds)
-
-        if last_error:
-            raise last_error
-
-        return []
+        
+        # Local inference
+        embeddings = self.local_model.encode(texts)
+        # Convert numpy array to list of lists
+        return embeddings.tolist()
 
     def _collect_chunks(
         self, *, include_codebase: bool, include_knowledge_base: bool
@@ -391,6 +298,18 @@ class SimpleChromaRAGStore:
         # Hidden files
         if path.name.startswith("."):
             return False
+            
+        # Use centralized constants instead of hardcoded values
+        if path.suffix.lower() in BLOCKED_EXTENSIONS:
+            return False
+            
+        # Specific files to ignore (except README.md which has high value)
+        if path.name in IGNORED_FILES and path.name != "README.md":
+            return False
+            
+        # Ignored directories check (uses centralized IGNORED_DIRS)
+        if any(part in IGNORED_DIRS for part in path.parts):
+            return False
 
         # Size limit
         try:
@@ -401,6 +320,7 @@ class SimpleChromaRAGStore:
 
         # Suffix check
         return path.suffix.lower() in ALLOWED_SUFFIXES
+
 
     def _chunk_content_by_lines(
         self, content: str, source: str, relative_path: str
@@ -419,7 +339,7 @@ class SimpleChromaRAGStore:
             line_len = len(line) + 1  # +1 for newline
 
             # If adding this line exceeds chunk size and we have content, save current chunk
-            if current_length + line_len > _CHUNK_SIZE and current_chunk:
+            if current_length + line_len > CHUNK_SIZE and current_chunk:
                 chunk_text = "\n".join(current_chunk)
                 records.append(
                     ChunkRecord(
@@ -437,7 +357,7 @@ class SimpleChromaRAGStore:
                 overlap_buffer = []
                 overlap_len = 0
                 for prev_line in reversed(current_chunk):
-                    if overlap_len + len(prev_line) > _CHUNK_OVERLAP:
+                    if overlap_len + len(prev_line) > CHUNK_OVERLAP:
                         break
                     overlap_buffer.insert(0, prev_line)
                     overlap_len += len(prev_line) + 1
@@ -483,8 +403,8 @@ class SimpleChromaRAGStore:
     ) -> str:
         """Computes a hash of the file states to detect changes."""
         hasher = hashlib.sha256()
-        hasher.update(self.embedding_model.encode("utf-8"))
-        hasher.update(str(_CHUNK_SIZE).encode("utf-8"))
+        hasher.update(self.embedding_model_name.encode("utf-8"))
+        hasher.update(str(CHUNK_SIZE).encode("utf-8"))
 
         roots_to_check = []
         if include_knowledge_base:

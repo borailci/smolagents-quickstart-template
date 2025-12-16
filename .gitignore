@@ -16,6 +16,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!ui/src/lib/
 parts/
 sdist/
 var/
@@ -209,8 +210,7 @@ data/knowledge_base/
 # Agent workspaces / scratchpads
 data/sub_agents_workspace/
 !data/sub_agents_workspace/.gitkeep
+data/agent_workspace/
 
 # Local filtered logs
 filtered_log*.txt
-
-# Deep Agent Framework Generated Data

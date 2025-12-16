@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, cast
+from typing import Any, Dict, List, Sequence
 
 from dotenv import load_dotenv
 from loguru import logger
+from smolagents import LiteLLMModel, ToolCallingAgent
 
 from toolkits.sub_agent_toolkit import (
     SubAgentRole,
@@ -21,7 +25,13 @@ from prompts import prompts
 from utils.path_utils import ensure_directory
 from config import settings
 
-__all__ = ["KnowledgeBaseBuilder", "DocumentationTarget", "AgentWorkspaceResult"]
+__all__ = [
+    "KnowledgeBaseBuilder",
+    "DocumentationTarget",
+    "AgentWorkspaceResult",
+    "DEFAULT_TARGET_IDENTIFIERS",
+    "TARGET_WHITELIST_ENV",
+]
 
 load_dotenv()
 
@@ -35,8 +45,8 @@ DEFAULT_BASE_ROOT = settings.PROJECT_ROOT / "data" / "agent_workspace" # Fallbac
 KNOWLEDGE_BASE_MAX_TARGETS_ENV = "KNOWLEDGE_BASE_MAX_TARGETS"
 DEFAULT_KB_STEP_DELAY_SECONDS = 0.0
 DEFAULT_SUB_AGENT_MIN_INTERVAL = 5.0
-DEFAULT_ANCHOR_TOOL_CALLS = 5
-DEFAULT_ANCHOR_DIRECTORY_LISTINGS = 0
+DEFAULT_ANCHOR_TOOL_CALLS = None  # No limit
+DEFAULT_ANCHOR_DIRECTORY_LISTINGS = None  # No limit
 MAX_FOCUS_FILES = 2  # keep KB focused and concise
 FOCUS_KEYWORDS: tuple[str, ...] = (
     "router",
@@ -106,7 +116,7 @@ PRIORITIZED_TARGETS: tuple[str, ...] = (
 )
 
 MIN_PLANNER_TARGETS = 4
-MAX_PLANNER_TARGETS = 8  # increased for better codebase coverage
+MAX_PLANNER_TARGETS = 10  # increased for better codebase coverage
 
 
 @dataclass(frozen=True)
@@ -294,46 +304,133 @@ class KnowledgeBaseBuilder:
         """Generate knowledge base using the Supervisor Agent."""
         logger.info("Starting supervised knowledge base generation from {}", self.codebase_root)
         
-        # Always rebuild KB (no skip check - user requested fresh generation each run)
+        # Check existing content
+        if not self.force_rebuild and self.output_root.exists():
+            existing_files = list(self.output_root.glob("*.md"))
+            if len(existing_files) > 0:
+                logger.info("KB exists at {} ({} files). Attempting to resume/increment.", self.output_root, len(existing_files))
         
-        # Reset directories
-        if not self.dry_run:
+        # Reset directories ONLY if forced
+        if self.force_rebuild and not self.dry_run:
             self._reset_directory(self.sub_agents_root)
             self._reset_directory(self.output_root)
             self._clear_rag_vector_store()
         
         self.output_root.mkdir(parents=True, exist_ok=True)
+        self.sub_agents_root.mkdir(parents=True, exist_ok=True)
         
         if self.dry_run:
             logger.debug("[DRY RUN] Would run Supervisor Agent")
             return []
         
-        # Create and run Supervisor Agent
+        # Create Supervisor Agent
         supervisor = self._create_supervisor_agent()
-        task = f"""Create a comprehensive Knowledge Base for tutorial generation.
+        
+        # Base Task Template
+        base_task = f"""Create Knowledge Base for: {self.codebase_root}
 
-TARGET CODEBASE: {self.codebase_root}
-
-GOAL: Generate documentation that enables high-quality tutorial creation.
+GOAL: Documentation that enables tutorial writers to understand the codebase quickly.
 
 WORKFLOW:
-1. Scout the codebase structure first
-2. Identify meaningful directories
-3. Spawn sub-agents with specific custom_instructions
-4. Evaluate outputs
-5. Retry if necessary
-6. Finalize
+1. get_codebase_overview → identify 5-8 meaningful directories
+2. spawn_analyzer_agent for each target with custom_instructions
+3. evaluate_output_quality → retry if incomplete
+4. finalize_knowledge_base with all outputs
 
-QUALITY STANDARD: Provide Entry Points, Key Concepts, Dependencies, Patterns, Examples.
+REQUIRED SECTIONS per doc:
+- Purpose & entry points
+- Architecture & dependencies  
+- Key concepts & patterns
+- Code examples with explanations
+- Testing & usage hints
+
+OUTPUT: Write each doc to summary.md in sub-agent workspace.
 """
         
-        # Use centralized rate limit retry wrapper
-        from pipelines.checkpoint import run_with_rate_limit_retry
+        # Retry loop for rate limits
+        max_retries = 10
+        retry_delay = 5.0  # seconds
         
-        result = run_with_rate_limit_retry(supervisor.run, task)
-        logger.info("Supervisor Agent completed.")
+        for attempt in range(1, max_retries + 1):
+            try:
+                # --- RESUME LOGIC ---
+                # Scan for work that is already done to skip it
+                completed_files = sorted(f.name for f in self.output_root.glob("*.md"))
+                
+                # Also check sub-agents for un-finalized drafts (RECURSIVE search)
+                drafts = []
+                if self.sub_agents_root.exists():
+                    # Use rglob to find ALL summary.md files in nested sub-agent workspaces
+                    for summary_file in self.sub_agents_root.rglob("summary.md"):
+                        if summary_file.stat().st_size > 100:
+                            # Get relative path from sub_agents_root for clearer logging
+                            rel_path = summary_file.relative_to(self.sub_agents_root)
+                            drafts.append(str(rel_path))
+                
+                current_task = base_task
+                if completed_files or drafts:
+                    status_update = "\n\nSTATUS UPDATE (RESUMING):"
+                    if completed_files:
+                        status_update += "\n✅ FINALIZED (SKIP THESE):"
+                        for f in completed_files:
+                            status_update += f"\n- {f}"
+                    
+                    if drafts:
+                        status_update += "\n📝 DRAFTS AVAILABLE (Check these before spawning new agents):"
+                        for d in drafts:
+                            status_update += f"\n- {d}"
+                            
+                    current_task += status_update
+                    current_task += "\n\nINSTRUCTION: Review the status above. Do NOT re-analyze finalized targets. finalize_knowledge_base if drafts are good."
 
-        # Collect output files from output_root (if supervisor called finalize)
+                logger.info("Supervisor Task (Resume context): {} completed, {} drafts", len(completed_files), len(drafts))
+                
+                result = supervisor.run(current_task, max_steps=50)
+                logger.info("Supervisor Agent completed: {}", str(result)[:200])
+                break  # Success, exit retry loop
+            except Exception as e:
+                error_str = str(e)
+                error_lower = error_str.lower()
+                
+                # Check for rate limit indicators in multiple forms
+                is_rate_limit = (
+                    "429" in error_str 
+                    or "rate limit" in error_lower 
+                    or "exhausted" in error_lower 
+                    or "quota" in error_lower
+                )
+
+                # Also retry on empty/malformed model responses (common with high loads)
+                is_parsing_error = (
+                    "message contains no content" in error_lower
+                    or "parsing tool call" in error_lower
+                    or "malformed" in error_lower
+                )
+                
+                if is_rate_limit or is_parsing_error:
+                    # Provide more detail about WHICH limit if possible
+                    limit_type = "Generic 429"
+                    if is_parsing_error:
+                        limit_type = "Empty/Malformed Response"
+                    elif "tpm" in error_lower or "token" in error_lower:
+                        limit_type = "TPM (Tokens Per Minute)"
+                    elif "rpm" in error_lower or "request" in error_lower:
+                        limit_type = "RPM (Requests Per Minute)"
+                    
+                    if attempt < max_retries:
+                        logger.warning(
+                            "Rate limit hit [{}] (attempt {}/{}). Waiting {}s before retry...",
+                            limit_type, attempt, max_retries, retry_delay
+                        )
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 1.5, 60.0)  # Exponential backoff
+                        continue
+                
+                # If not rate limit or retries exhausted, re-raise
+                logger.exception("Supervisor Agent failed: {}", e)
+                raise RuntimeError(f"Supervisor Agent failed: {e}") from e
+        
+        # Collect output files from supervisor
         output_files = list(self.output_root.glob("*.md"))
         
         # FALLBACK: If supervisor didn't finalize, collect from sub_agents_root
@@ -390,7 +487,6 @@ QUALITY STANDARD: Provide Entry Points, Key Concepts, Dependencies, Patterns, Ex
 
     def _create_supervisor_agent(self):
         """Create the Supervisor Agent with its tools."""
-        from smolagents import ToolCallingAgent
         from toolkits.supervisor_toolkit import build_supervisor_tools
         from utils.llm_factory import create_model
 
@@ -477,6 +573,754 @@ QUALITY STANDARD: Provide Entry Points, Key Concepts, Dependencies, Patterns, Ex
             context_summary += f"\\nREADME excerpt:\\n{readme_excerpt[:500]}...\\n"
 
         return report_path, context_summary
+
+    def _run_planner_agent(self, context_summary: str) -> List[DocumentationTarget]:
+        """Run planner agent to intelligently select documentation targets."""
+        logger.debug("Running planner agent to select documentation targets...")
+
+        # Build planner task
+        scout_tree = self._scouting_tree or "(unavailable)"
+        task = (
+            f"Directory structure:\n```\n{scout_tree}\n```\n\n"
+            f"{context_summary}\n\n"
+            "Select 4-6 directories to document (prioritize: api, models, services, tests).\n"
+            "Return ONLY a JSON array of relative paths, e.g.: [\"app/api\", \"tests\"]"
+        )
+
+        # Create planner agent
+        from toolkits.sub_agent_toolkit import LITELLM_MODEL_ID, LITELLM_API_KEY
+        from toolkits.scoped_filesystem_toolkit import build_scoped_tools
+
+        # Give planner a temporary workspace for tools (even if it doesn't write)
+        planner_workspace = self.sub_agents_root / "planner"
+        self._reset_directory(planner_workspace)
+
+        planner_tools = build_scoped_tools(
+            codebase_root=str(self.codebase_root),
+            workspace_root=str(planner_workspace),
+            allow_directory_listing=False,
+            allow_tree=False,
+            allow_mermaid=False,
+            allow_writes=False,
+        )
+        # Filter out writing tools to keep it read-only
+        planner_tools = [t for t in planner_tools if "write" not in t.name]
+
+        model = LiteLLMModel(model_id=LITELLM_MODEL_ID, api_key=LITELLM_API_KEY)
+        planner = ToolCallingAgent(
+            name="documentation_planner",
+            description="Selects which parts of codebase to document",
+            tools=planner_tools,
+            model=model,
+            instructions=prompts.PLANNER_AGENT_PROMPT,
+        )
+
+        try:
+            response = planner.run(task)
+            response_text = str(response)
+
+            # Extract JSON array from response
+            json_match = re.search(r"\[.*?\]", response_text, re.DOTALL)
+            if not json_match:
+                logger.warning(
+                    "Planner output has no JSON array, falling back to heuristic"
+                )
+                return self._fallback_target_selection()
+
+            selected_paths = json.loads(json_match.group(0))
+
+            if not isinstance(selected_paths, list) or not selected_paths:
+                logger.warning("Invalid planner response, using fallback")
+                return self._fallback_target_selection()
+
+            # Convert to DocumentationTarget objects
+            targets = []
+            for path_str in selected_paths:
+                relative_path = Path(path_str)
+                absolute_path = (self.codebase_root / relative_path).resolve()
+
+                if not absolute_path.exists():
+                    logger.warning(
+                        f"Planner selected non-existent path: {path_str}, skipping"
+                    )
+                    continue
+
+                label = relative_path.name or relative_path.as_posix()
+                targets.append(DocumentationTarget(path=relative_path, label=label))
+
+            normalized = self._normalize_planner_targets(targets)
+            if len(normalized) < MIN_PLANNER_TARGETS:
+                logger.warning(
+                    "Planner produced fewer than %d targets; using fallback selection.",
+                    MIN_PLANNER_TARGETS,
+                )
+                return self._fallback_target_selection()
+
+            return normalized
+
+        except Exception as exc:
+            logger.exception(f"Planner agent failed: {exc}")
+            logger.warning("Falling back to heuristic target selection")
+            return self._fallback_target_selection()
+
+    def _normalize_planner_targets(
+        self, targets: Sequence[DocumentationTarget]
+    ) -> List[DocumentationTarget]:
+        if not targets:
+            return []
+
+        seen: set[str] = set()
+        normalized: List[DocumentationTarget] = []
+        for target in targets:
+            key = target.path.as_posix()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(target)
+
+        normalized.sort(key=self._target_priority)
+
+        cap = self._max_targets or MAX_PLANNER_TARGETS
+        if len(normalized) > cap:
+            normalized = normalized[:cap]
+
+        if len(normalized) < MIN_PLANNER_TARGETS:
+            fallback_candidates = self._discover_targets()
+            for candidate in fallback_candidates:
+                key = candidate.path.as_posix()
+                if key in seen:
+                    continue
+                normalized.append(candidate)
+                seen.add(key)
+                if len(normalized) >= MIN_PLANNER_TARGETS:
+                    break
+
+        return normalized
+
+    def _target_priority(self, target: DocumentationTarget) -> tuple[int, int, str]:
+        path_str = target.path.as_posix()
+        if path_str in PRIORITIZED_TARGETS:
+            return (0, PRIORITIZED_TARGETS.index(path_str), path_str)
+
+        lower = path_str.lower()
+        if "api" in lower or "routes" in lower:
+            return (1, len(path_str), path_str)
+        if "model" in lower:
+            return (2, len(path_str), path_str)
+        if lower.startswith("tests") or "test" in lower:
+            return (3, len(path_str), path_str)
+        return (4, len(path_str), path_str)
+
+    def _fallback_target_selection(self) -> List[DocumentationTarget]:
+        """Simple heuristic if planner fails."""
+        identifiers = self._resolve_target_identifiers()
+        targets: List[DocumentationTarget] = []
+        for ident in identifiers:
+            rel_path = Path(ident)
+            abs_path = (self.codebase_root / rel_path).resolve()
+            if abs_path.exists():
+                targets.append(DocumentationTarget(path=rel_path, label=rel_path.name))
+
+        if len(targets) < MIN_PLANNER_TARGETS:
+            discovered = self._discover_targets()
+            seen = {t.path.as_posix() for t in targets}
+            for candidate in discovered:
+                key = candidate.path.as_posix()
+                if key in seen:
+                    continue
+                targets.append(candidate)
+                seen.add(key)
+                if len(targets) >= MIN_PLANNER_TARGETS:
+                    break
+
+        normalized = self._normalize_planner_targets(targets)
+        capped = self._apply_target_cap(normalized)
+        return capped
+
+    def _discover_targets(self) -> List[DocumentationTarget]:
+        identifiers = self._resolve_target_identifiers()
+
+        if not identifiers:
+            identifiers = self._scan_for_targets()
+            logger.debug("Discovered %d targets dynamically.", len(identifiers))
+
+        targets: List[DocumentationTarget] = []
+        for identifier in identifiers:
+            relative_path = Path(identifier)
+            # Safety check: ensure target is actually inside codebase
+            try:
+                absolute_path = (self.codebase_root / relative_path).resolve()
+                if not str(absolute_path).startswith(str(self.codebase_root)):
+                    logger.warning(
+                        f"Target {identifier} resolves outside codebase root. Skipping."
+                    )
+                    continue
+            except Exception:
+                continue
+
+            if not absolute_path.exists():
+                logger.debug(
+                    "Skipping target %s because it does not exist.", identifier
+                )
+                continue
+
+            label = relative_path.name or relative_path.as_posix()
+            targets.append(DocumentationTarget(path=relative_path, label=label))
+
+        return targets
+
+    def _resolve_target_identifiers(self) -> List[str]:
+        """Return curated target identifiers, honoring an optional whitelist env."""
+        env_value = os.getenv(TARGET_WHITELIST_ENV)
+        if not env_value:
+            return list(DEFAULT_TARGET_IDENTIFIERS)
+
+        # Allow comma or newline separated values and trim whitespace/duplications.
+        raw_entries = env_value.replace("\n", ",").split(",")
+        seen: set[str] = set()
+        identifiers: List[str] = []
+        for entry in raw_entries:
+            cleaned = entry.strip().strip("/")
+            if not cleaned:
+                continue
+            normalized = cleaned.replace("\\", "/")
+            if normalized not in seen:
+                identifiers.append(normalized)
+                seen.add(normalized)
+        return identifiers or list(DEFAULT_TARGET_IDENTIFIERS)
+
+    def _scan_for_targets(self) -> List[str]:
+        src_root = self.codebase_root / "src"
+        scan_root = (
+            src_root if src_root.exists() and src_root.is_dir() else self.codebase_root
+        )
+
+        targets = []
+        # Always include README if it exists
+        if (self.codebase_root / "README.md").exists():
+            targets.append("README.md")
+
+        # Always include explicit tests folder if present
+        if (self.codebase_root / "tests").exists():
+            targets.append("tests")
+
+        for item in scan_root.iterdir():
+            if item.name.startswith(".") or item.name.startswith("_"):
+                continue
+            if item.name in _IGNORED_SCAN_DIRS:
+                continue
+
+            # If scanning root, ignore miscellaneous files (e.g. .gitignore, setup.py)
+            # We want to focus on Directories for sub-agents to analyze.
+            if scan_root == self.codebase_root and item.is_file():
+                continue
+
+            try:
+                rel_path = item.relative_to(self.codebase_root).as_posix()
+                # Avoid duplicates
+                if rel_path not in targets:
+                    targets.append(rel_path)
+            except ValueError:
+                continue
+
+        return sorted(targets)
+
+    # ----- Task construction ------------------------------------------------
+
+    def _get_focus_files(self, target: DocumentationTarget) -> List[str]:
+        cache_key = target.identifier
+        if cache_key not in self._focus_files_cache:
+            self._focus_files_cache[cache_key] = self._select_representative_files(
+                target
+            )
+        return self._focus_files_cache[cache_key]
+
+    def _determine_tool_budget(
+        self, target: DocumentationTarget
+    ) -> tuple[int | None, int | None]:
+        focus_count = len(self._get_focus_files(target))
+        total_budget = self._max_tool_calls
+        if total_budget is not None:
+            minimum_reads = max(focus_count, 1)
+            total_budget = max(total_budget, minimum_reads * 2 + 3)
+        return total_budget, self._max_directory_calls
+
+    def _select_representative_files(
+        self, target: DocumentationTarget, max_files: int = MAX_FOCUS_FILES
+    ) -> List[str]:
+        absolute = (self.codebase_root / target.path).resolve()
+
+        if absolute.is_file():
+            return [target.path.as_posix()]
+        if not absolute.exists() or not absolute.is_dir():
+            return []
+
+        candidates: List[tuple[int, int, str]] = []
+        stack: List[tuple[Path, int]] = [(absolute, 0)]
+
+        while stack:
+            current, depth = stack.pop()
+            if depth > 2:
+                continue
+            try:
+                entries = sorted(
+                    child
+                    for child in current.iterdir()
+                    if not child.name.startswith(".")
+                    and child.name not in _IGNORED_SCAN_DIRS
+                )
+            except OSError:
+                continue
+
+            for child in entries:
+                if child.is_dir():
+                    if depth + 1 <= 2:
+                        stack.append((child, depth + 1))
+                    continue
+                if child.name == "__init__.py":
+                    continue
+                relative = child.relative_to(self.codebase_root).as_posix()
+                score = self._score_focus_file(child.name, depth)
+                candidates.append((score, depth, relative))
+
+            if len(candidates) >= max_files * 5:
+                break
+
+        if not candidates:
+            try:
+                fallback = [
+                    child.relative_to(self.codebase_root).as_posix()
+                    for child in absolute.iterdir()
+                    if child.is_file() and child.name != "__init__.py"
+                ][:max_files]
+                return fallback
+            except OSError:
+                return []
+
+        candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+        return [relative for _, _, relative in candidates[:max_files]]
+
+    @staticmethod
+    def _score_focus_file(filename: str, depth: int) -> int:
+        lower = filename.lower()
+        score = 1
+        for weight, keyword in enumerate(FOCUS_KEYWORDS[::-1], start=1):
+            if keyword in lower:
+                score += weight * 10
+                break
+        if lower.endswith("__init__.py"):
+            score += 4
+        if lower.startswith("test") or lower.endswith("test.py"):
+            score += 6
+        return max(score - depth, 1)
+
+    def _build_task_description(
+        self, target: DocumentationTarget, context_summary: str = ""
+    ) -> str:
+        relative = target.path.as_posix()
+        directory_hint = (
+            relative if target.path.suffix == "" else target.path.parent.as_posix()
+        ) or "."
+
+        focus_files = self._get_focus_files(target)
+        focus_list = "\n".join(f"  - {p}" for p in focus_files) if focus_files else "  - (read target directly)"
+
+        return f"""Analyze: `{relative}`
+
+FOCUS FILES:
+{focus_list}
+
+REQUIRED SECTIONS:
+1. Purpose - Why this exists, when to use it
+2. Architecture - Dependencies, control flow
+3. Entry Points - Key classes/functions with parameters
+4. Configuration - Env vars, external services
+5. Testing - How to exercise this code
+
+RULES:
+- Use `read_codebase_file` only on focus files listed above
+- Keep under 600 words, cite code with line ranges (e.g., `file.py#L42`)
+- Write output to `summary.md`
+
+Context: {context_summary[:200] if context_summary else '(none)'}
+"""
+
+    # ----- Aggregation ------------------------------------------------------
+
+    def _collect_outputs(self, results: Sequence[AgentWorkspaceResult]) -> List[Path]:
+        output_files: List[Path] = []
+
+        for result in results:
+            target = result.target
+            workspace = result.workspace
+
+            if not workspace or not workspace.exists():
+                logger.warning(f"No workspace found for {target.path}")
+                self._mark_task_attention(target, "Agent failed to create workspace")
+                continue
+
+            exported = self._export_workspace_markdown(target, workspace)
+
+            if exported:
+                output_files.extend(exported)
+                self._mark_task_complete(target, len(exported))
+                continue
+
+            # Retry logic
+            error_detail = result.error or "Empty output"
+            logger.warning(f"Retrying {target.path} (Reason: {error_detail})")
+
+            retry_workspace = self._retry_target_workspace(target)
+            if retry_workspace:
+                exported_retry = self._export_workspace_markdown(
+                    target, retry_workspace
+                )
+                if exported_retry:
+                    output_files.extend(exported_retry)
+                    self._mark_task_complete(target, len(exported_retry))
+                    continue
+
+            self._mark_task_attention(target, f"Failed after retry: {error_detail}")
+
+        return output_files
+
+    def _run_single_target_agent(
+        self, target: DocumentationTarget, context_summary: str = ""
+    ) -> Path | None:
+        """Run a single target analyzer with output validation and retry."""
+        max_retries = 2
+        last_error: str | None = None
+        
+        for attempt in range(max_retries + 1):
+            workspace_root = self.sub_agents_root / target.identifier
+            if attempt > 0:
+                # Use distinct directory for retries
+                workspace_root = self.sub_agents_root / f"retry_{attempt}_{target.identifier}"
+            self._reset_directory(workspace_root)
+            
+            # Build task description with retry feedback if needed
+            task_desc = self._build_task_description(target, context_summary)
+            if attempt > 0 and last_error:
+                task_desc += (
+                    f"\n\n⚠️ RETRY {attempt}/{max_retries}: Previous attempt failed: {last_error}\n"
+                    "You MUST write substantial markdown content (100+ chars) to your workspace.\n"
+                    "Do NOT write empty files or placeholder text."
+                )
+            
+            spec = SubAgentTaskSpec(
+                description=task_desc,
+                role=SubAgentRole.ANALYZER,
+            )
+            total_budget, directory_budget = self._determine_tool_budget(target)
+            
+            try:
+                workspaces = run_typed_sub_agent_tasks(
+                    [spec],
+                    codebase_root=self.codebase_root,
+                    sub_agents_root=workspace_root,
+                    min_interval_seconds=self._sub_agent_min_interval(),
+                    max_tool_calls=total_budget,
+                    max_directory_calls=directory_budget,
+                )
+                
+                if not workspaces:
+                    last_error = "No workspace returned"
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries + 1}: {last_error}")
+                    continue
+                
+                workspace = workspaces[0]
+                
+                # Validate workspace has meaningful output
+                self._validate_workspace_output(workspace)
+                
+                return workspace
+                
+            except SubAgentOutputError as e:
+                last_error = str(e)
+                logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} validation failed: {e}")
+                if attempt >= max_retries:
+                    raise
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed: {e}")
+                if attempt >= max_retries:
+                    raise
+        
+        return None
+
+    def _validate_workspace_output(self, workspace: Path, min_chars: int = 100) -> None:
+        """Validate that workspace contains meaningful output files."""
+        md_files = list(workspace.glob("*.md"))
+        if not md_files:
+            raise SubAgentOutputError(f"No markdown files in {workspace.name}")
+        
+        for md_file in md_files:
+            content = md_file.read_text(encoding="utf-8").strip()
+            if len(content) < min_chars:
+                raise SubAgentOutputError(
+                    f"{md_file.name}: {len(content)} chars < {min_chars} required"
+                )
+            if content.lower() in ("_no response_", "no response"):
+                raise SubAgentOutputError(f"Placeholder content in {md_file.name}")
+
+    def _retry_target_workspace(self, target: DocumentationTarget) -> Path | None:
+        # Use a distinct directory for retries to avoid file lock issues
+        retry_root = self.sub_agents_root / f"retry_{target.identifier}"
+        self._reset_directory(retry_root)
+
+        specs = [
+            SubAgentTaskSpec(
+                description=f"{self._build_task_description(target)}\n\nIMPORTANT: Previous attempt failed. Be extremely verbose.",
+                role=SubAgentRole.ANALYZER,
+            )
+        ]
+        total_budget, directory_budget = self._determine_tool_budget(target)
+
+        workspaces = run_typed_sub_agent_tasks(
+            specs,
+            codebase_root=self.codebase_root,
+            sub_agents_root=retry_root,
+            min_interval_seconds=self._sub_agent_min_interval(),
+            max_tool_calls=total_budget,
+            max_directory_calls=directory_budget,
+        )
+        return workspaces[0] if workspaces else None
+
+    def _write_overview(
+        self, targets: Sequence[DocumentationTarget], output_files: Sequence[Path]
+    ) -> Path:
+        overview_path = self.output_root / "overview.md"
+        lines = [
+            "# Codebase Overview",
+            "",
+            "This knowledge base was generated automatically.",
+            "",
+            "## Covered Areas",
+        ]
+        for target in targets:
+            lines.append(f"- `{target.path.as_posix()}`")
+
+        lines.append("")
+        if output_files:
+            lines.append("## Artifact Index")
+            for path in sorted(output_files, key=lambda p: p.name):
+                lines.append(f"- [{path.name}]({path.name})")
+
+        overview_path.write_text("\n".join(lines), encoding="utf-8")
+        return overview_path
+
+    def _write_table_of_contents(self, output_files: Sequence[Path]) -> Path:
+        toc_path = self.output_root / "toc.md"
+        lines = ["# Knowledge Base Table of Contents", ""]
+        for file_path in sorted(output_files, key=lambda p: p.name):
+            if file_path.name == "toc.md":
+                continue
+            lines.append(f"- [{file_path.stem}]({file_path.name})")
+        toc_path.write_text("\n".join(lines), encoding="utf-8")
+        return toc_path
+
+    def _export_workspace_markdown(
+        self, target: DocumentationTarget, workspace: Path
+    ) -> List[Path]:
+        markdown_files = sorted(workspace.rglob("*.md"))
+        if not markdown_files:
+            return []
+
+        exported: List[Path] = []
+        for file_path in markdown_files:
+            content = file_path.read_text(encoding="utf-8")
+            if not self._has_meaningful_content(content):
+                continue
+
+            clean_identifier = target.identifier
+            if clean_identifier.endswith(".md"):
+                clean_identifier = clean_identifier[:-3]
+
+            output_name = f"{clean_identifier}.md"
+            output_path = self.output_root / output_name
+
+            try:
+                output_path.write_text(content, encoding="utf-8")
+                exported.append(output_path)
+            except Exception as e:
+                logger.error(f"Failed to export {output_name}: {e}")
+
+            # Keep only the first meaningful markdown per target to cap KB size
+            if exported:
+                break
+
+        return exported
+
+
+    def _run_summary_agent(self, artifact_paths: Sequence[Path]) -> Path | None:
+        if not artifact_paths:
+            return None
+        summary_root = self.sub_agents_root / "summary_agent"
+        self._reset_directory(summary_root)
+
+        workspaces = run_typed_sub_agent_tasks(
+            [
+                SubAgentTaskSpec(
+                    description=self._build_summary_task_description(artifact_paths),
+                    role=SubAgentRole.SUMMARIZER,
+                )
+            ],
+            codebase_root=self.output_root,
+            sub_agents_root=summary_root,
+            min_interval_seconds=self._sub_agent_min_interval(),
+        )
+        if not workspaces:
+            return None
+
+        # Check for output file - summarizer may write summary.md or executive_summary.md
+        workspace = workspaces[0]
+        possible_names = ["executive_summary.md", "summary.md"]
+        
+        for name in possible_names:
+            src = workspace / name
+            if src.exists():
+                dest = self.output_root / "executive_summary.md"
+                dest.write_text(src.read_text("utf-8"), "utf-8")
+                logger.info("Copied {} to {}", src, dest)
+                return dest
+        
+        logger.warning("Summary agent did not produce executive_summary.md or summary.md")
+        return None
+
+    def _build_summary_task_description(self, artifact_paths: Sequence[Path]) -> str:
+        files = "\n".join(f"- {p.name}" for p in artifact_paths)
+        return f"Summarize these Knowledge Base files into an executive_summary.md:\n{files}"
+
+
+    def _initialize_plan(self, targets: Sequence[DocumentationTarget]) -> None:
+        self._plan_state = {
+            t.identifier: {
+                "path": t.path.as_posix(),
+                "label": t.label,
+                "status": " ",
+                "note": "",
+            }
+            for t in targets
+        }
+        for target in targets:
+            self._get_focus_files(target)
+        self._write_plan_file()
+
+    def _mark_task_complete(self, target: DocumentationTarget, count: int) -> None:
+        if target.identifier in self._plan_state:
+            self._plan_state[target.identifier].update(
+                {"status": "x", "note": f"Files: {count}"}
+            )
+            self._write_plan_file()
+
+    def _mark_task_attention(self, target: DocumentationTarget, note: str) -> None:
+        if target.identifier in self._plan_state:
+            self._plan_state[target.identifier].update({"status": "!", "note": note})
+            self._write_plan_file()
+
+    def _write_plan_file(self) -> None:
+        lines = ["# Knowledge Base Plan", ""]
+        if self._scouting_tree:
+            report_path = (self.output_root / "scouting_report.md").as_posix()
+            lines.extend(
+                [
+                    "## Scout Snapshot",
+                    f"- Source: `{report_path}`",
+                    "",
+                ]
+            )
+        for k, v in self._plan_state.items():
+            lines.append(f"- [{v['status']}] {v['path']} ({v['note']})")
+            focus_listing = self._focus_files_cache.get(k, [])
+            for focus_path in focus_listing:
+                lines.append(f"    - focus: {focus_path}")
+        self.plan_path.write_text("\n".join(lines), "utf-8")
+
+    def _apply_target_cap(
+        self, targets: Sequence[DocumentationTarget]
+    ) -> List[DocumentationTarget]:
+        if self._max_targets is None or len(targets) <= self._max_targets:
+            return list(targets)
+        logger.info(
+            "Limiting knowledge-base targets from %d to %d to control sub-agent work.",
+            len(targets),
+            self._max_targets,
+        )
+        return list(targets[: self._max_targets])
+
+    def _sub_agent_min_interval(self) -> float:
+        return max(0.0, DEFAULT_SUB_AGENT_MIN_INTERVAL + self._step_delay_seconds)
+
+    @staticmethod
+    def _reset_directory(path: Path) -> None:
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+        path.mkdir(parents=True, exist_ok=True)
+
+    def _clear_rag_vector_store(self) -> None:
+        """Remove any persisted RAG vector store so tutorials rebuild from fresh KB."""
+        if not self.tutorial_output_root:
+            return
+
+        parent = self.tutorial_output_root.parent
+        store_root = (
+            parent / "rag_vector_store"
+            if parent != self.tutorial_output_root
+            else self.tutorial_output_root / "rag_vector_store"
+        )
+
+        if store_root.exists():
+            logger.info("Clearing stale RAG vector store at {}", store_root)
+            shutil.rmtree(store_root, ignore_errors=True)
+
+    @staticmethod
+    def _resolve_float_option(
+        override: float | None,
+        env_var: str,
+        *,
+        default: float,
+        minimum: float = 0.0,
+    ) -> float:
+        if override is not None:
+            return max(minimum, override)
+        raw = os.getenv(env_var)
+        if raw:
+            try:
+                return max(minimum, float(raw))
+            except ValueError:
+                logger.warning(
+                    "Invalid %s value '%s'; using default %.2f",
+                    env_var,
+                    raw,
+                    default,
+                )
+        return max(minimum, default)
+
+    @staticmethod
+    def _resolve_optional_int_option(
+        override: int | None,
+        env_var: str,
+        *,
+        minimum: int = 1,
+        default: int | None = None,
+    ) -> int | None:
+        if override is not None:
+            return max(minimum, override)
+        raw = os.getenv(env_var)
+        if raw:
+            try:
+                return max(minimum, int(raw))
+            except ValueError:
+                logger.warning(
+                    "Invalid %s value '%s'; ignoring optional limit",
+                    env_var,
+                    raw,
+                )
+                return default
+
+    @staticmethod
+    def _has_meaningful_content(content: str) -> bool:
+        return len(content.strip()) > 50  # Simple heuristic
 
     def _build_directory_tree(self, root: Path, max_depth: int = 2) -> str:
         lines = []
@@ -631,3 +1475,60 @@ This knowledge base contains documentation for the **{self.codebase_root.name}**
     def _mark_task_complete(self, target: DocumentationTarget, count: int):
         pass
 
+        # If output is empty or corrupted, regenerate
+        try:
+            content = output_file.read_text("utf-8")
+            if len(content.strip()) < 50:
+                logger.debug(
+                    f"  → {target.path}: Output too small ({len(content)} bytes)"
+                )
+                return True
+        except Exception:
+            logger.debug(f"  → {target.path}: Cannot read output")
+            return True
+
+        # Get output modification time
+        try:
+            output_mtime = output_file.stat().st_mtime
+        except OSError:
+            return True
+
+        # Check source files
+        source_path = self.codebase_root / target.path
+
+        if not source_path.exists():
+            logger.debug(f"  → {target.path}: Source no longer exists")
+            return False  # Don't regenerate if source is gone
+
+        # For single files
+        if source_path.is_file():
+            try:
+                source_mtime = source_path.stat().st_mtime
+                if source_mtime > output_mtime:
+                    logger.debug(f"  → {target.path}: Source file modified")
+                    return True
+            except OSError:
+                return True
+            return False
+
+        # For directories, check all Python/config files
+        if source_path.is_dir():
+            for file in source_path.rglob("*"):
+                # Skip non-relevant files
+                if file.is_dir():
+                    continue
+                if file.name.startswith("."):
+                    continue
+                if any(part in _IGNORED_SCAN_DIRS for part in file.parts):
+                    continue
+
+                # Check modification time
+                try:
+                    if file.stat().st_mtime > output_mtime:
+                        logger.debug(f"  → {target.path}: File {file.name} modified")
+                        return True
+                except OSError:
+                    continue
+
+        logger.debug(f"  → {target.path}: Up-to-date")
+        return False

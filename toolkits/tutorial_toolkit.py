@@ -121,26 +121,13 @@ def build_tutorial_tools(
                 logger.warning("Failed to load Codebase RAG cache: {}", exc)
                 rag_store_codebase = None
         else:
-            # Traditional behavior: Build codebase index locally
-            # We reuse the KB store directory for efficiency if we are building scratch?
-            # actually better to keep separate if we want to mimic the architecture,
-            # but for backward compatibility/simplicity, if no cache, we can just Put
-            # codebase into the SAME store as KB if we wanted.
-            # BUT, to keep logic consistent, let's just make a second store or
-            # use one store for BOTH if no cache is present.
-
-            # Revert to single store mode if no cache provided
-            # This means rag_store_kb above was wasteful if we are going to do a combined one?
-            # actually, let's keep it simple:
-            # If no cache: use rag_store_kb as the MAIN store for BOTH.
+            # No cache: extend KB store to include codebase
             if rag_store_kb:
-                 # Re-run ensure_index to ALSO include codebase
-                 rag_store_kb.ensure_index(
-                     include_codebase=True,
-                     include_knowledge_base=True,
-                     force_rebuild=rag_force_rebuild
-                 )
-                 # rag_store_codebase remains None, we use rag_store_kb for everything
+                rag_store_kb.ensure_index(
+                    include_codebase=True,
+                    include_knowledge_base=True,
+                    force_rebuild=rag_force_rebuild
+                )
 
     max_snippets = max(1, rag_max_snippets)
 
@@ -154,7 +141,12 @@ def build_tutorial_tools(
         Args:
             dir_path: Relative directory path within the knowledge base to inspect.
         """
+        # Handle None explicitly (LLM sometimes sends None instead of using default)
+        if dir_path is None:
+            dir_path = "."
+        
         resolved = resolve_within_root(kb_path, dir_path)
+
         if not resolved.is_dir():
             return []
         entries = sorted(
@@ -184,10 +176,40 @@ def build_tutorial_tools(
             content: Markdown content to write into the file.
             append: When True, append instead of overwriting.
         """
+        # Validation: Reject empty or placeholder content
+        stripped = content.strip()
+        
+        if not stripped:
+            raise ValueError(
+                "EMPTY CONTENT REJECTED. You must first read source files and KB, "
+                "then generate actual tutorial content with code examples."
+            )
+        
+        # Smolagents fallback message detection
+        fallback_patterns = (
+            "_no response_", 
+            "no response", 
+            "_no response was received",
+            "no response was received from the model",
+        )
+        if any(pattern in stripped.lower() for pattern in fallback_patterns):
+            raise ValueError(
+                "MODEL FALLBACK DETECTED. The previous generation failed. "
+                "Try again: use RAG and read files first, then generate content."
+            )
+        
+        # Minimum length for tutorials (more than workspace files)
+        if len(stripped) < 100 and not append:
+            raise ValueError(
+                f"TUTORIAL TOO SHORT ({len(stripped)} chars, need 100+). "
+                "Tutorials must be comprehensive with code examples and diagrams."
+            )
+        
         resolved = resolve_within_root(output_path, file_path)
         _write_text_file(resolved, content, append=append)
         _record_tool_usage("write_tutorial_file", None)
         return str(resolved)
+
 
     tools: List[Tool] = list(base_tools) + [
         list_knowledge_base,
@@ -227,13 +249,10 @@ def build_tutorial_tools(
                 except Exception as e:
                     logger.error(f"Codebase RAG query failed: {e}")
 
-            # 2. Query KB Store (or Combined Store)
+            # Query KB Store (or Combined Store)
             if rag_store_kb:
                 try:
-                    # If we have a separate codebase store, only ask this one for KB
-                    # If we DON'T have a separate codebase store, this one has BOTH.
-                    inc_cb = (rag_store_codebase is None)
-                    
+                    inc_cb = rag_store_codebase is None
                     results.extend(rag_store_kb.query(
                         normalized_query,
                         top_k=limit,
@@ -242,9 +261,6 @@ def build_tutorial_tools(
                     ))
                 except Exception as e:
                     logger.error(f"KB RAG query failed: {e}")
-
-            # Deduplicate and sort results?
-            # For now, just truncating the list
             final_results = results[:limit]
             
             if final_results:

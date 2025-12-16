@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, cast
@@ -116,16 +117,14 @@ class _CodeBlock:
 # NOTE: Default outline removed to force dynamic, project-specific generation.
 
 _MIN_UNIQUE_SECOND_LEVEL_HEADINGS = 2
-MIN_DYNAMIC_TUTORIALS = 3
-MAX_DYNAMIC_TUTORIALS = 5  # Keep series concise to reduce runtime
+MIN_DYNAMIC_TUTORIALS = 5
+MAX_DYNAMIC_TUTORIALS = 10  # Increased to ensure comprehensive coverage
 CODEBASE_TREE_MAX_DEPTH = 2
 CODEBASE_TREE_MAX_ENTRIES = 180
 ANCHOR_FILES_PER_CATEGORY = 3
 
 
 def _slugify(value: str) -> str:
-    import unicodedata
-
     value = unicodedata.normalize("NFKD", value)
     ascii_only = value.encode("ascii", "ignore").decode("ascii").lower()
     slug = re.sub(r"[^a-z0-9]+", "_", ascii_only).strip("_")
@@ -169,6 +168,70 @@ def _collect_code_blocks(content: str) -> List[_CodeBlock]:
         line = _line_number_from_index(content, match.start())
         blocks.append(_CodeBlock(language=lang, body=body, line=line))
     return blocks
+
+
+def validate_tutorial_structure(
+    content: str,
+    expected_title: str | None = None,
+    min_length: int = 300,
+) -> tuple[bool, list[str]]:
+    """
+    Validate tutorial structural integrity.
+    
+    Returns (is_valid, list_of_errors).
+    This catches broken tutorials from truncated output, bad concatenation, etc.
+    
+    Uses core validation from utils/validation.py with tutorial-specific settings.
+    """
+    from utils.validation import (
+        validate_content,
+        validate_heading_sequence,
+        validate_code_block_completeness,
+    )
+    
+    # Use core validation with strict settings for tutorials
+    result = validate_content(
+        content,
+        min_chars=min_length,
+        expected_title=expected_title,
+        check_mermaid=True,
+        strict_heading_start=True,  # Tutorials must start with #
+    )
+    
+    # Combine issues and warnings for backward compatibility
+    errors = list(result.issues)
+    
+    # Add tutorial-specific checks not in core
+    heading_errors = validate_heading_sequence(content)
+    errors.extend(heading_errors)
+    
+    truncation_errors = validate_code_block_completeness(content)
+    errors.extend(truncation_errors)
+    
+    # Check for at least one H1 or H2 heading
+    if not re.search(r"^#{1,2}\s+.+", content, re.MULTILINE):
+        errors.append("Missing main heading (H1 or H2)")
+    
+    return (len(errors) == 0, errors)
+
+
+# Legacy helper functions - now imported from utils/validation
+def _validate_heading_sequence(content: str) -> list[str]:
+    """Legacy wrapper - use utils.validation.validate_heading_sequence."""
+    from utils.validation import validate_heading_sequence
+    return validate_heading_sequence(content)
+
+
+def _validate_code_block_completeness(content: str) -> list[str]:
+    """Legacy wrapper - use utils.validation.validate_code_block_completeness."""
+    from utils.validation import validate_code_block_completeness
+    return validate_code_block_completeness(content)
+
+
+def _validate_mermaid_blocks(content: str) -> list[str]:
+    """Legacy wrapper - use utils.validation.validate_mermaid_blocks."""
+    from utils.validation import validate_mermaid_blocks
+    return validate_mermaid_blocks(content)
 
 
 def _validate_tutorial_content(
@@ -224,11 +287,13 @@ def _validate_tutorial_content(
                         "warning", "Mermaid diagram has no connecting arrows."
                     )
                 )
-            if re.search(r"\[.*?\(.*?\).*?\]", block.body):
+            # Check for unquoted nested parentheses in node labels ([], {}, ())
+            # These often break Mermaid rendering if not quoted: id[Label (text)] vs id["Label (text)"]
+            if re.search(r"(\[|\{|\()\s*(?![\"']).*?\(.*?\).*?(\]|\}|\))", block.body):
                 issues.append(
                     TutorialValidationIssue(
                         "warning",
-                        "Mermaid node labels contain nested parentheses which may break rendering.",
+                        "Mermaid node labels with parentheses should be quoted (e.g., node[\"Label (Info)\"]).",
                     )
                 )
 
@@ -513,7 +578,7 @@ class TutorialGenerator:
         self._outline_override = tuple(outline) if outline else None
         self.outline: Sequence[TutorialOutlineItem] | None = None
         self.enable_rag = self._resolve_bool_option(
-            enable_rag, TUTORIAL_ENABLE_RAG_ENV, default=False
+            enable_rag, TUTORIAL_ENABLE_RAG_ENV, default=True
         )
         self.rag_max_snippets = self._resolve_int_option(
             rag_max_snippets,
@@ -618,44 +683,13 @@ class TutorialGenerator:
         )
 
     def generate(self) -> List[Path]:
-        if not self.knowledge_base_root.exists():
-            raise FileNotFoundError(
-                f"Knowledge base directory not found at {self.knowledge_base_root}."
-            )
+        """Generate tutorials using supervisor mode (default).
+        
+        This method now always delegates to generate_with_supervisor()
+        for consistent, autonomous tutorial generation.
+        """
+        return self.generate_with_supervisor()
 
-        self.metrics = TutorialRunMetrics()
-
-        tutorial_state: Dict[str, Any] = {}
-        prepared = self._prepare_tutorial_state(tutorial_state)
-        outline = prepared.get("outline")
-        tools = prepared.get("tools")
-        kb_summary = prepared.get("kb_summary", "")
-        style_guidance = prepared.get("style_guidance", "")
-        outline_brief = prepared.get("outline_brief", "")
-        codebase_context = prepared.get("codebase_context", "")
-
-        if not outline or not tools:
-            raise RuntimeError("Tutorial preparation failed.")
-
-        tutorial_paths = self._render_tutorials(
-            outline=outline,
-            tools=tools,
-            kb_summary=kb_summary,
-            style_guidance=style_guidance,
-            outline_brief=outline_brief,
-            codebase_context=codebase_context,
-        )
-
-        if not tutorial_paths:
-            raise RuntimeError("No tutorials were generated.")
-
-        if self.dry_run:
-            logger.debug("Dry run enabled; skipping finalization.")
-            return tutorial_paths
-
-        finalized_paths = self._finalize_outputs(tutorial_paths)
-        logger.info("Tutorial generation completed with {} files", len(finalized_paths))
-        return finalized_paths
 
     def _prepare_tutorial_state(self, base_state: Dict[str, Any]) -> Dict[str, Any]:
         logger.debug("Preparing tutorial output directory at {}", self.output_root)
@@ -701,6 +735,7 @@ class TutorialGenerator:
         codebase_context: str,
     ) -> List[Path]:
         tutorial_paths: List[Path] = []
+        max_validation_retries = 2  # Maximum retries for validation failures
 
         for item in outline:
 
@@ -721,24 +756,83 @@ class TutorialGenerator:
                 codebase_context=codebase_context,
             )
 
-            logger.debug("Generating tutorial '{}'...", item.title)
-            self._record_instruction_tokens(prompts.TUTORIAL_AGENT_PROMPT, task)
-            self._run_agent_with_retries(
-                _agent_factory, task, prompts.TUTORIAL_AGENT_PROMPT
-            )
-
             produced_path = self.output_root / item.filename
-
-            if self.dry_run:
-                tutorial_paths.append(produced_path)
-                continue
-
-            if produced_path.exists():
-                tutorial_paths.append(produced_path)
-            else:
-                logger.error(
-                    "Agent claimed success but file {} was not created.", produced_path
+            validation_attempt = 0
+            
+            while validation_attempt <= max_validation_retries:
+                logger.debug(
+                    "Generating tutorial '{}' (validation attempt {}/{})...",
+                    item.title,
+                    validation_attempt + 1,
+                    max_validation_retries + 1,
                 )
+                
+                # Build task with validation feedback if this is a retry
+                current_task = task
+                if validation_attempt > 0 and produced_path.exists():
+                    # Read the previously generated content
+                    try:
+                        prev_content = produced_path.read_text(encoding="utf-8")
+                        is_valid, errors = validate_tutorial_structure(prev_content, item.title)
+                        if errors:
+                            error_feedback = "\n".join(f"- {e}" for e in errors)
+                            current_task = (
+                                f"IMPORTANT: Your previous tutorial output had validation errors. "
+                                f"You MUST fix these issues:\n{error_feedback}\n\n"
+                                f"Re-generate the tutorial with corrections. Original task:\n\n{task}"
+                            )
+                            logger.warning(
+                                "Tutorial '{}' validation failed, retrying with feedback: {}",
+                                item.title,
+                                errors,
+                            )
+                    except Exception as e:
+                        logger.warning(f"Could not read previous content for validation: {e}")
+                
+                self._record_instruction_tokens(prompts.TUTORIAL_AGENT_PROMPT, current_task)
+                self._run_agent_with_retries(
+                    _agent_factory, current_task, prompts.TUTORIAL_AGENT_PROMPT
+                )
+
+                if self.dry_run:
+                    tutorial_paths.append(produced_path)
+                    break
+
+                if not produced_path.exists():
+                    logger.error(
+                        "Agent claimed success but file {} was not created.", produced_path
+                    )
+                    validation_attempt += 1
+                    continue
+
+                # Validate the generated tutorial
+                try:
+                    content = produced_path.read_text(encoding="utf-8")
+                    is_valid, errors = validate_tutorial_structure(content, item.title)
+                    
+                    if is_valid:
+                        logger.info("Tutorial '{}' passed validation ✓", item.title)
+                        tutorial_paths.append(produced_path)
+                        break
+                    else:
+                        logger.warning(
+                            "Tutorial '{}' validation failed with {} errors",
+                            item.title,
+                            len(errors),
+                        )
+                        validation_attempt += 1
+                        if validation_attempt > max_validation_retries:
+                            # Accept the tutorial with warnings after max retries
+                            logger.warning(
+                                "Max validation retries reached for '{}', accepting with issues: {}",
+                                item.title,
+                                errors,
+                            )
+                            tutorial_paths.append(produced_path)
+                except Exception as e:
+                    logger.error(f"Validation error for '{item.title}': {e}")
+                    tutorial_paths.append(produced_path)
+                    break
 
         return sorted(tutorial_paths)
 
@@ -775,11 +869,20 @@ class TutorialGenerator:
                 if self._is_context_overflow(message):
                     self.metrics.context_overflow_events += 1
 
-                if "Message contains no content" in message:
+                # Broaden the empty response check
+                is_parsing_error = (
+                    "message contains no content" in message.lower()
+                    or "parsing tool call" in message.lower()
+                    or "malformed" in message.lower()
+                )
+
+                if is_parsing_error:
+                    logger.warning(f"Empty/Malformed response from model (attempt {attempt}): {error}")
                     if STRICT_TOOL_CALL_REMINDER not in instructions:
                         instructions += STRICT_TOOL_CALL_REMINDER
                         agent = agent_factory(instructions)
-                        continue
+                    time.sleep(2.0)
+                    continue
 
                 if self._is_rate_limit_error(message):
                     logger.warning(
@@ -1073,22 +1176,28 @@ class TutorialGenerator:
         outline_brief: str,
         codebase_context: str,
     ) -> str:
-        # Pre-read executive summary if available
         exec_summary = self._get_executive_summary()
 
-        return (
-            f"Write a tutorial '{item.filename}' about '{item.title}'.\n"
-            f"Goal: {item.description}\n\n"
-            "## Knowledge Base Context (USE THIS FIRST)\n"
-            f"{exec_summary}\n\n"
-            f"Style: {style_guidance}\n"
-            f"Full Outline Context: {outline_brief}\n\n"
-            "Repository Snapshot (use this before calling navigation tools):\n"
-            f"{codebase_context}\n\n"
-            "The Knowledge Base above contains pre-analyzed documentation. Use it as your PRIMARY reference for architecture understanding, then verify specific code snippets using read_file. "
-            "Cite KB sections in your tutorial when relevant.\n"
-            f"{self._optional_tool_guidance()}"
-        )
+        return f"""Write tutorial: `{item.filename}`
+Title: {item.title}
+Goal: {item.description}
+
+KB SUMMARY (primary reference):
+{exec_summary[:1500]}
+
+CODEBASE SNAPSHOT:
+{codebase_context[:500]}
+
+STYLE: {style_guidance}
+OUTLINE: {outline_brief}
+
+INSTRUCTIONS:
+1. Use KB as primary reference for architecture
+2. Verify specific code with read_file tool
+3. Include Mermaid diagram and bash examples
+4. Cite file paths with #L line ranges
+{self._optional_tool_guidance()}
+"""
 
     def _get_executive_summary(self) -> str:
         """Load the executive summary or overview from KB."""
@@ -1389,9 +1498,14 @@ class TutorialGenerator:
 
     def _sanitize_tutorial_outputs(self, paths: Iterable[Path]) -> None:
         """Post-process generated tutorials to fix common LLM formatting errors."""
+        from utils.validation import sanitize_content
+        
         for path in paths:
             try:
                 c = path.read_text("utf-8")
+                
+                # 0. Core sanitization (generated doc banner, nested backticks, Mermaid |label[)
+                c = sanitize_content(c)
                 
                 # 1. Clean LLM artifacts (wrapping quotes/backticks)
                 c = self._clean_llm_artifacts(c)
@@ -1406,6 +1520,7 @@ class TutorialGenerator:
                 logger.info(f"Sanitized {path.name}")
             except Exception as e:
                 logger.warning(f"Failed to sanitize {path}: {e}")
+
 
     def _clean_llm_artifacts(self, content: str) -> str:
         s = content.strip()
@@ -1460,7 +1575,9 @@ class TutorialGenerator:
             knowledge_base_root=self.knowledge_base_root,
         )
         
-        model = create_model()
+        # Supervisor uses Pro model for better planning (hybrid strategy)
+        model = create_model(role="supervisor")
+
         
         return ToolCallingAgent(
             name="tutorial_supervisor",
@@ -1546,19 +1663,29 @@ class TutorialGenerator:
 
         supervisor = self._create_supervisor_agent()
     
-        # Use centralized rate limit retry wrapper
-        from pipelines.checkpoint import run_with_rate_limit_retry
-        
-        try:
-            run_with_rate_limit_retry(
-                supervisor.run, 
-                "Plan and generate the tutorial series.", 
-                max_steps=50
-            )
-        except Exception as e:
-            logger.error(f"Tutorial Supervisor failed: {e}")
-            if not self.dry_run:
-                raise
+        # Retry loop for rate limits
+        max_retries = 10
+        retry_delay = 5.0  # seconds
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                supervisor.run("Plan and generate the tutorial series.", max_steps=50)
+                break
+            except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = "rate" in error_str or "429" in error_str or "exhausted" in error_str
+                
+                if is_rate_limit and attempt < max_retries:
+                    logger.warning(
+                        "Rate limit hit (attempt {}/{}). Waiting {}s before retry...",
+                        attempt, max_retries, retry_delay
+                    )
+                    time.sleep(retry_delay)
+                    # retry_delay = min(retry_delay * 1.5, 60.0)  # Fixed delay as requested
+                else:
+                    logger.error(f"Tutorial Supervisor failed: {e}")
+                    if not self.dry_run:
+                         raise
         
         # Collect output
         output_files = list(self.output_root.glob("*.md"))

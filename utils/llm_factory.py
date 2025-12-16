@@ -1,49 +1,101 @@
 """Factory for initializing LiteLLM models with standardized configuration."""
 import os
+from typing import Literal
 from loguru import logger
 from smolagents import LiteLLMModel
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Default model (fallback)
 LITELLM_MODEL_ID = os.getenv("LITELLM_MODEL_ID")
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
 
-def create_model(model_id: str | None = None, api_key: str | None = None) -> LiteLLMModel:
+# Role-specific models for hybrid strategy
+# Pro for quality-critical tasks, Flash for high-volume tasks
+SUPERVISOR_MODEL_ID = os.getenv("SUPERVISOR_MODEL_ID", "vertex_ai/gemini-2.5-pro")
+SUB_AGENT_MODEL_ID = os.getenv("SUB_AGENT_MODEL_ID", "vertex_ai/gemini-2.5-flash")
+TUTORIAL_MODEL_ID = os.getenv("TUTORIAL_MODEL_ID", "vertex_ai/gemini-2.5-pro")
+JUDGE_MODEL_ID = os.getenv("JUDGE_MODEL_ID", "vertex_ai/gemini-2.5-pro")
+
+# Role type for type hints
+ModelRole = Literal["supervisor", "sub_agent", "tutorial", "judge", "default"]
+
+
+def get_model_for_role(role: ModelRole) -> str:
+    """Get the appropriate model ID for a given role."""
+    role_map = {
+        "supervisor": SUPERVISOR_MODEL_ID,
+        "sub_agent": SUB_AGENT_MODEL_ID,
+        "tutorial": TUTORIAL_MODEL_ID,
+        "judge": JUDGE_MODEL_ID,
+        "default": LITELLM_MODEL_ID or SUB_AGENT_MODEL_ID,
+    }
+    return role_map.get(role, LITELLM_MODEL_ID or SUB_AGENT_MODEL_ID)
+
+
+def create_model(
+    model_id: str | None = None, 
+    api_key: str | None = None,
+    role: ModelRole | None = None,
+) -> LiteLLMModel:
     """Create and configure a LiteLLMModel instance.
+    
+    Args:
+        model_id: Explicit model ID (overrides role-based selection).
+        api_key: API key for the model.
+        role: Role for automatic model selection (supervisor, sub_agent, tutorial, judge).
     
     Automatically configures LITELLM_NUM_RETRIES to 10 for robustness.
     """
-    mid = model_id or LITELLM_MODEL_ID
+    # Priority: explicit model_id > role-based > default env var
+    if model_id:
+        mid = model_id
+    elif role:
+        mid = get_model_for_role(role)
+    else:
+        mid = LITELLM_MODEL_ID
+    
     key = api_key or LITELLM_API_KEY
     
     if not mid or not key:
         raise ValueError("LITELLM_MODEL_ID and LITELLM_API_KEY must be configured in environment or passed explicitly.")
 
     # Configure automatic retries via environment variable
-    # This is a global side-effect for litellm, but consistent with our robustness goals
-    # Infinite-ish retries to handle long blocks
-    os.environ["LITELLM_NUM_RETRIES"] = "30" 
-    # Add longer backoff to handle Vertex AI quotas
-    os.environ["LITELLM_RETRY_MIN_WAIT"] = "1"
-    os.environ["LITELLM_RETRY_MAX_WAIT"] = "60"
+    os.environ["LITELLM_NUM_RETRIES"] = "10"
     
-    logger.debug(f"Initializing model {mid}")
+    logger.info(f"Creating model: {mid} (role: {role or 'default'})")
     
-    # Special handling for Vertex AI Model Garden (Claude, Llama, etc.)
-    # identifying via 'vertex_ai/' prefix
-    if mid.startswith("vertex_ai/"):
-        vertex_project = os.getenv("VERTEXAI_PROJECT")
-        vertex_location = os.getenv("VERTEXAI_LOCATION")
-        
-        # If the user has these set, pass them explicitly. 
-        # LiteLLM also looks for them in env, but explicit passing ensures smolagents usage.
-        if vertex_project and vertex_location:
-             return LiteLLMModel(
-                 model_id=mid, 
-                 api_key=key,
-                 vertex_ai_project=vertex_project,
-                 vertex_ai_location=vertex_location
-             )
+    # Configure arguments for LiteLLMModel
+    kwargs = {}
+    
+    # Enable reasoning for 2.5-pro models
+    if "gemini-2.5-pro" in mid:
+        # kwargs["reasoning_effort"] = "medium"  # DISABLED: Causes empty response errors
+        # Increase token limit for large file generation
+        kwargs["max_tokens"] = 16384
+        logger.debug("Disabled reasoning_effort=medium for Pro model to prevent timeouts/empty responses")
 
-    return LiteLLMModel(model_id=mid, api_key=key)
+    # Enable thinking for 2.5-flash (Sub-agents)
+    if "gemini-2.5-flash" in mid:
+        # LiteLLM maps reasoning_effort="low" to thinking_budget=1024
+        kwargs["reasoning_effort"] = "low"
+        logger.debug("Enabled reasoning_effort='low' (1024 tokens) for Flash model")
+
+    # Support for explicit Vertex credentials (ADC workaround)
+    vertex_creds_path = os.getenv("VERTEX_CREDENTIALS")
+    if vertex_creds_path:
+        try:
+            import json
+            with open(vertex_creds_path, 'r') as f:
+                creds_json = json.load(f)
+            kwargs["vertex_credentials"] = json.dumps(creds_json)
+            logger.debug("Loaded Vertex credentials from {}", vertex_creds_path)
+        except Exception as e:
+            logger.warning("Failed to load VERTEX_CREDENTIALS: {}", e)
+
+    return LiteLLMModel(
+        model_id=mid, 
+        api_key=key,
+        **kwargs
+    )

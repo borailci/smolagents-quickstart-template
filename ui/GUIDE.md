@@ -1,81 +1,74 @@
-# Codebase Tutorial Generator UI Guide
+# Tutorial Generator UI - Setup Guide
 
-This guide explains how to set up, run, and customize the Tutorial Generator UI.
+## Prerequisites
 
-## 1. Prerequisites
+- Node.js 18+ 
+- npm 9+
 
-- Node.js 18+  
-- npm, pnpm, or yarn
-
-## 2. Installation
-
-Navigate to the UI directory and install dependencies:
+## Quick Start
 
 ```bash
 cd ui
 npm install
+npm run dev
 ```
 
-## 3. Configuration
+Open [http://localhost:3000](http://localhost:3000)
+
+## Configuration
 
 ### Environment Variables
 
-Copy the example file:
+Copy `.env.local.example` to `.env.local`:
 
 ```bash
 cp .env.local.example .env.local
 ```
 
-Edit `.env.local`:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXT_PUBLIC_LOADING_DURATION_MS` | 3500 | Loading animation duration |
+| `NEXT_PUBLIC_DEVELOPER_1_NAME` | - | Footer credit |
+| `NEXT_PUBLIC_DEVELOPER_1_GITHUB` | - | GitHub profile URL |
+| `NEXT_PUBLIC_REPO_URL` | - | Repository URL |
 
-```env
-NEXT_PUBLIC_LOADING_DURATION_MS=3500
-NEXT_PUBLIC_MARKDOWN_BASE_PATH="../"
-NEXT_PUBLIC_DEVELOPER_1_NAME="Amir Kiarafi"
-```
+### Content Configuration
 
-### Adding Documented Codebases
-
-Edit `ui/content.yaml` to register new tutorials:
+Edit `content.yaml` to add codebases:
 
 ```yaml
 codebases:
-  - id: "my-new-project"
-    name: "My New Project"
-    description: "Description here"
-    icon: "code"
-    color: "#ff0000"
+  - id: "my-project"
+    name: "My Project"
+    description: "Project description"
+    icon: "code"  # robot, code, folder, database, server, globe
+    color: "#8B5CF6"
     files:
-      - path: "tutorials/my-project/intro.md"
-        title: "Introduction"
+      - path: "docs/getting-started.md"
+        title: "Getting Started"
 ```
 
-The `path` should be relative to the project root (where the Python scripts live), not the `ui` folder, assuming `NEXT_PUBLIC_MARKDOWN_BASE_PATH="../"`.
-
-## 4. Running Locally
-
-Start the development server:
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
-
-## 5. Building for Production
+## Production Build
 
 ```bash
 npm run build
 npm start
 ```
 
-## 6. Customization
+## Features
 
-- **Theme**: Edit `ui/src/app/globals.css` variable `--primary`, `--accent`.
-- **Icons**: Update `IconMap` in `ui/src/components/CodebaseCard.tsx`.
-- **Loading Animation**: Edit `ui/src/components/LoadingProgress.tsx` or change duration in env vars.
+- **Mermaid.js diagrams** - flowcharts render automatically
+- **Syntax highlighting** - code blocks with Prism
+- **Edit mode** - `Cmd+E` to toggle
+- **Dark theme** - default with toggle
+- **Responsive** - mobile-friendly sidebar
 
-## 7. Troubleshooting
+## Troubleshooting
 
-- **Mermaid diagrams not rendering**: Ensure the markdown code block language is exactly `mermaid`.
-- **File not found**: Check `content.yaml` paths and ensure `NEXT_PUBLIC_MARKDOWN_BASE_PATH` is correct.
+**Mermaid diagrams not rendering?**
+- Diagrams render client-side only
+- Check browser console for errors
+
+**Build errors?**
+- Run `npm run lint` to check for issues
+- Ensure Node.js 18+

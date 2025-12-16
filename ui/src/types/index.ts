@@ -1,9 +1,11 @@
+// TypeScript interfaces for the Tutorial Generator UI
+
 export interface TutorialFile {
     path: string;
     title: string;
 }
 
-export interface CodebaseConfig {
+export interface Codebase {
     id: string;
     name: string;
     description: string;
@@ -13,5 +15,5 @@ export interface CodebaseConfig {
 }
 
 export interface ContentConfig {
-    codebases: CodebaseConfig[];
+    codebases: Codebase[];
 }

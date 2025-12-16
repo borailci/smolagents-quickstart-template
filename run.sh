@@ -10,9 +10,15 @@ fi
 
 if [ $# -eq 0 ]; then
   echo "Usage: $0 <command> [options]"
-  echo "Commands: knowledge-base | tutorials | qa | spawn-subagents"
+  echo ""
+  echo "Commands:"
+  echo "  knowledge-base, kb    Build knowledge base from codebase"
+  echo "  tutorials, tutorial   Generate tutorials from knowledge base"
+  echo "  deep-agent            Run full pipeline (KB + tutorials)"
+  echo "  evaluate, eval        Evaluate tutorial quality with LLM judges"
+  echo "  gen-rag               Generate RAG index"
   exit 1
 fi
 
 # Run pipeline CLI with forwarded arguments
-uv run pipelines/cli.py "$@"
+uv run python -m pipelines.cli "$@"

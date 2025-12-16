@@ -1,52 +1,47 @@
-"""Factory for obtaining RAG stores with optional caching."""
+"""Factory for RAG stores with caching support."""
+
 import os
 from pathlib import Path
-from loguru import logger
-from typing import Optional, Dict, List
 from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+from loguru import logger
 
 from toolkits.rag_store import SimpleChromaRAGStore
 from utils.path_utils import ensure_directory
 
+
 @dataclass
 class RAGStores:
-    """Holds references to the active RAG stores."""
+    """Container for active RAG stores."""
     codebase: Optional[SimpleChromaRAGStore] = None
     knowledge_base: Optional[SimpleChromaRAGStore] = None
-    
+
     def query(self, query: str, limit: int = 5) -> List[Dict[str, str]]:
-        """Unified query method that checks both stores intelligently."""
+        """Query both stores and merge results."""
         results = []
-        
-        # 1. Query Codebase Store
+
         if self.codebase:
             try:
                 results.extend(self.codebase.query(
-                     query,
-                     top_k=limit,
-                     include_codebase=True,
-                     include_knowledge_base=False
+                    query, top_k=limit,
+                    include_codebase=True, include_knowledge_base=False
                 ))
             except Exception as e:
                 logger.error(f"Codebase RAG query failed: {e}")
 
-        # 2. Query KB Store
         if self.knowledge_base:
             try:
-                # If we have a separate codebase store, only ask this one for KB
-                # If we DON'T have a separate codebase store, this one might have BOTH.
-                inc_cb = (self.codebase is None)
-                
+                inc_cb = self.codebase is None  # Include codebase if no separate store
                 results.extend(self.knowledge_base.query(
-                    query,
-                    top_k=limit,
-                    include_codebase=inc_cb,
-                    include_knowledge_base=True
+                    query, top_k=limit,
+                    include_codebase=inc_cb, include_knowledge_base=True
                 ))
             except Exception as e:
                 logger.error(f"KB RAG query failed: {e}")
-        
+
         return results[:limit]
+
 
 def get_rag_stores(
     codebase_root: Path,
@@ -56,15 +51,15 @@ def get_rag_stores(
     force_rebuild: bool = False,
     rag_codebase_cache_path: Path | str | None = None,
 ) -> RAGStores:
-    """Initialize RAG stores based on configuration and cache availability.
-    
+    """Initialize RAG stores.
+
     Args:
-        codebase_root: Path to the codebase being analyzed.
-        knowledge_base_root: Path to the knowledge base markdown files.
-        output_path: Path where local RAG stores should be persisted/created.
-        enable_rag: Whether to enable RAG at all.
-        force_rebuild: Whether to force rebuilding local indexes.
-        rag_codebase_cache_path: Explicit path to a pre-computed RAG cache.
+        codebase_root: Path to codebase.
+        knowledge_base_root: Path to KB markdown files.
+        output_path: RAG persistence directory.
+        enable_rag: Enable RAG features.
+        force_rebuild: Force index rebuild.
+        rag_codebase_cache_path: Pre-computed cache path (optional).
     """
     stores = RAGStores()
     

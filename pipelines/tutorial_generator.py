@@ -1601,7 +1601,7 @@ INSTRUCTIONS:
             baseline_mode=True,
         )
         
-        model = create_model()
+        model = create_model(role="supervisor")
         
         return ToolCallingAgent(
             name="baseline_supervisor",

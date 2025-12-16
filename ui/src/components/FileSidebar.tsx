@@ -21,7 +21,7 @@ export function FileSidebar({ files, activeFile, onFileSelect, accentColor }: Fi
         <motion.aside
             initial={{ x: -20, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            className={`relative flex flex-col border-r border-white/10 bg-slate-900/50 transition-all duration-300 ${collapsed ? 'w-12' : 'w-64'
+            className={`relative h-full flex flex-col border-r border-white/10 bg-slate-900/50 transition-all duration-300 ${collapsed ? 'w-12' : 'w-64'
                 }`}
         >
             {/* Toggle button */}
@@ -53,19 +53,19 @@ export function FileSidebar({ files, activeFile, onFileSelect, accentColor }: Fi
                                     animate={{ opacity: 1, x: 0 }}
                                     transition={{ delay: index * 0.05 }}
                                     onClick={() => onFileSelect(file.path)}
-                                    className={`group mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-all ${activeFile === file.path
-                                            ? 'bg-white/10 text-white'
-                                            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                                    className={`group mb-1 flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left text-sm transition-all ${activeFile === file.path
+                                        ? 'bg-white/10 text-white'
+                                        : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                                         }`}
                                     style={{
                                         borderLeft: activeFile === file.path ? `3px solid ${accentColor}` : '3px solid transparent',
                                     }}
                                 >
                                     <FileText
-                                        className="h-4 w-4 flex-shrink-0"
+                                        className="h-4 w-4 flex-shrink-0 mt-0.5"
                                         style={{ color: activeFile === file.path ? accentColor : undefined }}
                                     />
-                                    <span className="truncate">{file.title}</span>
+                                    <span className="break-words">{file.title}</span>
                                 </motion.button>
                             ))}
                         </div>

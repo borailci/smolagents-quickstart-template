@@ -252,6 +252,39 @@ class ReadCodebaseFileTool(Tool):
             return f"ERROR: '{file_path}' is not a text file."
 
 
+class WritePlanFileTool(Tool):
+    """Allow supervisor to write plan files to output directory."""
+    name = "write_plan_file"
+    description = "Write a plan file (e.g., compilation_plan.md) to the output directory. Use this to document your plan before spawning agents."
+    inputs = {
+        "filename": {
+            "type": "string",
+            "description": "Filename to write (e.g., 'compilation_plan.md')",
+        },
+        "content": {
+            "type": "string",
+            "description": "Content to write to the file",
+        }
+    }
+    output_type = "string"
+
+    def __init__(self, ctx: SupervisorContext, **kwargs):
+        super().__init__(**kwargs)
+        self.ctx = ctx
+
+    def forward(self, filename: str, content: str) -> str:
+        # Validate content is not empty
+        if not content or len(content.strip()) < 50:
+            return "ERROR: Plan content is too short or empty. Include at least: a heading and a to-do list with file paths. Example:\n# Compilation Plan\n\n## Core Library\n- [ ] packages/lib/src/main.ts"
+        
+        try:
+            target_path = self.ctx.output_root / filename
+            target_path.write_text(content, encoding="utf-8")
+            return f"Successfully wrote {len(content)} characters to {filename}"
+        except Exception as e:
+            return f"ERROR writing file: {e}"
+
+
 class SpawnAnalyzerAgentTool(Tool):
     name = "spawn_analyzer_agent"
     description = "Spawn analyzer sub-agent for a directory. Returns JSON {workspace, status}."
@@ -276,7 +309,7 @@ class SpawnAnalyzerAgentTool(Tool):
         super().__init__(**kwargs)
         self.ctx = ctx
 
-    def _preload_file_content(self, file_path: str, max_chars: int = 10000) -> str:
+    def _preload_file_content(self, file_path: str, max_chars: int = 100000) -> str:
         """Pre-load file content to reduce sub-agent tool calls."""
         try:
             full_path = self.ctx.codebase_root / file_path
@@ -775,7 +808,7 @@ class SpawnTutorialAgentTool(Tool):
         super().__init__(**kwargs)
         self.ctx = ctx
 
-    def _preload_file_content(self, file_path: str, max_chars: int = 15000) -> str:
+    def _preload_file_content(self, file_path: str, max_chars: int = 100000) -> str:
         """Pre-load file content from KB or Codebase."""
         try:
             # 1. Try Knowledge Base first (most likely for tutorials)
@@ -1076,6 +1109,7 @@ def build_supervisor_tools(
         GetCodebaseOverviewTool(ctx),
         ListCodebaseDirectoryTool(ctx),
         ReadCodebaseFileTool(ctx),
+        WritePlanFileTool(ctx),
         SpawnAnalyzerAgentTool(ctx),
         RetryAgentTool(ctx),
         FinalizeKnowledgeBaseTool(ctx),
@@ -1086,7 +1120,8 @@ def build_tutorial_supervisor_tools(
     codebase_root: str | Path,
     sub_agents_root: str | Path,
     output_root: str | Path,
-    knowledge_base_root: str | Path,
+    knowledge_base_root: str | Path | None = None,
+    baseline_mode: bool = False,
 ) -> List[Tool]:
     """Create tools for the Tutorial Supervisor."""
     ctx = SupervisorContext(
@@ -1095,15 +1130,24 @@ def build_tutorial_supervisor_tools(
         output_root=ensure_directory(output_root),
         knowledge_base_root=Path(knowledge_base_root).expanduser().resolve() if knowledge_base_root else None,
     )
-    kb_path = Path(knowledge_base_root).resolve()
     
+    # Handle KB path safely
+    kb_path = None
+    if knowledge_base_root:
+        kb_path = Path(knowledge_base_root).resolve()
+        if not kb_path.exists() and not baseline_mode:
+             # Only create if strict mode? or just warn?
+             pass
+
     class ListKBTool(Tool):
         name = "list_knowledge_base"
         description = "List available knowledge base files."
         inputs = {}
         output_type = "string"
         def forward(self) -> str:
-            return "\\n".join(f.name for f in kb_path.glob("*.md"))
+            if baseline_mode or not kb_path or not kb_path.exists():
+                return "[Knowledge Base Not Available in Baseline Mode - Use Codebase Tools]"
+            return "\n".join(f.name for f in kb_path.glob("*.md"))
 
     class ReadKBTool(Tool):
         name = "read_knowledge_base_file"
@@ -1116,6 +1160,8 @@ def build_tutorial_supervisor_tools(
         }
         output_type = "string"
         def forward(self, filename: str) -> str:
+            if baseline_mode or not kb_path or not kb_path.exists():
+                return "[Knowledge Base Not Available in Baseline Mode]"
             p = kb_path / filename
             if p.exists(): return p.read_text(encoding="utf-8")[:10000] # truncate
             return "File not found."

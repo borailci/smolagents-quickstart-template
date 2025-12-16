@@ -5,7 +5,9 @@
 
 # Set environment variables from .env if present
 if [ -f .env ]; then
-  export $(grep -v '^#' .env | xargs)
+  set -a
+  source .env
+  set +a
 fi
 
 if [ $# -eq 0 ]; then

@@ -1,113 +1,63 @@
-# Toon Library Knowledge Base
+# Toon Package Knowledge Base
 
 ## 1. Overview
 
-The `toon` library provides robust functionalities for encoding JavaScript values into the TOON (Typed Object Notation) format and decoding TOON formatted strings back into JavaScript values. TOON is a human-readable, structured data format designed for configuration files and data interchange, offering features like array headers, tabular data representation, and key folding for compactness. The library supports both synchronous and asynchronous streaming operations for large datasets, making it versatile for various use cases from small configurations to significant data streams.
+The `toon` package provides a robust and flexible library for converting JavaScript values (objects, arrays, and primitives) to and from the TOON format. TOON (Typed Object Notation) is a human-readable, hierarchical data serialization format designed for configuration files, data exchange, and more. It supports various data structures, including objects, arrays (with special handling for tabular and inline formats), and primitive types, offering features like key folding and path expansion for compact representation and easy reconstruction. The library supports both direct string encoding/decoding and streaming operations, making it suitable for handling large datasets efficiently.
 
 ## 2. Key Components
 
-*   **`index.ts`**: This is the main entry point for the `toon` library, exposing the core `encode` and `decode` functions, along with their streaming counterparts (`encodeLines`, `decodeFromLines`, `decodeStreamSync`, `decodeStream`). It orchestrates calls to the encoding and decoding sub-modules and handles overall options resolution.
+### `index.ts`
+This file serves as the main entry point for the `toon` library, exposing the primary `encode` and `decode` functions, along with their streaming counterparts (`encodeLines`, `decodeFromLines`, `decodeStreamSync`, `decodeStream`). It orchestrates the overall encoding and decoding process by importing and utilizing functionalities from other modules like `decode/decoders`, `decode/event-builder`, `decode/expand`, `encode/encoders`, `encode/normalize`, and `encode/replacer`.
 
-*   **`decode/parser.ts`**: This module is responsible for the granular parsing of TOON syntax elements. It contains functions to parse array headers (`parseArrayHeaderLine`), delimited values (`parseDelimitedValues`), primitive tokens (`parsePrimitiveToken` for strings, numbers, booleans, null), and key tokens (`parseKeyToken`). It distinguishes between quoted and unquoted keys and values, handling escape sequences and bracket/colon positions within lines.
+### `types.ts`
+Defines the core type definitions used throughout the `toon` package. This includes:
+- `JsonPrimitive`, `JsonObject`, `JsonArray`, `JsonValue`: Standard JSON-like type definitions.
+- `EncodeOptions`, `DecodeOptions`, `DecodeStreamOptions`: Interfaces for configuring the encoding and decoding processes, specifying options like `indent`, `delimiter`, `keyFolding`, `flattenDepth`, `replacer`, `strict`, and `expandPaths`.
+- `EncodeReplacer`: A function type for transforming values during encoding, similar to JSON.stringify's replacer.
+- `JsonStreamEvent`: Union type representing the various events emitted during streaming decoding (e.g., `startObject`, `key`, `primitive`).
+- `ArrayHeaderInfo`, `ParsedLine`, `BlankLineInfo`: Internal types used during the parsing phase.
 
-*   **`decode/decoders.ts`**: This component orchestrates the decoding process by consuming parsed lines and emitting `JsonStreamEvent`s. It manages the state during stream processing (e.g., tracking indentation depth) and reconstructs the JavaScript object or array structure. It handles various array formats (inline primitive arrays, tabular arrays with headers, and list-style arrays) and validates structure based on strictness options. The `StreamingLineCursor` class facilitates efficient line processing.
+### `decode/parser.ts`
+This module is responsible for the low-level parsing of individual lines in the TOON format. It contains functions to:
+- `parseArrayHeaderLine`: Extracts information from array header lines (e.g., `users[3]:`, `data[{id,name}]:`).
+- `parseBracketSegment`: Parses the content within square brackets in array headers to determine array length and delimiter.
+- `parseDelimitedValues`: Splits a string by a given delimiter, correctly handling quoted strings and escape sequences.
+- `parsePrimitiveToken`: Converts a string token into its corresponding JavaScript primitive type (string, number, boolean, null).
+- `parseStringLiteral`: Parses quoted string tokens, including unescaping characters.
+- `parseUnquotedKey`, `parseQuotedKey`, `parseKeyToken`: Functions for extracting and parsing keys from TOON lines.
+It also includes helper functions like `isArrayHeaderContent` and `isKeyValueContent` to identify the type of content in a line.
 
-*   **`encode/encoders.ts`**: This module drives the encoding process, converting JavaScript values into TOON formatted lines. It recursively traverses the input value, determining the appropriate TOON representation for objects, arrays, and primitives. It differentiates between inline arrays, tabular arrays, and list arrays, and applies formatting rules like indentation and delimiters. It also integrates with the key folding mechanism.
-
-*   **`encode/folding.ts`**: This module implements the "key folding" feature, which allows compact representation of nested single-key objects into a single dot-separated key (e.g., `{ a: { b: { c: "value" } } }` becomes `a.b.c: value`). The `tryFoldKeyChain` function attempts this optimization under "safe" conditions, ensuring no key collisions or invalid identifiers are created.
+### `encode/encoders.ts`
+This module handles the logic for converting JavaScript values into TOON formatted lines. It defines generator functions that yield TOON lines, allowing for streaming:
+- `encodeJsonValue`: The top-level function that dispatches encoding to appropriate handlers based on the `JsonValue` type.
+- `encodeObjectLines`: Encodes JavaScript objects, iterating through their properties. It includes logic for `keyFolding`.
+- `encodeKeyValuePairLines`: Handles encoding of individual key-value pairs, incorporating `keyFolding` and `flattenDepth`.
+- `encodeArrayLines`: Manages the encoding of JavaScript arrays, determining the most suitable TOON representation (inline primitives, tabular objects, or expanded list items).
+- `encodeArrayOfArraysAsListItemsLines`, `encodeArrayOfObjectsAsTabularLines`, `encodeMixedArrayAsListItemsLines`: Specific functions for encoding different array structures.
+- `extractTabularHeader`, `isTabularArray`: Helpers for detecting and extracting headers for tabular array representations.
+- `indentedLine`, `indentedListItem`: Utility functions for applying correct indentation and list item markers.
 
 ## 3. Data Flow & Dependencies
 
 ### Encoding Data Flow
+1.  **Entry Point**: A JavaScript value is passed to `encode(input, options?)` or `encodeLines(input, options?)`.
+2.  **Normalization**: `normalizeValue` (from `encode/normalize`) ensures the input is a valid `JsonValue`.
+3.  **Replacer Application**: If an `EncodeReplacer` is provided in `options`, `applyReplacer` (from `encode/replacer`) is invoked to transform or filter values.
+4.  **Option Resolution**: `resolveOptions` normalizes and sets default values for `EncodeOptions`.
+5.  **Value Encoding**: `encodeJsonValue` (from `encode/encoders`) acts as a dispatcher:
+    *   For primitives, `encodePrimitive` handles direct conversion.
+    *   For objects, `encodeObjectLines` iterates through key-value pairs, potentially applying `keyFolding` (via `tryFoldKeyChain` from `encode/folding`).
+    *   For arrays, `encodeArrayLines` determines the optimal array representation (inline, tabular, or expanded list) and calls specialized encoding functions (`encodeInlineArrayLine`, `encodeArrayOfObjectsAsTabularLines`, etc.).
+6.  **Line Generation**: All encoding functions (`encodeObjectLines`, `encodeArrayLines`, etc.) are generators that yield individual TOON formatted strings, which are then correctly indented by `indentedLine` or `indentedListItem`.
+7.  **Output**: For `encode()`, the yielded lines are joined by newlines to form the final TOON string. For `encodeLines()`, an iterable of lines is returned.
 
-1.  **Input**: A JavaScript `JsonValue` (object, array, primitive).
-2.  **`index.ts` (`encode` or `encodeLines`)**: Resolves encoding options and normalizes the input value. An optional `replacer` function can transform the value.
-3.  **`encode/encoders.ts` (`encodeJsonValue`, `encodeObjectLines`, `encodeArrayLines`, etc.)**: Recursively processes the JSON structure. For each key-value pair or array item, it decides on the appropriate TOON syntax. It leverages `encode/primitives.ts` for formatting individual primitives and keys.
-4.  **`encode/folding.ts` (`tryFoldKeyChain`)**: If key folding is enabled and "safe" mode is active, `encoders.ts` will attempt to fold nested single-key objects into a single dotted key for a more compact output.
-5.  **Output**: An `Iterable<string>` of TOON lines (from `encodeLines`) or a single TOON formatted string (from `encode`).
+**Key Dependencies for Encoding**: `types.ts`, `constants.ts`, `encode/normalize.ts`, `encode/replacer.ts`, `encode/encoders.ts`, `encode/primitives.ts`, `encode/folding.ts`.
 
 ### Decoding Data Flow
-
-1.  **Input**: A TOON formatted string or an `Iterable<string>` of TOON lines.
-2.  **`index.ts` (`decode` or `decodeFromLines`, `decodeStreamSync`, `decodeStream`)**: Resolves decoding options and splits the input string into lines if necessary. For streaming, it initializes a `StreamingLineCursor` and a `StreamingScanState`.
-3.  **`decode/scanner.ts`**: Processes raw input lines, extracts content and indentation depth, and identifies blank lines.
-4.  **`decode/parser.ts`**: For each line, `decoders.ts` calls `parser.ts` functions (e.g., `parseArrayHeaderLine`, `parseKeyToken`, `parsePrimitiveToken`, `parseDelimitedValues`) to break down the line into its constituent TOON syntax elements (keys, values, array metadata).
-5.  **`decode/decoders.ts` (`decodeStreamSync`, `decodeKeyValueSync`, `decodeArrayFromHeaderSync`, etc.)**: Consumes the parsed elements, managing the parsing state (e.g., current object/array context, depth). It emits `JsonStreamEvent`s (e.g., `startObject`, `key`, `primitive`, `endObject`) that represent the underlying JSON structure.
-6.  **`decode/event-builder.ts`**: If not in streaming mode, `index.ts` uses `buildValueFromEvents` to aggregate these `JsonStreamEvent`s into a complete JavaScript value. An optional `expandPathsSafe` function can then process paths that might have been collapsed during encoding.
-7.  **Output**: A JavaScript `JsonValue` (object, array, or primitive) or an `AsyncIterable<JsonStreamEvent>` / `Iterable<JsonStreamEvent>` in streaming mode.
-
-### Key Dependencies
-
-The modules within `toon` are highly interconnected, primarily depending on each other for parsing, encoding, and utility functions. External dependencies are minimal, focusing on core JavaScript types and built-in functionalities.
-
-## 4. Code Deep Dive
-
-### Encoding an object with key folding
-
-The `encode` function is the primary way to convert a JavaScript object into a TOON string. Here's an example using key folding:
-
-```typescript
-import { encode } from './index';
-
-const data = {
-  user: {
-    profile: {
-      name: 'Alice',
-      age: 30
-    }
-  },
-  settings: {
-    notifications: true
-  }
-};
-
-const toonString = encode(data, { keyFolding: 'safe' });
-console.log(toonString);
-// Expected output:
-// user.profile.name: Alice
-// user.profile.age: 30
-// settings.notifications: true
-```
-
-This example demonstrates how `keyFolding: 'safe'` automatically collapses `user.profile.name` into a single dotted key, making the output more concise. The `encode/folding.ts` module, specifically `tryFoldKeyChain`, is responsible for identifying and performing this transformation when safe conditions are met (e.g., no key collisions, valid identifiers).
-
-### Decoding a TOON string with array expansion
-
-The `decode` function converts a TOON string back into a JavaScript object. This example shows decoding a tabular array and using `expandPaths`:
-
-```typescript
-import { decode } from './index';
-
-const toonInput = `
-users[2]{id,name}:
-  1,Alice
-  2,Bob
-config:
-  logging.level: info
-  logging.format: json
-`;
-
-const decodedValue = decode(toonInput, { expandPaths: 'safe' });
-console.log(JSON.stringify(decodedValue, null, 2));
-// Expected output:
-// {
-//   "users": [
-//     {
-//       "id": 1,
-//       "name": "Alice"
-//     },
-//     {
-//       "id": 2,
-//       "name": "Bob"
-//     }
-//   ],
-//   "config": {
-//     "logging": {
-//       "level": "info",
-//       "format": "json"
-//     }
-//   }
-// }
-```
-
-Here, the `users` array, defined with a header `users[2]{id,name}:`, is correctly parsed into an array of objects. The `config` object, which might have been encoded with key folding, is automatically expanded back into nested objects thanks to `expandPaths: 
+1.  **Entry Point**: A TOON formatted string is passed to `decode(input, options?)` or an iterable of lines to `decodeFromLines(lines, options?)`, `decodeStreamSync(lines, options?)`, or `decodeStream(source, options?)`.
+2.  **Line Splitting**: For `decode()`, the input string is split into an array of lines.
+3.  **Option Resolution**: `resolveDecodeOptions` (from `index.ts`) normalizes and sets default values for `DecodeOptions`.
+4.  **Stream Decoding**: `decodeStreamSyncCore` or `decodeStreamCore` (from `decode/decoders`) processes the input lines (or async source) and yields `JsonStreamEvent`s.
+    *   This core decoder uses `decode/parser.ts` for low-level tasks like parsing array headers (`parseArrayHeaderLine`), delimited values (`parseDelimitedValues`), and primitive tokens (`parsePrimitiveToken`, `parseStringLiteral`). It builds an event stream representing the hierarchical structure.
+5.  **Value Reconstruction**: `buildValueFromEvents` (from `decode/event-builder`) consumes the `JsonStreamEvent` stream and reconstructs the full JavaScript value in memory.
+6.  **Path Expansion**: If `expandPaths: 

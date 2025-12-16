@@ -217,8 +217,8 @@ def validate_content(
     # Markdown formatting validation (bold/italic balance, truncation)
     markdown_issues = validate_markdown_formatting(content)
     for issue in markdown_issues:
-        # Truncation is critical, others are warnings
-        if "truncation" in issue.lower() or "unbalanced" in issue.lower():
+        # Only truncation is critical; formatting balance is a warning (to avoid false positive retries)
+        if "truncation" in issue.lower():
             result.issues.append(issue)
         else:
             result.warnings.append(issue)

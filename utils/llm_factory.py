@@ -71,11 +71,11 @@ def create_model(
     
     # Enable reasoning for 2.5-pro models
     if "gemini-2.5-pro" in mid:
-        # thinkingBudget=-1 enables dynamic thinking (model decides based on complexity)
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": -1}
+        # Revert thinking parameter to avoid tool call issues
+        # kwargs["thinking"] = {"type": "enabled", "budget_tokens": -1}
         # Increase token limit for large file generation
         kwargs["max_tokens"] = 16384
-        logger.debug("Enabled dynamic thinking (budget=-1) for Pro model")
+        logger.debug("Disabled explicit thinking/reasoning for Pro model to fix empty tool args")
 
     # Enable thinking for 2.5-flash (Sub-agents)
     if "gemini-2.5-flash" in mid:

@@ -1,7 +1,7 @@
 # Deep Agent Pipeline Status Report
 
-**Date:** 2025-12-15  
-**Version:** 2.1 (Optimized)
+**Date:** 2025-12-16
+**Version:** 2.2 (Self-Correcting)
 
 ## 1. Architecture Overview
 
@@ -55,7 +55,11 @@ graph TD
 *   **Deterministic Finalization:** `FinalizeTutorialsTool` logic sorts workspaces so that `retry_N_...` folders always overwrite original attempts. This ensures the *latest corrected version* is the one saved.
 *   **Fallback Handling:** Relaxed validation for "no response" text to prevent false positives on valid documentation containing that phrase.
 
-### C. Tools & Capabilities
+### C. Self-Correction & Auto-Healing (New)
+*   **Supervisor Self-Repair:** The Supervisor can now read sub-agent outputs (`read_workspace_file`) and fix minor issues like formatting or missing headers directly (`rewrite_workspace_file`) without spawning a new agent.
+*   **Smart Validation:** Validation distinguishes between critical errors (truncation, empty) which trigger retries, and minor warnings (bold/italic balance) which are either auto-fixed or ignored.
+
+### D. Tools & Capabilities
 
 #### Supervisor Agent Tools
 | Tool | Purpose | Status |
@@ -63,9 +67,12 @@ graph TD
 | `get_codebase_overview` | High-level tree & README analysis | Active |
 | `list_codebase_directory` | Explore folder structure | Active |
 | `read_codebase_file` | Read specific files (for planning) | Active |
+| `write_workspace_file` | **Core:** Write Plan / generic files | **New** |
+| `read_workspace_file` | **Fixing:** Read Sub-Agent output | **New** |
+| `rewrite_workspace_file` | **Fixing:** Overwrite Sub-Agent output | **New** |
 | `spawn_analyzer_agent` | **Core:** Creates sub-agent + Pre-loads content + Validates | **Optimized** |
 | `spawn_tutorial_agent` | **Core:** Creates tutorial writer + Validates | **Optimized** |
-| `retry_agent` | Spawns a targeted fixer agent with feedback | Active |
+| `retry_agent` | Spawns a targeted fixer agent (Only for critical errors) | Active |
 | `finalize_knowledge_base`| Moves drafts to final KB folder | Active |
 | `finalize_tutorials` | Moves drafts to final Tutorials folder (Priority Logic) | **Optimized** |
 

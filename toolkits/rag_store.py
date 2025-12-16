@@ -75,6 +75,66 @@ class SimpleChromaRAGStore:
         self.client: ClientAPI = PersistentClient(path=str(self.persist_directory))
         self.collection: Optional[Collection] = None
 
+    def query(
+        self,
+        query: str,
+        top_k: int = 5,
+        include_codebase: bool = True,
+        include_knowledge_base: bool = True,
+    ) -> List[str]:
+        """Semantically searches the knowledge base."""
+        if not self.collection:
+            logger.warning("RAG query called but collection is not initialized.")
+            return []
+
+        # 1. Embed query
+        query_embeddings = self._embed_texts([query])
+        if not query_embeddings:
+            return []
+
+        # 2. Build filters
+        sources = []
+        if include_codebase:
+            sources.append("codebase")
+        if include_knowledge_base:
+            sources.append("knowledge_base")
+        
+        if not sources:
+            return []
+
+        where_filter: Where | None = None
+        if len(sources) == 1:
+            where_filter = {"source": sources[0]}
+        else:
+            where_filter = {"source": {"$in": sources}}
+
+        # 3. Query Chroma
+        try:
+            results = self.collection.query(
+                query_embeddings=query_embeddings,
+                n_results=top_k,
+                where=where_filter,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as exc:
+            logger.error(f"Chroma query failed: {exc}")
+            return []
+
+        # 4. Format results
+        output = []
+        if results["documents"] and results["metadatas"]:
+            # Chroma returns list of lists (one per query)
+            docs = results["documents"][0]
+            metas = results["metadatas"][0]
+            
+            for doc, meta in zip(docs, metas):
+                path = meta.get("path", "unknown")
+                line = meta.get("line", "?")
+                source_label = meta.get("source", "unknown")
+                output.append(f"[{source_label.upper()}] {path}:{line}\n{doc}")
+
+        return output
+
     def ensure_index(
         self,
         *,
@@ -82,9 +142,9 @@ class SimpleChromaRAGStore:
         include_knowledge_base: bool = True,
         force_rebuild: bool = False,
     ) -> None:
-        """Ensure a collection exists and matches the current repository state."""
-
-        # 1. Compute fingerprint of current files
+        """Ensure a collection exists and matches the current repository state using incremental updates."""
+        
+        # 1. Compute fingerprint (still useful for high-level check, though strictly we could skip)
         desired_fingerprint = self._compute_fingerprint(
             include_codebase=include_codebase,
             include_knowledge_base=include_knowledge_base,
@@ -93,96 +153,100 @@ class SimpleChromaRAGStore:
         existing: Optional[Collection] = None
         try:
             existing = self.client.get_collection(self.collection_name)
+            self.collection = existing
+            logger.info("Successfully loaded existing collection.")
         except chroma_errors.NotFoundError:
-            pass
+            logger.info("Collection matched by name not found.")
         except Exception as exc:
             logger.warning(f"Could not load existing collection: {exc}")
 
-        # 2. Check if rebuild is needed
-        should_rebuild = force_rebuild
-        if existing:
-            meta = existing.metadata or {}
-            stored_fingerprint = meta.get("fingerprint")
-            if stored_fingerprint != desired_fingerprint:
-                logger.info(
-                    f"Fingerprint mismatch ({stored_fingerprint} vs {desired_fingerprint}). Rebuilding..."
-                )
-                should_rebuild = True
-            else:
-                logger.info(f"RAG store '{self.collection_name}' is up to date.")
-                self.collection = existing
+        logger.info(f"Rebuild check: existing={bool(existing)}, force={force_rebuild}")
 
-        # 3. Rebuild or Create
-        if should_rebuild or existing is None:
+        # 2. If nothing exists, build fresh
+        if not existing or force_rebuild:
             if existing:
                 self.client.delete_collection(self.collection_name)
-
-            logger.info(f"Building RAG index '{self.collection_name}'...")
+            
+            logger.info(f"Building RAG index '{self.collection_name}' from scratch...")
             self.collection = self._build_collection(
                 include_codebase=include_codebase,
                 include_knowledge_base=include_knowledge_base,
                 fingerprint=desired_fingerprint,
             )
+            return
 
-    def query(
+        # 3. Incremental Update
+        meta = existing.metadata or {}
+        stored_fingerprint = meta.get("fingerprint")
+        
+        if stored_fingerprint == desired_fingerprint:
+            logger.info(f"RAG store '{self.collection_name}' is up to date (fingerprint match).")
+            return
+
+        logger.info(
+             f"Fingerprint mismatch ({stored_fingerprint} vs {desired_fingerprint}). Performing incremental update..."
+        )
+        self._update_collection(
+            include_codebase=include_codebase,
+            include_knowledge_base=include_knowledge_base,
+            fingerprint=desired_fingerprint,
+        )
+
+    def _update_collection(
         self,
-        query: str,
         *,
-        top_k: int = 5,
-        include_codebase: bool = True,
-        include_knowledge_base: bool = True,
-    ) -> List[Dict[str, str]]:
-        if not query.strip() or not self.collection:
-            return []
+        include_codebase: bool,
+        include_knowledge_base: bool,
+        fingerprint: str,
+    ) -> None:
+        """Incrementally updates the collection by diffing chunk IDs."""
+        if not self.collection:
+            return
 
-        # Construct Where clause
-        where_clause: Optional[Dict[str, str]] = None
-        if include_codebase and not include_knowledge_base:
-            where_clause = {"source": "codebase"}
-        elif include_knowledge_base and not include_codebase:
-            where_clause = {"source": "knowledge_base"}
-        elif not include_codebase and not include_knowledge_base:
-            return []
+        # A. Collect all current chunks from files
+        current_chunks = self._collect_chunks(
+            include_codebase=include_codebase,
+            include_knowledge_base=include_knowledge_base,
+        )
+        current_ids = {c.chunk_id for c in current_chunks}
+        chunk_map = {c.chunk_id: c for c in current_chunks}
 
+        # B. Get all existing IDs from Chroma
         try:
-            # Embed query (batch of 1)
-            query_vectors = self._embed_texts([query])
-
-            result = self.collection.query(
-                query_embeddings=query_vectors,
-                n_results=top_k,
-                where=cast(Optional[Where], where_clause),
-            )
+            # We only need IDs to diff
+            existing_data = self.collection.get(include=[])
+            existing_ids = set(existing_data.get("ids", []))
         except Exception as exc:
-            logger.warning(f"RAG query failed: {exc}")
-            return []
+            logger.error(f"Failed to fetch existing IDs for diffing: {exc}")
+            raise
 
-        # Parse results
-        documents = (result.get("documents") or [[]])[0]
-        metadatas = (result.get("metadatas") or [[]])[0]
+        # C. Calculate Diff
+        to_add_ids = current_ids - existing_ids
+        to_remove_ids = existing_ids - current_ids
 
-        snippets: List[Dict[str, str]] = []
-        for doc, meta in zip(documents, metadatas):
-            if not doc:
-                continue
+        logger.info(f"Incremental Update: Adding {len(to_add_ids)}, Removing {len(to_remove_ids)} chunks.")
 
-            # Safe access to metadata
-            meta_dict = meta if isinstance(meta, dict) else {}
+        # D. Remove stale chunks
+        if to_remove_ids:
+            try:
+                self.collection.delete(ids=list(to_remove_ids))
+                logger.info(f"Removed {len(to_remove_ids)} stale chunks.")
+            except Exception as exc:
+                logger.error(f"Failed to delete stale chunks: {exc}")
 
-            snippets.append(
-                {
-                    "source": str(meta_dict.get("source", "unknown")),
-                    "path": str(meta_dict.get("path", "")),
-                    "line": str(meta_dict.get("line", 1)),
-                    "snippet": doc.strip(),
-                }
-            )
+        # E. Add new chunks (in batches)
+        if to_add_ids:
+            chunks_to_add = [chunk_map[cid] for cid in to_add_ids]
+            self._batch_add_chunks(chunks_to_add)
 
-        return snippets
-
-    # ------------------------------------------------------------------
-    # Internal Builders
-    # ------------------------------------------------------------------
+        # F. Update Metadata (Fingerprint)
+        try:
+            self.collection.modify(metadata={
+                "fingerprint": fingerprint,
+                "embedding_model": self.embedding_model,
+            })
+        except Exception as exc:
+            logger.warning(f"Failed to update collection metadata: {exc}")
 
     def _build_collection(
         self,
@@ -204,18 +268,35 @@ class SimpleChromaRAGStore:
             },
         )
 
-        if not chunks:
-            return collection
+        if chunks:
+            self.collection = collection  # temporary set for helper to work if needed
+            self._batch_add_chunks(chunks, collection)
+        
+        # Mark as complete
+        try:
+            collection.modify(metadata={
+                "fingerprint": fingerprint,
+                "embedding_model": self.embedding_model,
+            })
+        except Exception as exc:
+            logger.warning(f"Failed to finalize collection metadata: {exc}")
+        
+        return collection
 
-        # Batch Processing
+    def _batch_add_chunks(self, chunks: List[ChunkRecord], collection: Optional[Collection] = None):
+        """Helper to batch embed and add chunks to a collection."""
+        target_col = collection or self.collection
+        if not target_col:
+            raise ValueError("No collection available for adding chunks.")
+
         total_chunks = len(chunks)
         # For local model, we can probably do larger batches, but 100 is safe default
         logger.info(
-            f"Embedding {total_chunks} chunks in batches of {self.embed_batch_size}..."
+            f"Embedding {total_chunks} chunks in batches of {batch_size}..."
         )
 
-        for start in range(0, total_chunks, self.embed_batch_size):
-            end = start + self.embed_batch_size
+        for start in range(0, total_chunks, batch_size):
+            end = start + batch_size
             batch = chunks[start:end]
 
             texts = [c.content for c in batch]
@@ -226,8 +307,8 @@ class SimpleChromaRAGStore:
 
             try:
                 vectors = self._embed_texts(texts)
-
-                collection.add(
+                
+                target_col.add(
                     documents=texts,
                     metadatas=cast(List[Metadata], metadatas),
                     ids=ids,
@@ -237,8 +318,6 @@ class SimpleChromaRAGStore:
                 logger.error(f"Failed to embed batch starting at index {start}: {exc}")
 
             # No sleep for local model
-
-        return collection
 
     def _embed_texts(self, texts: Sequence[str]) -> List[Sequence[float]]:
         """Computes embeddings for a batch of texts using local model."""
@@ -373,7 +452,7 @@ class SimpleChromaRAGStore:
 
         # Add remaining
         if current_chunk:
-            chunk_text = "\n".join(current_chunk)
+            chunk_text = "\\n".join(current_chunk)
             records.append(
                 ChunkRecord(
                     chunk_id=self._build_chunk_id(
@@ -426,4 +505,3 @@ class SimpleChromaRAGStore:
                 hasher.update(str(stat.st_size).encode("utf-8"))
 
         return hasher.hexdigest()
-

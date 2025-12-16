@@ -174,6 +174,12 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Force regeneration of Knowledge Base and Tutorials (default: True). Use --no-force-rebuild to skip.",
     )
+    deep_agent_parser.add_argument(
+        "--mode",
+        choices=["standard", "baseline"],
+        default="standard",
+        help="Run mode: 'standard' (full KB + tutorials) or 'baseline' (tutorials from codebase exploration only).",
+    )
 
     return parser.parse_args()
 
@@ -353,17 +359,43 @@ def main() -> None:
         else:
             output_root = (Path("data/deep_agent_output") / codebase_path.name).resolve()
             
+            logger.info("Running in BASELINE mode (No Knowledge Base Generation)")
+            logger.info(f"Output directory: {output_root}")
+            from pipelines.tutorial_generator import TutorialGenerator
+            
+            # Baseline output structure
+            generator = TutorialGenerator(
+                codebase_root=codebase_path,
+                knowledge_base_root=output_root / "knowledge_base", # Dummy
+                output_root=output_root,
+                sub_agents_root=output_root / "sub_agents_tutorials",
+                enable_rag=True,
+                dry_run=False,
+            )
+            # Use wrapped baseline generator
+            outputs = generator.generate_baseline_with_supervisor()
+            logger.info("Baseline tutorials written to:\n{}", _format_paths(outputs))
+            return
+
+        # Standard Deep Agent
+        base_output_root = settings.DEEP_AGENT_OUTPUT_ROOT
+        output_root = base_output_root / codebase_name
+        
+        logger.info(f"Output directory: {output_root}")
+        
         config = DeepAgentConfig(
             codebase_root=codebase_path,
             output_root=output_root,
+            # Sub-paths fully inspectable in data/<codebase-name>/ folder
             kb_output_path=output_root / "knowledge_base",
             tutorial_output_path=output_root / "tutorials",
             kb_sub_agents_path=output_root / "sub_agents_kb",
             tutorial_sub_agents_path=output_root / "sub_agents_tutorials",
             enable_rag=True,
-            rag_codebase_cache_path=args.rag_cache_path,
-            force_rebuild_kb=args.force_rebuild,
-            force_rebuild_tutorials=args.force_rebuild,
+            rag_codebase_cache_path=None, 
+            force_rebuild_kb=args.force_rebuild if hasattr(args, "force_rebuild") else False,
+            force_rebuild_tutorials=args.force_rebuild if hasattr(args, "force_rebuild") else False,
+            dry_run=False,
         )
         
         agent = DeepAgent(config)
@@ -373,4 +405,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Process interrupted by user.")
+        sys.exit(0)

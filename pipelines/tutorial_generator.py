@@ -1587,6 +1587,66 @@ INSTRUCTIONS:
             instructions=prompts.TUTORIAL_SUPERVISOR_PROMPT,
         )
 
+
+    def _create_baseline_supervisor_agent(self):
+        """Create the Baseline Tutorial Supervisor Agent."""
+        from toolkits.supervisor_toolkit import build_tutorial_supervisor_tools
+        from utils.llm_factory import create_model
+        
+        tools = build_tutorial_supervisor_tools(
+            codebase_root=self.codebase_root,
+            sub_agents_root=self.sub_agents_root,
+            output_root=self.output_root,
+            knowledge_base_root=self.knowledge_base_root, # Passed but unused by baseline tools
+            baseline_mode=True,
+        )
+        
+        model = create_model()
+        
+        return ToolCallingAgent(
+            name="baseline_supervisor",
+            description="Plans and oversees baseline tutorial generation (No KB)",
+            tools=tools,
+            model=model,
+            instructions=prompts.BASELINE_TUTORIAL_SUPERVISOR_PROMPT,
+        )
+
+    def generate_baseline_with_supervisor(self) -> List[Path]:
+        """Generate tutorials using the Baseline Supervisor (No KB)."""
+        logger.info("Starting BASELINE supervised tutorial generation (No KB)...")
+        
+        # Reset directories if not dry run
+        if not self.dry_run:
+            if self.sub_agents_root.exists():
+                shutil.rmtree(self.sub_agents_root)
+            self.sub_agents_root.mkdir(parents=True, exist_ok=True)
+            
+            if self.output_root.exists():
+               shutil.rmtree(self.output_root)
+            self.output_root.mkdir(parents=True, exist_ok=True)
+
+        supervisor = self._create_baseline_supervisor_agent()
+    
+        # Use centralized rate limit retry wrapper
+        from pipelines.checkpoint import run_with_rate_limit_retry
+        
+        try:
+            run_with_rate_limit_retry(
+                supervisor.run, 
+                "Plan and generate the tutorial series based on CODEBASE EXPLORATION.", 
+                max_steps=50
+            )
+        except Exception as e:
+            logger.error(f"Baseline Supervisor failed: {e}")
+            if not self.dry_run:
+                 raise
+        
+        # Collect output
+        output_files = list(self.output_root.glob("*.md"))
+        logger.info(f"Generated {len(output_files)} baseline tutorials.")
+        self._sanitize_tutorial_outputs(output_files)
+        return sorted(output_files, key=lambda p: p.name)
+
     def generate_with_supervisor(self) -> List[Path]:
         """Generate tutorials using the Supervisor Agent."""
         logger.info("Starting supervised tutorial generation...")

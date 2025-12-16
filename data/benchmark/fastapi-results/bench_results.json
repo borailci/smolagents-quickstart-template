@@ -1,0 +1,59 @@
+{
+  "root": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench",
+  "results": [
+    {
+      "codebase": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/fastapi-realworld-example-app",
+      "variant": "baseline",
+      "tutorial_outputs": [
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/baseline/tutorials/01_quickstart.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/baseline/tutorials/02_authentication_and_users.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/baseline/tutorials/03_publishing_articles.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/baseline/tutorials/04_social_features.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/baseline/tutorials/wiki.md"
+      ],
+      "metrics": {
+        "tool_calls": 37,
+        "tool_token_estimate": 11699,
+        "instructions_token_estimate": 3814,
+        "tutorial_token_estimate": 8290,
+        "total_estimated_tokens": 23803,
+        "context_overflow_events": 0,
+        "model_errors": [
+          "Error while generating output:\nlitellm.RateLimitError: litellm.RateLimitError: Vertex_aiException - {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Resource exhausted. Please try again later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.\",\n    \"status\": \"RESOURCE_EXHAUSTED\"\n  }\n}\n"
+        ]
+      },
+      "error": null,
+      "knowledge_base_outputs": null
+    },
+    {
+      "codebase": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/fastapi-realworld-example-app",
+      "variant": "deep_with_kb",
+      "tutorial_outputs": [
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/tutorials/01_quickstart.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/tutorials/02_request_flow.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/tutorials/03_writing_tests.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/tutorials/04_api_validation.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/tutorials/wiki.md"
+      ],
+      "metrics": {
+        "tool_calls": 31,
+        "tool_token_estimate": 18396,
+        "instructions_token_estimate": 5435,
+        "tutorial_token_estimate": 7787,
+        "total_estimated_tokens": 31618,
+        "context_overflow_events": 0,
+        "model_errors": [
+          "Error while generating output:\nlitellm.RateLimitError: litellm.RateLimitError: Vertex_aiException - {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Resource exhausted. Please try again later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.\",\n    \"status\": \"RESOURCE_EXHAUSTED\"\n  }\n}\n"
+        ]
+      },
+      "error": null,
+      "knowledge_base_outputs": [
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/knowledge_base/app.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/knowledge_base/executive_summary.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/knowledge_base/postman.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/knowledge_base/scripts.md",
+        "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/bench/fastapi-realworld-example-app/deep/knowledge_base/tests.md"
+      ]
+    }
+  ]
+}

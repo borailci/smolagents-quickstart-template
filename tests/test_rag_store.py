@@ -63,6 +63,11 @@ Project creation flows through the HTTP API and validates input before storing i
     )
 
     assert results, "RAG query should return at least one snippet"
-    sources = {entry["source"] for entry in results}
-    assert {"knowledge_base", "codebase"}.issubset(sources)
-    assert any(entry["path"].endswith("projects.md") for entry in results)
+    assert results, "RAG query should return at least one snippet"
+    # Result is a list of strings now, e.g. "[KNOWLEDGE_BASE] projects.md:1\n# Projects Overview..."
+    # We verify presence of expected content
+    combined_results = "\\n".join(results)
+    assert "projects.md" in combined_results
+    assert "# Projects Overview" in combined_results
+    assert "[KNOWLEDGE_BASE]" in combined_results
+    assert "[CODEBASE]" in combined_results

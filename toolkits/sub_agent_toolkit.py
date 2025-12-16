@@ -17,6 +17,7 @@ from loguru import logger
 from smolagents import LiteLLMModel, Tool, tool
 from smolagents.agents import ToolCallingAgent
 
+from config import settings
 from prompts import prompts
 from toolkits.scoped_filesystem_toolkit import build_scoped_tools
 from utils.path_utils import ensure_directory
@@ -86,42 +87,7 @@ def validate_markdown_output(
     return (result.is_valid, list(result.issues))
 
 
-@dataclass
-class ToolUsageBudget:
-    agent_index: int
-    max_total_calls: int | None = None
-    max_directory_calls: int | None = None
-    total_calls: int = 0
-    directory_calls: int = 0
-
-    def record(self, tool_name: str) -> None:
-        if tool_name == "write_workspace_file":
-            return
-        self.total_calls += 1
-        if tool_name == "list_codebase_directory":
-            self.directory_calls += 1
-            if (
-                self.max_directory_calls is not None
-                and self.directory_calls > self.max_directory_calls
-            ):
-                logger.error(
-                    "Sub-agent %d exceeded directory listing budget (%d).",
-                    self.agent_index,
-                    self.max_directory_calls,
-                )
-                raise ToolBudgetExceededError(
-                    "Directory listing limit exceeded; rely on provided structure."
-                )
-
-        if self.max_total_calls is not None and self.total_calls > self.max_total_calls:
-            logger.error(
-                "Sub-agent %d exceeded total tool call budget (%d).",
-                self.agent_index,
-                self.max_total_calls,
-            )
-            raise ToolBudgetExceededError(
-                "Tool call budget exceeded; consolidate your findings and stop."
-            )
+# ToolUsageBudget removed - no budget enforcement
 
 
 class SubAgentRole(str, Enum):
@@ -135,6 +101,8 @@ class SubAgentTaskSpec:
     description: str
     role: SubAgentRole = SubAgentRole.ANALYZER
     instructions: Optional[str] = None
+    tools: Optional[Sequence[Tool]] = None
+    output_format: Optional[str] = None
 
 
 DEFAULT_ROLE_PROMPTS: Dict[SubAgentRole, str] = {
@@ -192,7 +160,7 @@ STRICT_JSON_REMINDER = (
 
 
 def _execute_sub_agent_runs(
-    task_payloads: Sequence[Tuple[str, str]],
+    task_specs: Sequence[SubAgentTaskSpec],
     *,
     codebase_root: Optional[str | Path] = None,
     sub_agents_root: Optional[str | Path] = None,
@@ -205,11 +173,15 @@ def _execute_sub_agent_runs(
     knowledge_base_root: Optional[str | Path] = None,
     minimal_tools: bool = True,  # Disable exploration by default
 ) -> List[Path]:
-    if not task_payloads:
+    if not task_specs:
         return []
 
     codebase_path, sub_agents_path = _resolve_paths(codebase_root, sub_agents_root)
     model = _build_model()
+    
+    # Pre-calculate prompts
+    prompt_map = dict(DEFAULT_ROLE_PROMPTS)
+
 
     workspaces: List[Path] = []
     request_timestamps: Deque[float] = deque()
@@ -229,7 +201,10 @@ def _execute_sub_agent_runs(
         )
         time.sleep(remaining)
 
-    for index, (description, instruction_prompt) in enumerate(task_payloads, start=1):
+    for index, spec in enumerate(task_specs, start=1):
+        description = spec.description
+        role_prompt = spec.instructions or prompt_map.get(spec.role, prompts.SUB_AGENT_KB_PROMPT)
+
         workspace_dir = sub_agents_path / f"sub_agent_{index}"
         workspace_exists = workspace_dir.exists()
         workspace = ensure_directory(workspace_dir)
@@ -257,17 +232,9 @@ def _execute_sub_agent_runs(
 
         logger.info("Launching sub-agent {} in {}", index, workspace)
 
-        budget = (
-            ToolUsageBudget(
-                agent_index=index,
-                max_total_calls=max_tool_calls,
-                max_directory_calls=max_directory_calls,
-            )
-            if max_tool_calls is not None or max_directory_calls is not None
-            else None
-        )
+        # Budget enforcement removed
 
-        base_instructions = _formatted_prompt(description, instruction_prompt)
+        base_instructions = _formatted_prompt(description, role_prompt)
         if STRICT_JSON_REMINDER not in base_instructions:
             base_instructions += STRICT_JSON_REMINDER
         current_instructions = base_instructions
@@ -288,7 +255,7 @@ def _execute_sub_agent_runs(
             return ToolCallingAgent(
                 name=f"sub_agent_{index}",
                 description=f"Knowledge-base agent for task {index}",
-                tools=scoped_tools,
+                tools=run_tools,
                 model=model,
                 instructions=instructions,
             )
@@ -296,6 +263,7 @@ def _execute_sub_agent_runs(
         agent = _build_agent(current_instructions)
 
         attempt = 0
+        rate_limit_consecutive = 0
         while True:
             attempt += 1
             now = time.monotonic()
@@ -350,6 +318,7 @@ def _execute_sub_agent_runs(
                     .__name__.lower()
                     .startswith("ratelimit")
                     or "quota" in str(exc).lower()
+                    or "429" in str(exc)
                 )
                 parse_error = (
                     "Expecting property name enclosed in double quotes" in str(exc)
@@ -387,14 +356,16 @@ def _execute_sub_agent_runs(
                     wait_seconds = _extract_retry_after_seconds(exc, default=5.0)
 
                     logger.warning(
-                        "Sub-agent {} hit provider quota. Waiting {:.2f}s before retry ({}/{}).",
+                        "Sub-agent {} hit provider quota. Retry {}/{} in {:.1f}s.",
                         index,
-                        wait_seconds,
-                        attempt,
-                        max_retries,
+                        rate_limit_consecutive,
+                        max_rate_limit_retries,
+                        jittered_delay,
                     )
-                    time.sleep(wait_seconds)
+                    time.sleep(jittered_delay)
                     continue
+                else:
+                    rate_limit_consecutive = 0
 
                 if attempt >= max_retries:
                     raise
@@ -439,9 +410,16 @@ def run_sub_agent_tasks(
     if not isinstance(task_descriptions, list) or not task_descriptions:
         return []
 
-    payloads = [(description, instruction_prompt) for description in task_descriptions]
+    specs = [
+        SubAgentTaskSpec(
+            description=desc,
+            role=SubAgentRole.ANALYZER,
+            instructions=instruction_prompt
+        ) for desc in task_descriptions
+    ]
+
     return _execute_sub_agent_runs(
-        payloads,
+        specs,
         codebase_root=codebase_root,
         sub_agents_root=sub_agents_root,
         max_retries=max_retries,
@@ -475,21 +453,9 @@ def run_typed_sub_agent_tasks(
     if not task_specs:
         return []
 
-    prompt_map = dict(DEFAULT_ROLE_PROMPTS)
-    if role_prompts:
-        prompt_map.update(role_prompts)
-
-    payloads: List[Tuple[str, str]] = []
-    for spec in task_specs:
-        prompt_text = spec.instructions or prompt_map.get(spec.role)
-        if not prompt_text:
-            raise RuntimeError(
-                f"No instruction prompt configured for role '{spec.role}'."
-            )
-        payloads.append((spec.description, prompt_text))
-
+    # Pass specs directly
     return _execute_sub_agent_runs(
-        payloads,
+        task_specs,
         codebase_root=codebase_root,
         sub_agents_root=sub_agents_root,
         max_retries=max_retries,
@@ -526,8 +492,8 @@ def get_sub_agent_tools() -> List[Tool]:
             "Results saved in:",
         ]
         summary_lines.extend(f"- {path}" for path in workspaces)
-        return "\n".join(summary_lines)
+        return "\\n".join(summary_lines)
 
-    spawn_sub_agents.run_sub_agent_tasks = run_sub_agent_tasks  # type: ignore[attr-defined]
+    # spawn_sub_agents.run_sub_agent_tasks = run_sub_agent_tasks  # type: ignore[attr-defined] # Not needed with new structure
 
     return [spawn_sub_agents]

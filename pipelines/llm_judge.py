@@ -10,7 +10,20 @@ Results are aggregated into a comprehensive report.
 
 from __future__ import annotations
 
+import os
 import argparse
+import glob
+from pathlib import Path
+from loguru import logger
+from utils.llm_factory import create_model
+from smolagents import LiteLLMModel
+
+
+
+import os
+import argparse
+import glob
+import time
 import json
 import re
 import time
@@ -87,6 +100,9 @@ Return ONLY valid JSON (no markdown fences):
 }}
 """
 
+def evaluate_pair(model: LiteLLMModel, model_id: str, file_name: str, path_a: Path, path_b: Path, rag_store: SimpleChromaRAGStore) -> dict | None:
+    content_a = path_a.read_text(errors="replace") if path_a.exists() else "MISSING"
+    content_b = path_b.read_text(errors="replace") if path_b.exists() else "MISSING"
 
 @dataclass
 class TutorialScore:
@@ -217,10 +233,9 @@ def _call_judge(
     
     for attempt in range(1, max_retries + 1):
         try:
-            resp = completion(
-                model=model,
+            response = model(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=temperature,
+                max_tokens=2000
             )
             
             choices = resp.get("choices") or []
@@ -544,6 +559,49 @@ def main() -> None:
     
     logger.info(f"\n✓ Evaluation complete! Overall score: {report.overall_avg}/5.0")
 
+    for model_id in model_ids:
+        try:
+            # Create model instance for this specific judge
+            model = create_model(model_id=model_id)
+            
+            for file_name in all_files:
+                path_a = args.baseline / file_name
+                path_b = args.deep / file_name
+                
+                result = evaluate_pair(model, model_id, file_name, path_a, path_b, rag_store)
+                
+                if result:
+                    all_results.append(result)
+                    print(f"{model_id:<25} | {file_name:<30} | {result.get('winner', '?'):<6} | "
+                          f"{result.get('fidelity_A', 0):<5} | {result.get('fidelity_B', 0):<5} | "
+                          f"{result.get('pedagogy_A', 0):<5} | {result.get('pedagogy_B', 0):<5} | "
+                          f"{result.get('coverage_A', 0):<5} | {result.get('coverage_B', 0):<5}")
+                
+                # Inter-file throttle - Reduced since RAG is lighter
+                time.sleep(1.0)
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize model {model_id}: {e}")
+
+    # Aggregation Table
+    if all_results:
+        print("\n" + "="*50)
+        print("AGGREGATE WIN RATES")
+        print("="*50)
+        
+        wins = {"A": 0, "B": 0, "Tie": 0}
+        total = 0
+        
+        for r in all_results:
+            w = r.get("winner", "Tie")
+            if w not in wins: w = "Tie"
+            wins[w] += 1
+            total += 1
+            
+        print(f"Total Evaluations: {total}")
+        print(f"Baseline Wins (A): {wins['A']} ({wins['A']/total*100:.1f}%)")
+        print(f"Deep Agent Wins (B): {wins['B']} ({wins['B']/total*100:.1f}%)")
+        print(f"Ties:             {wins['Tie']} ({wins['Tie']/total*100:.1f}%)")
 
 if __name__ == "__main__":
     main()

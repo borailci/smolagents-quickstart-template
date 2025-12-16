@@ -1,10 +1,10 @@
 # Compilation Plan
 
 ## Core Library
-- [ ] libs/deepagents/deepagents
+- [x] libs/deepagents
 
 ## CLI
-- [ ] libs/deepagents-cli/deepagents_cli
+- [x] libs/deepagents-cli
 
 ## Harbor
-- [ ] libs/harbor/deepagents_harbor
+- [x] libs/harbor

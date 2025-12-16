@@ -1,0 +1,35 @@
+{
+  "codebase_name": "deepagents",
+  "model_id": "vertex_ai/gemini-2.5-pro",
+  "timestamp": "2025-12-16T18:01:00.511517",
+  "duration_seconds": 497.32,
+  "total_tokens": 0,
+  "total_tool_calls": 0,
+  "total_context_overflows": 0,
+  "phases": {
+    "knowledge_base": {
+      "name": "knowledge_base",
+      "duration_seconds": 347.81,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "tool_calls": 0,
+      "tool_calls_by_name": {},
+      "context_overflow_events": 0,
+      "model_errors": [],
+      "sub_agents_spawned": 0
+    },
+    "tutorial": {
+      "name": "tutorial",
+      "duration_seconds": 143.92,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "tool_calls": 0,
+      "tool_calls_by_name": {},
+      "context_overflow_events": 0,
+      "model_errors": [],
+      "sub_agents_spawned": 0
+    }
+  }
+}

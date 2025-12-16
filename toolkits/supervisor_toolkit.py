@@ -11,28 +11,22 @@ Provides tools for the Supervisor Agent to:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List
 
-from dotenv import load_dotenv
 from loguru import logger
 from smolagents import Tool
 
-from prompts import prompts
 from toolkits.sub_agent_toolkit import (
     SubAgentRole,
     SubAgentTaskSpec,
-    SubAgentOutputError,
     run_typed_sub_agent_tasks,
 )
-from utils.constants import IGNORED_DIRS, BLOCKED_EXTENSIONS
+from utils.constants import IGNORED_DIRS
 from utils.path_utils import ensure_directory
 
 __all__ = ["build_supervisor_tools", "build_tutorial_supervisor_tools", "SupervisorContext"]
-
-load_dotenv()
 
 
 class SupervisorContext:
@@ -62,7 +56,7 @@ class SupervisorContext:
 
 class GetCodebaseOverviewTool(Tool):
     name = "get_codebase_overview"
-    description = "Scout the codebase structure to understand what needs documentation. Returns directory tree and README excerpt."
+    description = "Get codebase directory tree (max_depth=3). Returns structure and first-level dirs."
     inputs = {
         "max_depth": {
             "type": "integer",
@@ -102,20 +96,11 @@ class GetCodebaseOverviewTool(Tool):
         tree_lines.extend(build_tree(self.ctx.codebase_root))
         tree = "\n".join(tree_lines[:100])
 
-        readme_content = ""
-        for readme_name in ("README.md", "README.rst", "README.txt", "README"):
-            readme_path = self.ctx.codebase_root / readme_name
-            if readme_path.exists():
-                try:
-                    readme_content = readme_path.read_text(encoding="utf-8")[:1000]
-                    break
-                except Exception:
-                    pass
-
-        first_level_dirs = [
+        # Define first_level_dirs
+        first_level_dirs = sorted([
             d.name for d in self.ctx.codebase_root.iterdir()
             if d.is_dir() and not d.name.startswith(".") and d.name not in IGNORED_DIRS
-        ]
+        ])
 
         return f"""# Codebase Overview
 
@@ -126,69 +111,150 @@ class GetCodebaseOverviewTool(Tool):
 
 ## First-Level Directories
 {', '.join(first_level_dirs)}
-
-## README Excerpt
-{readme_content[:500] if readme_content else '(No README found)'}
 """
 
 
 class ListAvailableToolkitsTool(Tool):
     name = "list_available_toolkits"
-    description = "List all available toolkits that sub-agents can use."
+    description = "List tools available to sub-agents (filesystem, RAG, etc.)."
     inputs = {}
     output_type = "string"
 
     def forward(self) -> str:
-        return """# Available Toolkits for Sub-Agents
+        return """# Sub-Agent Tools
 
-## scoped_filesystem_toolkit
-Tools for reading codebase files and writing to workspace:
-- read_codebase_file(file_path): Read a file from the target codebase
-- write_workspace_file(file_path, content): Write output to agent workspace
-- get_codebase_tree(max_depth): Get directory tree structure
+**KB Analyzer Sub-Agents (minimal):**
+- `read_codebase_file(path, start_line=1)` - Read file (350 lines max)
+- `write_workspace_file(path, content)` - Write output
 
-## baseline_toolkit (if enabled)
-Extended file operations:
-- read_file_bulk(file_paths): Read multiple files at once
-- search_codebase(pattern): Search for patterns in code
+**Tutorial Writer Sub-Agents (full access):**
+- `read_codebase_file(path)` - Read source code
+- `read_knowledge_base_file(filename)` - Read KB file
+- `retrieve_relevant_context(query)` - RAG semantic search
+- `list_codebase_directory(path)` - List dir contents
+- `get_directory_tree(path, depth)` - Directory tree
+- `write_tutorial_file(path, content)` - Write output
 
-## rag_store (if enabled)
-Semantic search:
-- retrieve_relevant_context(query): Find relevant code snippets
+NOTE: KB Analyzer sub-agents do NOT have directory listing. Include file paths in task.
 """
 
 
 class ListAvailablePromptsTool(Tool):
     name = "list_available_prompts"
-    description = "List available sub-agent roles and their prompts."
+    description = "List sub-agent roles (ANALYZER, SUMMARIZER, TUTORIAL)."
     inputs = {}
     output_type = "string"
 
     def forward(self) -> str:
-        return """# Available Sub-Agent Roles
+        return """# Sub-Agent Roles
 
-## ANALYZER (SUB_AGENT_KB_PROMPT)
-Domain Documentation Specialist that analyzes a specific slice of the codebase.
-- Reads focus files and context
-- Creates comprehensive markdown documentation
-- Outputs: summary.md with purpose, components, data flow, dependencies
-
-## SUMMARIZER (SUMMARIZER_KB_PROMPT)
-Executive Summarizer that creates high-level overview.
-- Reads all generated documentation
-- Creates executive_summary.md
-- Outputs: Project overview, architecture, technologies, getting started
-
-## TUTORIAL (TUTORIAL_AGENT_PROMPT)  
-Tutorial writer that creates educational content.
-- Uses Knowledge Base as primary source
-- Creates tutorials with code snippets and diagrams
+- **ANALYZER**: Documents a codebase slice -> summary.md
+- **SUMMARIZER**: Creates executive_summary.md from all KB files
+- **TUTORIAL**: Writes step-by-step tutorials with code examples
 """
+
+
+class ListCodebaseDirectoryTool(Tool):
+    """Allow supervisor to list directory contents to find actual file paths."""
+    name = "list_codebase_directory"
+    description = "List files and folders in a directory. Use this to find actual file paths before spawning sub-agents."
+    inputs = {
+        "dir_path": {
+            "type": "string",
+            "description": "Directory path relative to codebase root (e.g., 'libs/deepagents/deepagents')",
+            "nullable": True,
+        }
+    }
+    output_type = "string"
+
+    def __init__(self, ctx: SupervisorContext, **kwargs):
+        super().__init__(**kwargs)
+        self.ctx = ctx
+
+    def forward(self, dir_path: str = ".") -> str:
+        from utils.path_utils import resolve_within_root
+        
+        # Handle None explicitly (LLM sometimes sends None instead of using default)
+        if dir_path is None:
+            dir_path = "."
+        
+        resolved = resolve_within_root(self.ctx.codebase_root, dir_path)
+
+        
+        if not resolved.exists():
+            return f"ERROR: Directory '{dir_path}' not found."
+        if not resolved.is_dir():
+            return f"ERROR: '{dir_path}' is a file, not a directory."
+        
+        files = []
+        dirs = []
+        for entry in sorted(resolved.iterdir()):
+            if entry.name.startswith(".") or entry.name in IGNORED_DIRS:
+                continue
+            if entry.is_dir():
+                dirs.append(f"{entry.name}/")
+            else:
+                files.append(entry.name)
+        
+        result = f"# Contents of `{dir_path}`\n\n"
+        if dirs:
+            result += "**Directories:**\n" + "\n".join(f"- {d}" for d in dirs) + "\n\n"
+        if files:
+            result += "**Files:**\n" + "\n".join(f"- {f}" for f in files) + "\n"
+        
+        if not dirs and not files:
+            result += "(empty directory)\n"
+        
+        return result
+
+
+class ReadCodebaseFileTool(Tool):
+    """Allow supervisor to read files to check their importance."""
+    name = "read_codebase_file"
+    description = "Read a source file to check its importance. Use for quick inspection before deciding what to document."
+    inputs = {
+        "file_path": {
+            "type": "string",
+            "description": "File path relative to codebase root",
+        },
+        "max_lines": {
+            "type": "integer",
+            "description": "Maximum lines to read (default 50 for quick inspection)",
+            "nullable": True,
+        }
+    }
+    output_type = "string"
+
+    def __init__(self, ctx: SupervisorContext, **kwargs):
+        super().__init__(**kwargs)
+        self.ctx = ctx
+
+    def forward(self, file_path: str, max_lines: int = 50) -> str:
+        from utils.path_utils import resolve_within_root
+        
+        resolved = resolve_within_root(self.ctx.codebase_root, file_path)
+        
+        if not resolved.exists():
+            return f"ERROR: File '{file_path}' not found."
+        if not resolved.is_file():
+            return f"ERROR: '{file_path}' is a directory, not a file."
+        
+        try:
+            lines = []
+            with resolved.open("r", encoding="utf-8") as f:
+                for i, line in enumerate(f):
+                    if i >= max_lines:
+                        lines.append(f"\n... [truncated after {max_lines} lines] ...")
+                        break
+                    lines.append(line)
+            return "".join(lines)
+        except UnicodeDecodeError:
+            return f"ERROR: '{file_path}' is not a text file."
 
 
 class SpawnAnalyzerAgentTool(Tool):
     name = "spawn_analyzer_agent"
-    description = "Spawn an analyzer sub-agent for a specific target. Returns JSON with workspace path and status."
+    description = "Spawn analyzer sub-agent for a directory. Returns JSON {workspace, status}."
     inputs = {
         "target_path": {
             "type": "string",
@@ -210,25 +276,68 @@ class SpawnAnalyzerAgentTool(Tool):
         super().__init__(**kwargs)
         self.ctx = ctx
 
+    def _preload_file_content(self, file_path: str, max_chars: int = 10000) -> str:
+        """Pre-load file content to reduce sub-agent tool calls."""
+        try:
+            full_path = self.ctx.codebase_root / file_path
+            if not full_path.exists():
+                return f"[File not found: {file_path}]"
+            
+            file_size = full_path.stat().st_size
+            if file_size > max_chars:
+                return f"[File too large ({file_size} chars). Use `read_codebase_file('{file_path}')` to read it.]"
+            
+            content = full_path.read_text(encoding="utf-8")
+            return content
+        except Exception as e:
+            return f"[Error reading {file_path}: {e}]"
+
     def forward(self, target_path: str, focus_files: List[str], custom_instructions: str = "") -> str:
-        safe_name = target_path.replace("/", "_").replace("\\", "_").strip("_") or "root"
+        # Use only the last 2 path components to avoid excessively long folder names
+        path_obj = Path(target_path)
+        parts = path_obj.parts[-2:] if len(path_obj.parts) >= 2 else path_obj.parts
+        short_name = "_".join(parts).replace("/", "_").replace("\\", "_").strip("_") or "root"
+        safe_name = short_name[:50]  # Truncate to max 50 chars
         workspace_root = self.ctx.sub_agents_root / safe_name
 
         if workspace_root.exists():
             shutil.rmtree(workspace_root)
         workspace_root.mkdir(parents=True, exist_ok=True)
 
-        focus_list = "\n".join(f"- `{f}`" for f in focus_files) if focus_files else "- (explore the target directory)"
+        # PRE-LOAD file contents to reduce sub-agent tool calls
+        preloaded_sections = []
+        for f in focus_files:
+            content = self._preload_file_content(f)
+            preloaded_sections.append(f"### `{f}`\n```python\n{content}\n```")
+        
+        preloaded_content = "\n\n".join(preloaded_sections) if preloaded_sections else "(no files provided)"
+        
+        focus_list = "\n".join(f"- `{f}`" for f in focus_files) if focus_files else "(none)"
+        
         task_desc = f"""Analyze and document: `{target_path}`
 
-IMPORTANT: First use `get_codebase_tree` on the target directory to see actual file paths before reading files.
+## PRE-LOADED SOURCE FILES (use these directly, no need to read again):
+{preloaded_content}
 
-Suggested focus areas:
+## YOUR TOOLS (use only if pre-loaded content is insufficient):
+- `read_codebase_file(file_path)` - Read additional files if needed
+- `list_codebase_directory(path)` - List directory contents
+- `get_codebase_tree()` - Get directory structure
+- `write_workspace_file(file_path, content)` - Save your documentation
+
+## FILES ANALYZED:
 {focus_list}
 
 {custom_instructions or ''}
 
-Write your documentation to `summary.md` in your workspace.
+## OUTPUT REQUIREMENTS:
+Write comprehensive documentation to `summary.md` covering:
+1. Purpose & Overview
+2. Key Components  
+3. Data Flow & Dependencies
+4. Code Examples (use snippets from above)
+
+IMPORTANT: The source code is already provided above. Write directly to summary.md without additional file reads unless absolutely necessary.
 """
 
         spec = SubAgentTaskSpec(
@@ -242,17 +351,43 @@ Write your documentation to `summary.md` in your workspace.
                 codebase_root=self.ctx.codebase_root,
                 sub_agents_root=workspace_root,
                 min_interval_seconds=5.0,
-                max_tool_calls=20,  # Increased from 10 to allow tree + reads
-                max_directory_calls=2,  # Allow tree calls
+                max_tool_calls=None,
+                max_directory_calls=None,
+                minimal_tools=False,  # Enable all tools per architecture spec
             )
 
             workspace = workspaces[0] if workspaces else None
             if workspace and workspace.exists():
+                # Perform immediate validation
+                from utils.validation import validate_content
+                
+                output_file = workspace / "summary.md"
+                validation_info = "Validation: N/A (file not found)"
+                is_valid = False
+                
+                if output_file.exists():
+                    try:
+                        content = output_file.read_text(encoding="utf-8")
+                        res = validate_content(content, min_chars=100)
+                        is_valid = res.is_valid
+                        validation_info = f"Valid: {res.is_valid}. Issues: {res.issues}"
+                    except Exception as ve:
+                        validation_info = f"Validation failed: {ve}"
+                
+                status = "completed" if is_valid else "completed_with_issues"
+                
                 self.ctx.spawned_agents[target_path] = {
                     "workspace": str(workspace),
-                    "status": "completed",
+                    "status": status,
+                    "validation": validation_info
                 }
-                return json.dumps({"workspace": str(workspace), "status": "completed"})
+                
+                return json.dumps({
+                    "workspace": str(workspace), 
+                    "status": status, 
+                    "validation": validation_info,
+                    "preview": f"File created at {output_file.name}. {validation_info}"
+                })
             else:
                 self.ctx.spawned_agents[target_path] = {
                     "workspace": str(workspace_root),
@@ -273,7 +408,7 @@ Write your documentation to `summary.md` in your workspace.
 
 class ReadAgentOutputTool(Tool):
     name = "read_agent_output"
-    description = "Read the output file from a sub-agent workspace."
+    description = "Read markdown file from sub-agent workspace."
     inputs = {
         "workspace_path": {
             "type": "string",
@@ -287,10 +422,20 @@ class ReadAgentOutputTool(Tool):
     }
     output_type = "string"
 
+    def __init__(self, ctx: SupervisorContext = None, **kwargs):
+        super().__init__(**kwargs)
+        self.ctx = ctx
+
     def forward(self, workspace_path: str, filename: str = "summary.md") -> str:
+        # Try as absolute path first (or direct subdir of CWD)
         workspace = Path(workspace_path)
+        
+        # If context is available, try resolving relative to sub_agents_root
+        if not workspace.exists() and self.ctx:
+             workspace = self.ctx.sub_agents_root / workspace_path
+
         if not workspace.exists():
-            return f"ERROR: Workspace not found: {workspace_path}"
+            return f"ERROR: Workspace not found: {workspace_path} (checked {workspace})"
 
         target_file = workspace / filename
         if not target_file.exists():
@@ -310,7 +455,7 @@ class ReadAgentOutputTool(Tool):
 
 class EvaluateOutputQualityTool(Tool):
     name = "evaluate_output_quality"
-    description = "Evaluate if sub-agent output meets quality standards. Returns JSON with assessment."
+    description = "Check if output is valid (has headers, code, min length). Returns JSON."
     inputs = {
         "content": {
             "type": "string",
@@ -325,37 +470,20 @@ class EvaluateOutputQualityTool(Tool):
     output_type = "string"
 
     def forward(self, content: str, min_chars: int = 100) -> str:
-        issues = []
-        stripped = content.strip()
-
-        if not stripped:
-            issues.append("Content is empty")
-        elif stripped.lower() in ("_no response_", "no response"):
-            issues.append("Content is placeholder text")
-        elif len(stripped) < min_chars:
-            issues.append(f"Content too short ({len(stripped)} chars, need {min_chars})")
-
-        has_headers = any(line.startswith("#") for line in content.split("\n"))
-        if not has_headers:
-            issues.append("Missing markdown headers")
-
-        has_code = "```" in content
-        if not has_code:
-            issues.append("No code snippets included")
-
-        is_valid = len(issues) == 0
-        return json.dumps({
-            "valid": is_valid,
-            "char_count": len(stripped),
-            "has_headers": has_headers,
-            "has_code": has_code,
-            "issues": issues,
-        })
+        from utils.validation import validate_content
+        
+        result = validate_content(
+            content,
+            min_chars=min_chars,
+            check_mermaid=True,
+            strict_heading_start=False,  # Allow blockquotes
+        )
+        return json.dumps(result.to_dict())
 
 
 class RetryAgentTool(Tool):
     name = "retry_agent"
-    description = "Re-run a failed sub-agent with specific feedback from Supervisor."
+    description = "Retry failed sub-agent with supervisor feedback."
     inputs = {
         "target_path": {
             "type": "string",
@@ -379,25 +507,157 @@ class RetryAgentTool(Tool):
 
         self.ctx.retry_counts[target_path] = retry_count + 1
 
-        safe_name = target_path.replace("/", "_").replace("\\", "_").strip("_") or "root"
-        retry_workspace = self.ctx.sub_agents_root / f"retry_{retry_count + 1}_{safe_name}"
-        if retry_workspace.exists():
-            shutil.rmtree(retry_workspace)
-        retry_workspace.mkdir(parents=True, exist_ok=True)
+        # Use only the last 2 path components to avoid excessively long folder names
+        path_obj = Path(target_path)
+        parts = path_obj.parts[-2:] if len(path_obj.parts) >= 2 else path_obj.parts
+        short_name = "_".join(parts).replace("/", "_").replace("\\", "_").strip("_") or "root"
+        # Truncate to max 50 chars to keep paths manageable
+        safe_name = short_name[:50]
+        
+        # --- WORKSPACE SELECTION ---
+        # User requested inplace retries. Try to find original workspace.
+        original_workspace_path = None
+        
+        # 1. Exact match
+        if target_path in self.ctx.spawned_agents:
+            original_workspace_path = self.ctx.spawned_agents[target_path].get("workspace")
+            
+        # 2. Fuzzy match (check if target_path is part of key or vice versa)
+        if not original_workspace_path:
+            target_clean = target_path.replace(".md", "").lower()
+            for key, data in self.ctx.spawned_agents.items():
+                key_clean = key.replace(".md", "").lower()
+                if target_clean in key_clean or key_clean in target_clean:
+                    original_workspace_path = data.get("workspace")
+                    logger.info(f"RetryAgent fuzzy matched '{target_path}' to '{key}' workspace")
+                    break
 
-        task_desc = f"""Analyze and document: `{target_path}`
+        if original_workspace_path:
+             retry_workspace = Path(original_workspace_path)
+             logger.info(f"RetryAgent reusing existing workspace: {retry_workspace}")
+        else:
+             # Fallback if original not found (should not happen normally)
+             logger.warning(f"RetryAgent could not find original workspace for '{target_path}'. Creating new.")
+             retry_workspace = self.ctx.sub_agents_root / f"retry_{retry_count + 1}_{safe_name}"
+             if retry_workspace.exists():
+                 shutil.rmtree(retry_workspace)
+             retry_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Detect if this is a tutorial retry
+        is_tutorial = "tutorial" in target_path.lower() or target_path.endswith(".md")
+        
+        # --- SMART RETRY LOGIC ---
+        # Check if the feedback indicates a simple formatting/syntax issue
+        formatting_keywords = [
+            "formatting", "format", "syntax", "unbalanced", "paired", 
+            "closing", "code block", "markdown", "invalid"
+        ]
+        is_formatting_issue = any(k in feedback.lower() for k in formatting_keywords)
+        
+        # Try to find previous draft to pre-load
+        previous_content = ""
+        # Use the resolved original_workspace_path instead of trying to get it again
+        previous_workspace_path = original_workspace_path 
+        if previous_workspace_path:
+            try:
+                # Find the relevant markdown file
+                prev_ws = Path(previous_workspace_path)
+                # For KB: summary.md. For Tutorial: target_path might be filename? Not guaranteed.
+                # Heuristic: Find largest MD file that is not empty
+                md_files = list(prev_ws.glob("*.md"))
+                target_md = None
+                
+                if is_tutorial and target_path.endswith(".md"):
+                     # If target_path is filename, look for it
+                     target_md = prev_ws / target_path
+                     if not target_md.exists(): target_md = None
+                
+                if not target_md and md_files:
+                    # Default to summary.md or the largest file
+                    summary = prev_ws / "summary.md"
+                    if summary.exists():
+                        target_md = summary
+                    else:
+                        # Pick largest
+                        target_md = max(md_files, key=lambda p: p.stat().st_size)
+                
+                if target_md and target_md.exists():
+                    previous_content = target_md.read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Failed to read previous draft for retry: {e}")
+
+        # Construct Task & Tools based on issue type
+        if is_formatting_issue and previous_content:
+            target_filename = target_md.name if target_md else "summary.md"
+            
+            # FOCUSED FIX MODE
+            task_desc = f"""FIX FORMATTING ISSUES: `{target_path}`
 
 ⚠️ RETRY ATTEMPT {retry_count + 1}/{self.ctx.max_retries}
 
 SUPERVISOR FEEDBACK:
 {feedback}
 
+TARGET FILENAME: `{target_filename}`
+
+PREVIOUS DRAFT (Contains errors):
+```markdown
+{previous_content}
+```
+
+YOUR TASK:
+1. Fix the formatting errors listed above.
+2. Output the COMPLETELY CORRECTED document.
+3. Save it to `{target_filename}` using `write_workspace_file` (or `write_tutorial_file`).
+4. Do NOT rewrite the content, just fix the syntax/structure.
+"""
+            role = SubAgentRole.TUTORIAL_WRITER if is_tutorial else SubAgentRole.ANALYZER
+            minimal_tools = True # No need to search, just write
+            
+        else:
+            # FULL REGENERATION MODE (Missing content or unknown error)
+            if is_tutorial:
+                # Tutorial retry - give full tools and RAG access
+                task_desc = f"""⚠️ RETRY ATTEMPT {retry_count + 1}/{self.ctx.max_retries}
+
+SUPERVISOR FEEDBACK:
+{feedback}
+
+YOUR TOOLS:
+- `retrieve_relevant_context(query)` - RAG semantic search (USE THIS!)
+- `read_knowledge_base_file(path)` - Read KB documentation
+- `read_codebase_file(path)` - Read source code
+- `list_codebase_directory(path)` - List files
+- `write_tutorial_file(path, content)` - Save tutorial
+
+FIX THE ISSUES ABOVE and rewrite the complete tutorial.
+"""
+                role = SubAgentRole.TUTORIAL_WRITER
+                minimal_tools = False  # Full access for tutorials
+            else:
+                # KB analyzer retry - now with full tools for exploration
+                task_desc = f"""Analyze and document: `{target_path}`
+
+⚠️ RETRY ATTEMPT {retry_count + 1}/{self.ctx.max_retries}
+
+SUPERVISOR FEEDBACK:
+{feedback}
+
+YOUR TOOLS (use list_codebase_directory to find correct file names!):
+- `list_codebase_directory(path)` - List files in a directory (USE THIS FIRST!)
+- `read_codebase_file(file_path)` - Read source files
+- `get_codebase_tree()` - Get directory structure
+- `write_workspace_file(file_path, content)` - Save documentation
+
+IMPORTANT: If you don't know the exact file names, use `list_codebase_directory` first!
 You MUST address the issues above. Write comprehensive documentation to `summary.md`.
 """
+                role = SubAgentRole.ANALYZER
+                minimal_tools = False  # Enable all tools for retry
 
         spec = SubAgentTaskSpec(
             description=task_desc,
-            role=SubAgentRole.ANALYZER,
+            role=role,
         )
 
         try:
@@ -406,8 +666,10 @@ You MUST address the issues above. Write comprehensive documentation to `summary
                 codebase_root=self.ctx.codebase_root,
                 sub_agents_root=retry_workspace,
                 min_interval_seconds=5.0,
-                max_tool_calls=20,  # Match spawn_analyzer_agent budget
-                max_directory_calls=2,
+                max_tool_calls=None,  # No limit
+                max_directory_calls=None,  # No limit
+                knowledge_base_root=self.ctx.knowledge_base_root,
+                minimal_tools=minimal_tools,
             )
 
             workspace = workspaces[0] if workspaces else None
@@ -427,7 +689,7 @@ You MUST address the issues above. Write comprehensive documentation to `summary
 
 class FinalizeKnowledgeBaseTool(Tool):
     name = "finalize_knowledge_base"
-    description = "Collect all sub-agent outputs and create final knowledge base."
+    description = "Collect all sub-agent outputs into final KB directory."
     inputs = {
         "workspaces": {
             "type": "array",
@@ -486,7 +748,7 @@ class FinalizeKnowledgeBaseTool(Tool):
 
 class SpawnTutorialAgentTool(Tool):
     name = "spawn_tutorial_agent"
-    description = "Spawn a tutorial writer sub-agent for a specific topic."
+    description = "Spawn tutorial writer sub-agent. Returns JSON {workspace, status}."
     inputs = {
         "topic": {
             "type": "string",
@@ -500,6 +762,12 @@ class SpawnTutorialAgentTool(Tool):
             "type": "string",
             "description": "Specific instructions on what to cover in this chapter",
         },
+        "focus_files": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of key KB files or source files to pre-load for the agent.",
+            "nullable": True
+        },
     }
     output_type = "string"
 
@@ -507,7 +775,29 @@ class SpawnTutorialAgentTool(Tool):
         super().__init__(**kwargs)
         self.ctx = ctx
 
-    def forward(self, topic: str, target_filename: str, focus_instructions: str) -> str:
+    def _preload_file_content(self, file_path: str, max_chars: int = 15000) -> str:
+        """Pre-load file content from KB or Codebase."""
+        try:
+            # 1. Try Knowledge Base first (most likely for tutorials)
+            if self.ctx.knowledge_base_root:
+                kb_path = self.ctx.knowledge_base_root / file_path
+                if kb_path.exists():
+                    if kb_path.stat().st_size > max_chars:
+                        return f"[File too large. Use `read_codebase_file` or `read_knowledge_base_file` to read '{file_path}']"
+                    return kb_path.read_text(encoding="utf-8")
+
+            # 2. Try Codebase
+            code_path = self.ctx.codebase_root / file_path
+            if code_path.exists():
+                if code_path.stat().st_size > max_chars:
+                    return f"[File too large. Use `read_codebase_file('{file_path}')`]"
+                return code_path.read_text(encoding="utf-8")
+            
+            return f"[File not found: {file_path}]"
+        except Exception as e:
+            return f"[Error reading {file_path}: {e}]"
+
+    def forward(self, topic: str, target_filename: str, focus_instructions: str, focus_files: list[str] = None) -> str:
         safe_name = target_filename.replace(".md", "").replace("/", "_").strip("_")
         workspace_root = self.ctx.sub_agents_root / safe_name
 
@@ -515,14 +805,30 @@ class SpawnTutorialAgentTool(Tool):
             shutil.rmtree(workspace_root)
         workspace_root.mkdir(parents=True, exist_ok=True)
 
-        task_desc = f"""Write a tutorial: "{topic}"
-Target file: {target_filename}
+        # Pre-load content
+        preloaded_section = ""
+        if focus_files:
+            preloaded_section = "\n## PRE-LOADED CONTEXT (Use directly, NO NEED TO READ AGAIN):\n"
+            for f in focus_files:
+                content = self._preload_file_content(f)
+                # Helper to format markdown nicely inside the prompt
+                preloaded_section += f"### `{f}`\n```markdown\n{content}\n```\n\n"
 
-INSTRUCTIONS:
+        # Optimized task description
+        task_desc = f"""Write tutorial: "{topic}"
+Target file: {target_filename}
+{preloaded_section}
+FOCUS:
 {focus_instructions}
 
-Write your final tutorial to `{target_filename}` in your workspace.
+WORKFLOW:
+1. REVIEW pre-loaded files above first.
+2. Search KB/codebase ONLY if missing specific details.
+3. Read source files ONLY to verify exact code snippets if not in context.
+4. Write tutorial with real examples and Mermaid diagrams.
+5. Save to `{target_filename}`
 """
+
 
         spec = SubAgentTaskSpec(
             description=task_desc,
@@ -535,18 +841,51 @@ Write your final tutorial to `{target_filename}` in your workspace.
                 codebase_root=self.ctx.codebase_root,
                 sub_agents_root=workspace_root,
                 min_interval_seconds=5.0,
-                max_tool_calls=20,
-                max_directory_calls=1, # KB lookup mostly
+                max_tool_calls=None,  # No limit
+                max_directory_calls=None,  # No limit
                 knowledge_base_root=self.ctx.knowledge_base_root,
+                minimal_tools=False,  # Allow exploration + RAG for tutorial writers
             )
 
             workspace = workspaces[0] if workspaces else None
             if workspace and workspace.exists():
+                # Perform immediate validation
+                from utils.validation import validate_content
+                
+                # Tutorial writer creates target_filename, not summary.md
+                # We need to find the markdown file
+                output_file = workspace / target_filename
+                if not output_file.exists():
+                    # Fallback search
+                    md_files = list(workspace.glob("*.md"))
+                    if md_files:
+                        output_file = md_files[0]
+                
+                validation_info = "Validation: N/A (file not found)"
+                is_valid = False
+                
+                if output_file.exists():
+                    try:
+                        content = output_file.read_text(encoding="utf-8")
+                        res = validate_content(content, min_chars=500, check_mermaid=True)
+                        is_valid = res.is_valid
+                        validation_info = f"Valid: {res.is_valid}. Issues: {res.issues}"
+                    except Exception as ve:
+                        validation_info = f"Validation failed: {ve}"
+
+                status = "completed" if is_valid else "completed_with_issues"
+
                 self.ctx.spawned_agents[target_filename] = {
                     "workspace": str(workspace),
-                    "status": "completed",
+                    "status": status,
+                    "validation": validation_info
                 }
-                return json.dumps({"workspace": str(workspace), "status": "completed"})
+                return json.dumps({
+                    "workspace": str(workspace), 
+                    "status": status, 
+                    "validation": validation_info,
+                    "preview": f"File checked: {output_file.name}. {validation_info}"
+                })
             else:
                 return json.dumps({"workspace": str(workspace_root), "status": "failed", "error": "No output"})
 
@@ -557,7 +896,7 @@ Write your final tutorial to `{target_filename}` in your workspace.
 
 class FinalizeTutorialsTool(Tool):
     name = "finalize_tutorials"
-    description = "Collect all successful tutorials into the final output directory."
+    description = "Collect all tutorial outputs into final directory."
     inputs = {
         "workspaces": {
             "type": "array",
@@ -571,18 +910,53 @@ class FinalizeTutorialsTool(Tool):
         self.ctx = ctx
 
     def forward(self, workspaces: List[str]) -> str:
-        collected_files = []
+        # Group workspaces by base target name to handle retries
+        # Example: "01_getting_started" vs "retry_1_01_getting_started_sub_agent_1"
+        groups = {}
+        
         for ws_path in workspaces:
+            path = Path(ws_path)
+            name = path.name
+            
+            # Extract base name (simplified heuristic)
+            if name.startswith("retry_"):
+                # format: retry_N_basename_sub_agent_M
+                # We need to find the base topic name. 
+                # This is tricky without strict naming. Let's assume the component after the retry number matches.
+                # Actually, simpler: just use the folder contents to decide what topic it is? 
+                # Or rely on the fact that supervisor passes related items?
+                # Let's trust that the supervisor might pass all of them.
+                pass
+            
+            # Better approach: Just process them all, but sort them so retries come LAST.
+            # If we process original THEN retry, the retry overwrites the original, which is CORRECT.
+            # So we just need to ensure the list is sorted by creation time or name such that retries are last.
+            pass
+
+        # Sort workspaces: non-retries first, then retries sorted by N
+        def sort_key(p):
+            name = Path(p).name
+            if name.startswith("retry_"):
+                try:
+                    # extract N from retry_N_
+                    n = int(name.split("_")[1])
+                    return 1000 + n # Retries come after originals
+                except:
+                    return 999
+            return 0 # Originals first
+            
+        sorted_workspaces = sorted(workspaces, key=sort_key)
+        
+        collected_files = []
+        for ws_path in sorted_workspaces:
             workspace = Path(ws_path)
             if not workspace.exists():
                 continue
 
-            # Look for any markdown file that isn't summary.md (unless explicitly named so)
-            # Actually tutorial writer writes to target_filename.
             md_files = list(workspace.glob("*.md"))
             
             for md_file in md_files:
-                if md_file.name == "summary.md": continue # skip artifacts if any
+                if md_file.name == "summary.md": continue 
                 
                 try:
                     content = md_file.read_text(encoding="utf-8")
@@ -590,7 +964,13 @@ class FinalizeTutorialsTool(Tool):
 
                     out_path = self.ctx.output_root / md_file.name
                     out_path.write_text(content, encoding="utf-8")
-                    collected_files.append(md_file.name)
+                    
+                    # Log if we are overwriting
+                    if md_file.name in collected_files:
+                        logger.info(f"Overwriting {md_file.name} with version from {workspace.name}")
+                    else:
+                        collected_files.append(md_file.name)
+                        
                 except Exception as e:
                     logger.warning(f"Failed to collect {md_file}: {e}")
 
@@ -601,7 +981,6 @@ def build_supervisor_tools(
     codebase_root: str | Path,
     sub_agents_root: str | Path,
     output_root: str | Path,
-    usage_callback: Callable[[str], None] | None = None,
 ) -> List[Tool]:
     """Create tools for the Knowledge Base Supervisor."""
     ctx = SupervisorContext(
@@ -610,13 +989,12 @@ def build_supervisor_tools(
         output_root=ensure_directory(output_root),
     )
 
+    # Validation is now integrated into SpawnAnalyzerAgentTool, so read_agent_output and evaluate_output_quality are removed
     return [
         GetCodebaseOverviewTool(ctx),
-        ListAvailableToolkitsTool(),
-        ListAvailablePromptsTool(),
+        ListCodebaseDirectoryTool(ctx),
+        ReadCodebaseFileTool(ctx),
         SpawnAnalyzerAgentTool(ctx),
-        ReadAgentOutputTool(),
-        EvaluateOutputQualityTool(),
         RetryAgentTool(ctx),
         FinalizeKnowledgeBaseTool(ctx),
     ]
@@ -626,9 +1004,7 @@ def build_tutorial_supervisor_tools(
     codebase_root: str | Path,
     sub_agents_root: str | Path,
     output_root: str | Path,
-    knowledge_base_root: str | Path, # Tutorial supervisor needs KB access tools?
-    # Actually the tutorial sub-agents need KB access. 
-    # The Supervisor needs to READ KB to Plan.
+    knowledge_base_root: str | Path,
 ) -> List[Tool]:
     """Create tools for the Tutorial Supervisor."""
     ctx = SupervisorContext(
@@ -637,12 +1013,6 @@ def build_tutorial_supervisor_tools(
         output_root=ensure_directory(output_root),
         knowledge_base_root=Path(knowledge_base_root).expanduser().resolve(),
     )
-    
-    # We need to give the supervisor ability to read KB.
-    # We can reuse `read_knowledge_base_file` from tutorial_toolkit if we import it,
-    # or recreate a simple version here.
-    # Let's import the tool factory if possible, or just wrap simple functions.
-    
     kb_path = Path(knowledge_base_root).resolve()
     
     class ListKBTool(Tool):
@@ -668,12 +1038,11 @@ def build_tutorial_supervisor_tools(
             if p.exists(): return p.read_text(encoding="utf-8")[:10000] # truncate
             return "File not found."
 
+    # Validation is now integrated into SpawnTutorialAgentTool
     return [
         ListKBTool(),
         ReadKBTool(),
         SpawnTutorialAgentTool(ctx),
-        ReadAgentOutputTool(),
-        EvaluateOutputQualityTool(),
         RetryAgentTool(ctx),
         FinalizeTutorialsTool(ctx),
     ]

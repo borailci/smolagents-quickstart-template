@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import FrozenSet
 
-__all__ = ["IGNORED_DIRS", "ALLOWED_SUFFIXES", "BLOCKED_EXTENSIONS", "MAX_FILE_SIZE_BYTES"]
+__all__ = ["IGNORED_DIRS", "ALLOWED_SUFFIXES", "BLOCKED_EXTENSIONS", "MAX_FILE_SIZE_BYTES", "IGNORED_FILES"]
+
 
 # Directories to skip during file traversal
 IGNORED_DIRS: FrozenSet[str] = frozenset({
@@ -101,3 +102,16 @@ BLOCKED_EXTENSIONS: FrozenSet[str] = frozenset({
 
 # Maximum file size for processing (100KB)
 MAX_FILE_SIZE_BYTES: int = 100_000
+
+# Specific files to ignore during indexing
+IGNORED_FILES: FrozenSet[str] = frozenset({
+    "package-lock.json",
+    "yarn.lock",
+    "poetry.lock",
+    "Pipfile.lock",
+    "uv.lock",
+    "LICENSE",
+    "LICENSE.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+})

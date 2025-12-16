@@ -9,7 +9,6 @@ from typing import Iterable
 
 from loguru import logger
 
-from pipelines.bench import run_benchmarks
 from pipelines.knowledge_base_builder import KnowledgeBaseBuilder
 from pipelines.tutorial_generator import TutorialGenerator
 
@@ -98,56 +97,28 @@ def parse_args() -> argparse.Namespace:
         help="Enable retrieval helper tools for gathering supporting snippets.",
     )
 
-    bench_parser = subparsers.add_parser(
-        "bench",
-        help="Run baseline vs deep-with-KB tutorial generation and collect metrics.",
+    # Evaluate command (LLM Judge)
+    eval_parser = subparsers.add_parser(
+        "evaluate",
+        aliases=["eval", "judge"],
+        help="Evaluate tutorial quality using multiple LLM judges.",
     )
-    bench_parser.set_defaults(command="bench")
-    bench_parser.add_argument(
-        "--codebase",
-        type=Path,
-        action="append",
-        required=True,
-        help="Path to a codebase to benchmark. Provide multiple --codebase flags for multiple repos.",
+    eval_parser.set_defaults(command="evaluate")
+    eval_parser.add_argument(
+        "--tutorials", type=Path, required=True,
+        help="Path to tutorial directory containing .md files.",
     )
-    bench_parser.add_argument(
-        "--output",
-        type=Path,
-        default=None,
-        help="Output root for bench artifacts (defaults to data/bench).",
+    eval_parser.add_argument(
+        "--codebase", type=Path, default=None,
+        help="Path to codebase root (auto-detected if not provided).",
     )
-    bench_parser.add_argument(
-        "--rag",
-        dest="rag",
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Enable RAG for tutorial generation during benchmarking.",
+    eval_parser.add_argument(
+        "--output", type=Path, default=None,
+        help="Output directory for reports.",
     )
-    bench_parser.add_argument(
-        "--force-rebuild-kb",
-        action="store_true",
-        help="Force knowledge base regeneration for deep runs.",
-    )
-    bench_parser.add_argument(
-        "--skip-baseline",
-        action="store_true",
-        help="Skip the baseline agent run (only run deep+KB).",
-    )
-    bench_parser.add_argument(
-        "--skip-deep",
-        action="store_true",
-        help="Skip the deep+KB run (only run baseline).",
-    )
-    bench_parser.add_argument(
-        "--supervisor",
-        action="store_true",
-        help="Use Supervisor Agent for KB generation in deep runs.",
-    )
-    bench_parser.add_argument(
-        "--rag-cache-path",
-        type=Path,
-        default=None,
-        help="Path to a pre-computed RAG cache (folder) for the codebase. Speeds up runs significantly.",
+    eval_parser.add_argument(
+        "--models", type=str, default=None,
+        help="Comma-separated list of models to use as judges.",
     )
 
     gen_rag_parser = subparsers.add_parser(
@@ -181,8 +152,9 @@ def parse_args() -> argparse.Namespace:
     deep_agent_parser.add_argument(
         "--codebase",
         type=Path,
-        required=True,
-        help="Path to the codebase to analyze.",
+        required=False,
+        default=None,
+        help="Path to the codebase. If not provided, looks for directories in data/agent_workspace.",
     )
     deep_agent_parser.add_argument(
         "--output",
@@ -198,8 +170,9 @@ def parse_args() -> argparse.Namespace:
     )
     deep_agent_parser.add_argument(
         "--force-rebuild",
-        action="store_true",
-        help="Force regeneration of Knowledge Base and Tutorials.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Force regeneration of Knowledge Base and Tutorials (default: True). Use --no-force-rebuild to skip.",
     )
 
     return parser.parse_args()
@@ -311,18 +284,32 @@ def main() -> None:
         generator = TutorialGenerator(enable_rag=args.rag)
         outputs = generator.generate()
         logger.info("Tutorials written to:\n{}", _format_paths(outputs))
-    elif args.command == "bench":
-        summary_path = run_benchmarks(
-            args.codebase,
-            output_root=args.output,
-            enable_rag=args.rag,
-            force_rebuild_kb=args.force_rebuild_kb,
-            skip_baseline=args.skip_baseline,
-            skip_deep=args.skip_deep,
-            use_supervisor=args.supervisor,
-            rag_cache_path=args.rag_cache_path,
-        )
-        logger.info("Bench summary: {}", summary_path)
+    elif args.command == "evaluate":
+        from pipelines.llm_judge import evaluate_tutorials, write_json_report, write_markdown_report, JUDGE_MODELS
+        
+        tutorial_dir = args.tutorials.expanduser().resolve()
+        
+        if args.codebase:
+            codebase_root = args.codebase.expanduser().resolve()
+        else:
+            # Auto-detect from path structure
+            if tutorial_dir.name == "tutorials":
+                potential = Path("data/agent_workspace") / tutorial_dir.parent.name
+                codebase_root = potential if potential.exists() else tutorial_dir.parent
+            else:
+                codebase_root = tutorial_dir.parent
+        
+        models = JUDGE_MODELS
+        if args.models:
+            models = [m.strip() for m in args.models.split(",") if m.strip()]
+        
+        report = evaluate_tutorials(tutorial_dir, codebase_root, models)
+        
+        output_dir = args.output or tutorial_dir.parent
+        write_json_report(report, output_dir / "evaluation_report.json")
+        write_markdown_report(report, output_dir / "evaluation_report.md")
+        
+        logger.info(f"Evaluation complete! Overall score: {report.overall_avg}/5.0")
     elif args.command == "gen-rag":
         generate_rag_cache(
             codebase=args.codebase,
@@ -332,7 +319,35 @@ def main() -> None:
     elif args.command == "deep-agent":
         from pipelines.deep_agent import DeepAgent, DeepAgentConfig
         
-        codebase_path = args.codebase.expanduser().resolve()
+        # Priority: 1) .env CODEBASE_ROOT_PATH, 2) --codebase arg, 3) auto-discovery
+        import os
+        env_codebase = os.getenv("CODEBASE_ROOT_PATH")
+        
+        if env_codebase:
+            codebase_path = Path(env_codebase).expanduser().resolve()
+            logger.info(f"Using codebase from .env: {codebase_path}")
+        elif args.codebase:
+            codebase_path = args.codebase.expanduser().resolve()
+            logger.info(f"Using codebase from --codebase arg: {codebase_path}")
+        else:
+            # Auto-discover from data/agent_workspace
+            workspace_root = Path("data/agent_workspace").resolve()
+            candidates = [
+                d for d in workspace_root.iterdir() 
+                if d.is_dir() and not d.name.startswith(".") and d.name not in ("knowledge_base", "sub_agents_workspace")
+            ]
+            
+            if not candidates:
+                logger.error("No codebase found. Set CODEBASE_ROOT_PATH in .env, use --codebase, or add repos to data/agent_workspace.")
+                sys.exit(1)
+            
+            if len(candidates) > 1:
+                logger.warning(f"Multiple codebases found: {[c.name for c in candidates]}. Using the first one: {candidates[0].name}")
+            
+            codebase_path = candidates[0]
+            logger.info(f"Auto-selected codebase: {codebase_path}")
+
+
         if args.output:
             output_root = args.output.expanduser().resolve()
         else:

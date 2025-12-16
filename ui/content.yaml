@@ -1,0 +1,17 @@
+codebases:
+  - id: "smolagents-tutorial"
+    name: "Smolagents Framework"
+    description: "Learn AI agent development with Smolagents"
+    icon: "robot"
+    color: "#8B5CF6"
+    files:
+      - path: "docs/mini-courses/1_llms.md"
+        title: "Module 1: LLM Fundamentals"
+      - path: "docs/mini-courses/2_rag.md"
+        title: "Module 2: RAG Systems"
+      - path: "docs/mini-courses/3_tools.md"
+        title: "Module 3: Tool Integration"
+      - path: "docs/mini-courses/4_agents.md"
+        title: "Module 4: Agent Architecture"
+      - path: "docs/mini-courses/5_multi_agent.md"
+        title: "Module 5: Multi-Agent Systems"

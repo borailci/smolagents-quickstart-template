@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, cast
+from typing import Any, Dict, List, Sequence
 
 from dotenv import load_dotenv
 from loguru import logger
+from smolagents import LiteLLMModel, ToolCallingAgent
 
 from toolkits.sub_agent_toolkit import (
     SubAgentRole,
@@ -20,7 +24,13 @@ from toolkits.sub_agent_toolkit import (
 from prompts import prompts
 from utils.path_utils import ensure_directory
 
-__all__ = ["KnowledgeBaseBuilder", "DocumentationTarget", "AgentWorkspaceResult"]
+__all__ = [
+    "KnowledgeBaseBuilder",
+    "DocumentationTarget",
+    "AgentWorkspaceResult",
+    "DEFAULT_TARGET_IDENTIFIERS",
+    "TARGET_WHITELIST_ENV",
+]
 
 load_dotenv()
 
@@ -33,8 +43,8 @@ KNOWLEDGE_BASE_STEP_DELAY_SECONDS_ENV = "KNOWLEDGE_BASE_STEP_DELAY_SECONDS"
 KNOWLEDGE_BASE_MAX_TARGETS_ENV = "KNOWLEDGE_BASE_MAX_TARGETS"
 DEFAULT_KB_STEP_DELAY_SECONDS = 0.0
 DEFAULT_SUB_AGENT_MIN_INTERVAL = 5.0
-DEFAULT_ANCHOR_TOOL_CALLS = 5
-DEFAULT_ANCHOR_DIRECTORY_LISTINGS = 0
+DEFAULT_ANCHOR_TOOL_CALLS = None  # No limit
+DEFAULT_ANCHOR_DIRECTORY_LISTINGS = None  # No limit
 MAX_FOCUS_FILES = 2  # keep KB focused and concise
 FOCUS_KEYWORDS: tuple[str, ...] = (
     "router",
@@ -104,7 +114,7 @@ PRIORITIZED_TARGETS: tuple[str, ...] = (
 )
 
 MIN_PLANNER_TARGETS = 4
-MAX_PLANNER_TARGETS = 8  # increased for better codebase coverage
+MAX_PLANNER_TARGETS = 10  # increased for better codebase coverage
 
 
 @dataclass(frozen=True)
@@ -298,73 +308,128 @@ class KnowledgeBaseBuilder:
         # Check existing content
         if not self.force_rebuild and self.output_root.exists():
             existing_files = list(self.output_root.glob("*.md"))
-            if existing_files:
-                logger.info("KB exists at {} ({} files). Skipping rebuild.", self.output_root, len(existing_files))
-                return sorted(existing_files, key=lambda p: p.name)
+            if len(existing_files) > 0:
+                logger.info("KB exists at {} ({} files). Attempting to resume/increment.", self.output_root, len(existing_files))
         
-        # Reset directories
-        if not self.dry_run:
+        # Reset directories ONLY if forced
+        if self.force_rebuild and not self.dry_run:
             self._reset_directory(self.sub_agents_root)
             self._reset_directory(self.output_root)
             self._clear_rag_vector_store()
         
         self.output_root.mkdir(parents=True, exist_ok=True)
+        self.sub_agents_root.mkdir(parents=True, exist_ok=True)
         
         if self.dry_run:
             logger.debug("[DRY RUN] Would run Supervisor Agent")
             return []
         
-        # Create and run Supervisor Agent
+        # Create Supervisor Agent
         supervisor = self._create_supervisor_agent()
-        task = f"""Create a comprehensive Knowledge Base for tutorial generation.
+        
+        # Base Task Template
+        base_task = f"""Create Knowledge Base for: {self.codebase_root}
 
-TARGET CODEBASE: {self.codebase_root}
-
-GOAL: Generate documentation that enables high-quality tutorial creation. The Knowledge Base must provide information that a tutorial writer cannot easily derive from raw code alone.
-
-REQUIRED DIFFERENTIATORS (include in custom_instructions for each sub-agent):
-1. Entry Points - Where to start reading, initialization order
-2. Key Concepts - Define domain terms (Repository, DTO, Service, etc.)
-3. Dependencies & Relationships - What calls what (e.g., "Service → Repository → DB")
-4. Patterns & Conventions - Cross-cutting concerns, error handling, naming conventions
-5. Code Examples - Annotated snippets with "Why this matters" explanations
-6. Tutorial Hints - Common questions, pitfalls, prerequisites
+GOAL: Documentation that enables tutorial writers to understand the codebase quickly.
 
 WORKFLOW:
-1. Scout the codebase structure first (get_codebase_overview)
-2. Identify ALL meaningful directories (app, tests, scripts, config, docs, etc.)
-3. Spawn sub-agents with specific custom_instructions for each target
-4. Evaluate each output for quality and required sections
-5. Retry with feedback if sections are missing
-6. Finalize by collecting all successful outputs
+1. get_codebase_overview → identify 5-8 meaningful directories
+2. spawn_analyzer_agent for each target with custom_instructions
+3. evaluate_output_quality → retry if incomplete
+4. finalize_knowledge_base with all outputs
 
-QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and retry if incomplete.
+REQUIRED SECTIONS per doc:
+- Purpose & entry points
+- Architecture & dependencies  
+- Key concepts & patterns
+- Code examples with explanations
+- Testing & usage hints
+
+OUTPUT: Write each doc to summary.md in sub-agent workspace.
 """
         
         # Retry loop for rate limits
-        import time
         max_retries = 10
         retry_delay = 5.0  # seconds
         
         for attempt in range(1, max_retries + 1):
             try:
-                result = supervisor.run(task)
+                # --- RESUME LOGIC ---
+                # Scan for work that is already done to skip it
+                completed_files = sorted(f.name for f in self.output_root.glob("*.md"))
+                
+                # Also check sub-agents for un-finalized drafts (RECURSIVE search)
+                drafts = []
+                if self.sub_agents_root.exists():
+                    # Use rglob to find ALL summary.md files in nested sub-agent workspaces
+                    for summary_file in self.sub_agents_root.rglob("summary.md"):
+                        if summary_file.stat().st_size > 100:
+                            # Get relative path from sub_agents_root for clearer logging
+                            rel_path = summary_file.relative_to(self.sub_agents_root)
+                            drafts.append(str(rel_path))
+                
+                current_task = base_task
+                if completed_files or drafts:
+                    status_update = "\n\nSTATUS UPDATE (RESUMING):"
+                    if completed_files:
+                        status_update += "\n✅ FINALIZED (SKIP THESE):"
+                        for f in completed_files:
+                            status_update += f"\n- {f}"
+                    
+                    if drafts:
+                        status_update += "\n📝 DRAFTS AVAILABLE (Check these before spawning new agents):"
+                        for d in drafts:
+                            status_update += f"\n- {d}"
+                            
+                    current_task += status_update
+                    current_task += "\n\nINSTRUCTION: Review the status above. Do NOT re-analyze finalized targets. finalize_knowledge_base if drafts are good."
+
+                logger.info("Supervisor Task (Resume context): {} completed, {} drafts", len(completed_files), len(drafts))
+                
+                result = supervisor.run(current_task, max_steps=50)
                 logger.info("Supervisor Agent completed: {}", str(result)[:200])
                 break  # Success, exit retry loop
             except Exception as e:
-                error_str = str(e).lower()
-                is_rate_limit = "rate" in error_str or "429" in error_str or "exhausted" in error_str
+                error_str = str(e)
+                error_lower = error_str.lower()
                 
-                if is_rate_limit and attempt < max_retries:
-                    logger.warning(
-                        "Rate limit hit (attempt {}/{}). Waiting {}s before retry...",
-                        attempt, max_retries, retry_delay
-                    )
-                    time.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 1.5, 60.0)  # Exponential backoff, max 60s
-                else:
-                    logger.exception("Supervisor Agent failed: {}", e)
-                    raise RuntimeError(f"Supervisor Agent failed: {e}") from e
+                # Check for rate limit indicators in multiple forms
+                is_rate_limit = (
+                    "429" in error_str 
+                    or "rate limit" in error_lower 
+                    or "exhausted" in error_lower 
+                    or "quota" in error_lower
+                )
+
+                # Also retry on empty/malformed model responses (common with high loads)
+                is_parsing_error = (
+                    "message contains no content" in error_lower
+                    or "parsing tool call" in error_lower
+                    or "malformed" in error_lower
+                )
+                
+                if is_rate_limit or is_parsing_error:
+                    # Provide more detail about WHICH limit if possible
+                    limit_type = "Generic 429"
+                    if is_parsing_error:
+                        limit_type = "Empty/Malformed Response"
+                    elif "tpm" in error_lower or "token" in error_lower:
+                        limit_type = "TPM (Tokens Per Minute)"
+                    elif "rpm" in error_lower or "request" in error_lower:
+                        limit_type = "RPM (Requests Per Minute)"
+                    
+                    if attempt < max_retries:
+                        logger.warning(
+                            "Rate limit hit [{}] (attempt {}/{}). Waiting {}s before retry...",
+                            limit_type, attempt, max_retries, retry_delay
+                        )
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 1.5, 60.0)  # Exponential backoff
+                        continue
+                
+                # If not rate limit or retries exhausted, re-raise
+                logger.exception("Supervisor Agent failed: {}", e)
+                raise RuntimeError(f"Supervisor Agent failed: {e}") from e
         
         # Collect output files from supervisor
         output_files = list(self.output_root.glob("*.md"))
@@ -380,7 +445,6 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
 
     def _create_supervisor_agent(self):
         """Create the Supervisor Agent with its tools."""
-        from smolagents import ToolCallingAgent
         from toolkits.supervisor_toolkit import build_supervisor_tools
         from utils.llm_factory import create_model
 
@@ -477,20 +541,15 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
         logger.debug("Running planner agent to select documentation targets...")
 
         # Build planner task
-        scout_tree = self._scouting_tree or "(scout tree unavailable)"
-        report_hint = (self.output_root / "scouting_report.md").as_posix()
+        scout_tree = self._scouting_tree or "(unavailable)"
         task = (
-            "You already have a scouting snapshot of the repository. Reuse it to avoid extra directory calls.\n"
-            f"Scouting report path: {report_hint}\n"
-            "Key tree excerpt (depth 2):\n"
-            f"```markdown\n{scout_tree}\n```\n\n"
+            f"Directory structure:\n```\n{scout_tree}\n```\n\n"
             f"{context_summary}\n\n"
-            "Based ONLY on this snapshot plus targeted file reads, select 3-6 distinct folders/files that should be documented. Prioritize the defaults (README, src/api, src/models, tests) and stop once you have at most six.\n"
-            "Return ONLY a JSON array of relative paths, nothing else."
+            "Select 4-6 directories to document (prioritize: api, models, services, tests).\n"
+            "Return ONLY a JSON array of relative paths, e.g.: [\"app/api\", \"tests\"]"
         )
 
-        # Create simple planner agent (no tools needed, just decision)
-        from smolagents import LiteLLMModel, ToolCallingAgent
+        # Create planner agent
         from toolkits.sub_agent_toolkit import LITELLM_MODEL_ID, LITELLM_API_KEY
         from toolkits.scoped_filesystem_toolkit import build_scoped_tools
 
@@ -523,10 +582,6 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
             response_text = str(response)
 
             # Extract JSON array from response
-            import json
-            import re
-
-            # Try to find JSON array in response
             json_match = re.search(r"\[.*?\]", response_text, re.DOTALL)
             if not json_match:
                 logger.warning(
@@ -827,45 +882,30 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
         relative = target.path.as_posix()
         directory_hint = (
             relative if target.path.suffix == "" else target.path.parent.as_posix()
-        )
-        directory_hint = directory_hint or "."
-
-        sections = [
-            "- Open with context: why this area exists and when a tutorial author would reach for it.",
-            "- Describe architecture, dependencies, and control flow, weaving in code references with relative paths and line ranges.",
-            "- Surface the primary entrypoints (classes, functions, CLI, routes) alongside parameters, error handling, and extension seams.",
-            "- Capture configuration, environment contracts, and external services or data stores this code touches.",
-            "- Explain how to exercise or test the feature (fixtures, CLI commands, HTTP calls) so future guides can reuse the steps.",
-            "- Call out risks, gotchas, or follow-up work tutorial agents should remember when teaching this portion of the system.",
-        ]
+        ) or "."
 
         focus_files = self._get_focus_files(target)
-        if focus_files:
-            focus_lines = "\n".join(f"- `{path}`" for path in focus_files)
-            focus_section = (
-                "Focus files (ONLY call `read_codebase_file` on these paths):\n"
-                f"{focus_lines}\n"
-            )
-        else:
-            focus_section = "Focus files (none provided):\n- Read the primary target path directly and reuse the scouting summaries.\n"
+        focus_list = "\n".join(f"  - {p}" for p in focus_files) if focus_files else "  - (read target directly)"
 
-        instructions = "\n".join(sections)
-        tool_constraints = (
-            "You have access to `read_codebase_file` for the listed focus files and `write_workspace_file` for outputs. "
-            "Directory listing tools are disabled—do not attempt to explore beyond the provided files. Keep the writeup high-level (aim < ~600 words) and cite only short code snippets with line ranges. Diagrams are NOT required for the knowledge base."
-        )
-        return (
-            f"Analyze the path `{relative}` within the codebase. Focus on files under `{directory_hint}`.\n"
-            "Use descriptive markdown headings for each theme above so the output is ready for downstream tutorials."
-            " Favor paragraphs with short, labeled code snippets over bullet dumps, and cite files like `src/api/routes.py#L42`. Keep summaries concise and architectural."
-            " Save your main report as `summary.md` inside your workspace.\n"
-            f"Directory hints: {directory_hint}.\n"
-            f"{focus_section}"
-            f"Tool constraints: {tool_constraints}\n"
-            f"Module label: {target.label}.\n"
-            f"Global Context:\n{context_summary}\n"
-            f"Checklist:\n{instructions}"
-        )
+        return f"""Analyze: `{relative}`
+
+FOCUS FILES:
+{focus_list}
+
+REQUIRED SECTIONS:
+1. Purpose - Why this exists, when to use it
+2. Architecture - Dependencies, control flow
+3. Entry Points - Key classes/functions with parameters
+4. Configuration - Env vars, external services
+5. Testing - How to exercise this code
+
+RULES:
+- Use `read_codebase_file` only on focus files listed above
+- Keep under 600 words, cite code with line ranges (e.g., `file.py#L42`)
+- Write output to `summary.md`
+
+Context: {context_summary[:200] if context_summary else '(none)'}
+"""
 
     # ----- Aggregation ------------------------------------------------------
 
@@ -1073,7 +1113,6 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
 
         return exported
 
-    # ... [Keep existing summary agent logic, plan init, marking tasks logic] ...
 
     def _run_summary_agent(self, artifact_paths: Sequence[Path]) -> Path | None:
         if not artifact_paths:
@@ -1114,7 +1153,6 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
         files = "\n".join(f"- {p.name}" for p in artifact_paths)
         return f"Summarize these Knowledge Base files into an executive_summary.md:\n{files}"
 
-    # ... [Helper methods kept mostly as is, just ensuring types] ...
 
     def _initialize_plan(self, targets: Sequence[DocumentationTarget]) -> None:
         self._plan_state = {
@@ -1374,10 +1412,3 @@ QUALITY STANDARD: Each documentation file must have all 7 sections. Reject and r
 
         logger.debug(f"  → {target.path}: Up-to-date")
         return False
-
-
-__all__ = [
-    "KnowledgeBaseBuilder",
-    "DEFAULT_TARGET_IDENTIFIERS",
-    "TARGET_WHITELIST_ENV",
-]

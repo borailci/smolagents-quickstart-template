@@ -71,16 +71,17 @@ def create_model(
     
     # Enable reasoning for 2.5-pro models
     if "gemini-2.5-pro" in mid:
-        # kwargs["reasoning_effort"] = "medium"  # DISABLED: Causes empty response errors
+        # thinkingBudget=-1 enables dynamic thinking (model decides based on complexity)
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": -1}
         # Increase token limit for large file generation
         kwargs["max_tokens"] = 16384
-        logger.debug("Disabled reasoning_effort=medium for Pro model to prevent timeouts/empty responses")
+        logger.debug("Enabled dynamic thinking (budget=-1) for Pro model")
 
     # Enable thinking for 2.5-flash (Sub-agents)
     if "gemini-2.5-flash" in mid:
-        # LiteLLM maps reasoning_effort="low" to thinking_budget=1024
-        kwargs["reasoning_effort"] = "low"
-        logger.debug("Enabled reasoning_effort='low' (1024 tokens) for Flash model")
+        # thinkingBudget=-1 enables dynamic thinking
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": -1}
+        logger.debug("Enabled dynamic thinking (budget=-1) for Flash model")
 
     # Support for explicit Vertex credentials (ADC workaround)
     vertex_creds_path = os.getenv("VERTEX_CREDENTIALS")

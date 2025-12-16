@@ -496,7 +496,7 @@ OUTPUT: Write each doc to summary.md in sub-agent workspace.
             output_root=str(self.output_root),
         )
 
-        model = create_model()
+        model = create_model(role="supervisor")
 
         return ToolCallingAgent(
             name="knowledge_base_supervisor",

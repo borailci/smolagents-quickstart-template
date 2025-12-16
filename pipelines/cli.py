@@ -354,11 +354,14 @@ def main() -> None:
             logger.info(f"Auto-selected codebase: {codebase_path}")
 
 
+        # Determine output root for both modes
         if args.output:
             output_root = args.output.expanduser().resolve()
         else:
             output_root = (Path("data/deep_agent_output") / codebase_path.name).resolve()
-            
+
+        # Mode Selection
+        if args.mode == "baseline":
             logger.info("Running in BASELINE mode (No Knowledge Base Generation)")
             logger.info(f"Output directory: {output_root}")
             from pipelines.tutorial_generator import TutorialGenerator
@@ -378,9 +381,6 @@ def main() -> None:
             return
 
         # Standard Deep Agent
-        base_output_root = settings.DEEP_AGENT_OUTPUT_ROOT
-        output_root = base_output_root / codebase_name
-        
         logger.info(f"Output directory: {output_root}")
         
         config = DeepAgentConfig(

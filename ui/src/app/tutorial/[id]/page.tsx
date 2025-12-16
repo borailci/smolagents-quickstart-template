@@ -122,7 +122,7 @@ export default function TutorialPage() {
     const currentFileTitle = codebase.tutorials.find(t => t.filename === activeFile)?.title || activeFile;
 
     return (
-        <div className="flex h-[calc(100vh-4rem)] flex-col">
+        <div className="flex h-[calc(100vh-7.5rem)] flex-col">
             <Toolbar
                 codebaseName={codebase.name}
                 currentFile={currentFileTitle}
@@ -133,7 +133,7 @@ export default function TutorialPage() {
                 accentColor={accentColor}
             />
 
-            <div className="flex flex-1 overflow-hidden">
+            <div className="flex flex-1 min-h-0 overflow-hidden">
                 <FileSidebar
                     files={codebase.tutorials.map(t => ({ path: t.filename, title: t.title }))}
                     activeFile={activeFile}
@@ -142,13 +142,13 @@ export default function TutorialPage() {
                 />
 
                 <motion.div
-                    className="flex-1 overflow-hidden"
+                    className="flex-1 min-h-0 overflow-hidden"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                 >
                     <ScrollArea className="h-full">
                         <div
-                            className="mx-auto max-w-4xl p-8"
+                            className="mx-auto max-w-4xl p-8 pb-16"
                             style={{ fontSize: `${zoom}%` }}
                         >
                             {isLoading ? (

@@ -244,7 +244,7 @@ def _execute_sub_agent_runs(
             scoped_tools = build_scoped_tools(
                 codebase_root=str(codebase_path),
                 workspace_root=str(workspace),
-                usage_callback=budget.record if budget else None,
+                usage_callback=None,  # budget system removed
                 allow_directory_listing=not minimal_tools,
                 allow_tree=not minimal_tools,
                 allow_mermaid=False,
@@ -255,7 +255,7 @@ def _execute_sub_agent_runs(
             return ToolCallingAgent(
                 name=f"sub_agent_{index}",
                 description=f"Knowledge-base agent for task {index}",
-                tools=run_tools,
+                tools=scoped_tools,
                 model=model,
                 instructions=instructions,
             )

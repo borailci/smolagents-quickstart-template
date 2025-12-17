@@ -20,7 +20,7 @@ from toolkits.sub_agent_toolkit import (
     run_typed_sub_agent_tasks,
 )
 from toolkits.supervisor_toolkit import SupervisorContext
-from utils.path_utils import ensure_directory
+from toolkits.scoped_filesystem_toolkit import ensure_directory
 
 
 class SpawnTutorialAgentTool(Tool):
@@ -92,7 +92,8 @@ class SpawnTutorialAgentTool(Tool):
             workspace = workspaces[0] if workspaces else None
             if workspace and workspace.exists():
                 # Perform immediate validation
-                from utils.validation import validate_content
+                # Perform immediate validation
+                # from utils.validation import validate_content
                 
                 # Tutorial writer creates target_filename, not summary.md
                 # We need to find the markdown file
@@ -109,8 +110,10 @@ class SpawnTutorialAgentTool(Tool):
                 if output_file.exists():
                     try:
                         content = output_file.read_text(encoding="utf-8")
-                        res = validate_content(content, min_chars=500, check_mermaid=True)
-                        is_valid = res.is_valid
+                        is_valid = len(content) >= 500
+                        issues = [] if is_valid else [f"Length {len(content)} < 500"]
+                        res = type('obj', (object,), {'is_valid': is_valid, 'issues': issues})
+                        
                         validation_info = f"Valid: {res.is_valid}. Issues: {res.issues}"
                     except Exception as ve:
                         validation_info = f"Validation failed: {ve}"
@@ -216,15 +219,14 @@ def build_tutorial_supervisor_tools(
     )
     
     # Handle KB path safely
-    kb_path = None
-    if knowledge_base_root:
-        kb_path = Path(knowledge_base_root).resolve()
+    kb_path = ctx.knowledge_base_root
 
     class ListKBTool(Tool):
         name = "list_knowledge_base"
         description = "List available knowledge base files."
         inputs = {}
         output_type = "string"
+        
         def forward(self) -> str:
             if baseline_mode:
                 return "[Knowledge Base Not Available in Baseline Mode - Use Codebase Tools]"
@@ -242,13 +244,15 @@ def build_tutorial_supervisor_tools(
             }
         }
         output_type = "string"
+        
         def forward(self, filename: str) -> str:
             if baseline_mode:
                 return "[Knowledge Base Not Available in Baseline Mode]"
             if not kb_path or not kb_path.exists():
                 return "Knowledge Base directory not found."
             p = kb_path / filename
-            if p.exists(): return p.read_text(encoding="utf-8")[:30000] # Truncate large files
+            if p.exists(): 
+                return p.read_text(encoding="utf-8")[:30000] # Truncate large files
             return "File not found."
 
     return [

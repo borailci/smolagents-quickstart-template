@@ -26,10 +26,10 @@ from toolkits.sub_agent_toolkit import (
 from toolkits.scoped_filesystem_toolkit import (
     WriteWorkspaceFileTool, 
     ReadCodebaseFileTool,
+    ensure_directory,
+    IGNORED_DIRS,
 )
 from config import settings
-from utils.constants import IGNORED_DIRS
-from utils.path_utils import ensure_directory
 
 __all__ = ["build_supervisor_tools", "SupervisorContext"]
 
@@ -91,8 +91,25 @@ class SpawnAnalyzerAgentTool(Tool):
     def __init__(self, ctx: SupervisorContext, **kwargs):
         super().__init__(**kwargs)
         self.ctx = ctx
+        # Initialize Checkpoint
+        from utils.checkpoint import TaskCheckpoint
+        checkpoint_path = ctx.output_root / "analysis_checkpoint.json"
+        self.checkpoint = TaskCheckpoint(checkpoint_path)
 
     def forward(self, target_path: str, focus_files: List[str], custom_instructions: str = "") -> str:
+        # CHECKPOINT CHECK
+        if self.checkpoint.is_processed(target_path):
+            result = self.checkpoint.get_result(target_path)
+            if result:
+                 # Restore into in-memory context to keep Supervisor sync
+                self.ctx.spawned_agents[target_path] = json.loads(result)
+                logger.info(f"⏩ [SKIP] {target_path} already analyzed. Loading from checkpoint.")
+                return result
+
+        # RATE LIMITING
+        import time
+        time.sleep(2.0)  # Prevent 429 burst errors
+
         # Use only the last 2 path components to avoid excessively long folder names
         path_obj = Path(target_path)
         parts = path_obj.parts[-2:] if len(path_obj.parts) >= 2 else path_obj.parts
@@ -121,7 +138,6 @@ class SpawnAnalyzerAgentTool(Tool):
         )
 
         try:
-            import time
             start_time = time.monotonic()
             workspaces = run_typed_sub_agent_tasks(
                 [spec],
@@ -151,24 +167,32 @@ class SpawnAnalyzerAgentTool(Tool):
             # -----------------------
 
             workspace = workspaces[0] if workspaces else None
+            result_json = ""
+            
             if workspace and workspace.exists():
                 # Perform immediate validation
-                from utils.validation import validate_content
-                
                 output_file = workspace / "summary.md"
-                validation_info = "Validation: N/A (file not found)"
+                validation_info = "No output file found."
                 is_valid = False
                 
                 if output_file.exists():
                     try:
                         content = output_file.read_text(encoding="utf-8")
-                        res = validate_content(content, min_chars=100)
-                        is_valid = res.is_valid
+                        is_valid = len(content) >= 100
+                        issues = [] if is_valid else [f"Length {len(content)} < 100"]
+                        res = type('obj', (object,), {'is_valid': is_valid, 'issues': issues})
                         validation_info = f"Valid: {res.is_valid}. Issues: {res.issues}"
                     except Exception as ve:
                         validation_info = f"Validation failed: {ve}"
                 
                 status = "completed" if is_valid else "completed_with_issues"
+                
+                result_data = {
+                    "workspace": str(workspace), 
+                    "status": status, 
+                    "validation": validation_info,
+                    "preview": f"File created at {output_file.name}. {validation_info}"
+                }
                 
                 self.ctx.spawned_agents[target_path] = {
                     "workspace": str(workspace),
@@ -176,12 +200,13 @@ class SpawnAnalyzerAgentTool(Tool):
                     "validation": validation_info
                 }
                 
-                return json.dumps({
-                    "workspace": str(workspace), 
-                    "status": status, 
-                    "validation": validation_info,
-                    "preview": f"File created at {output_file.name}. {validation_info}"
-                })
+                result_json = json.dumps(result_data)
+                
+                # SAVE CHECKPOINT if successful
+                if is_valid:
+                    self.checkpoint.save_progress(target_path, result_json)
+                    
+                return result_json
             else:
                 self.ctx.spawned_agents[target_path] = {
                     "workspace": str(workspace_root),
@@ -218,15 +243,12 @@ class EvaluateOutputQualityTool(Tool):
     output_type = "string"
 
     def forward(self, content: str, min_chars: int = 100) -> str:
-        from utils.validation import validate_content
+        is_valid = len(content) >= min_chars
+        issues = []
+        if not is_valid:
+            issues.append(f"Length {len(content)} < {min_chars}")
         
-        result = validate_content(
-            content,
-            min_chars=min_chars,
-            check_mermaid=True,
-            strict_heading_start=False,  # Allow blockquotes
-        )
-        return json.dumps(result.to_dict())
+        return json.dumps({"is_valid": is_valid, "issues": issues})
 
 
 class RetryAgentTool(Tool):

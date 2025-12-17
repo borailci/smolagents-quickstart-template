@@ -100,7 +100,7 @@ Return ONLY valid JSON (no markdown fences):
 }}
 """
 
-def evaluate_pair(model: LiteLLMModel, model_id: str, file_name: str, path_a: Path, path_b: Path, rag_store: SimpleChromaRAGStore) -> dict | None:
+def evaluate_pair(model: LiteLLMModel, model_id: str, file_name: str, path_a: Path, path_b: Path) -> dict | None:
     content_a = path_a.read_text(errors="replace") if path_a.exists() else "MISSING"
     content_b = path_b.read_text(errors="replace") if path_b.exists() else "MISSING"
 
@@ -189,31 +189,7 @@ def _build_codebase_context(codebase_root: Path, max_chars: int = MAX_CODEBASE_C
     return _truncate("\n".join(context_parts), max_chars)
 
 
-def _build_codebase_context_from_rag(
-    codebase_root: Path, 
-    tutorial_content: str,
-    rag_store: Optional[Any] = None,
-    max_chars: int = MAX_CODEBASE_CONTEXT_CHARS
-) -> str:
-    """Build context using RAG if available, otherwise fall back to file scanning."""
-    if rag_store is not None:
-        try:
-            # Extract key terms from tutorial for RAG query
-            # Simple approach: use first 500 chars as query
-            query = tutorial_content[:500]
-            results = rag_store.search(query, k=10)
-            
-            context_parts = [f"# Codebase Context (RAG-retrieved): {codebase_root.name}\n"]
-            for doc in results:
-                source = doc.metadata.get("source", "unknown")
-                content = doc.page_content[:1000]
-                context_parts.append(f"\n## {source}\n```\n{content}\n```")
-            
-            return _truncate("\n".join(context_parts), max_chars)
-        except Exception as e:
-            logger.warning(f"RAG retrieval failed, falling back to file scan: {e}")
-    
-    return _build_codebase_context(codebase_root, max_chars)
+
 
 
 def _call_judge(
@@ -352,7 +328,6 @@ def evaluate_tutorials(
     tutorial_dir: Path,
     codebase_root: Path,
     models: List[str] = JUDGE_MODELS,
-    rag_store: Optional[Any] = None,
 ) -> EvaluationReport:
     """Evaluate all tutorials in a directory."""
     
@@ -365,8 +340,7 @@ def evaluate_tutorials(
     
     # Build codebase context once
     logger.info("Building codebase context...")
-    sample_content = tutorial_files[0].read_text(encoding="utf-8")[:500] if tutorial_files else ""
-    codebase_context = _build_codebase_context_from_rag(codebase_root, sample_content, rag_store)
+    codebase_context = _build_codebase_context(codebase_root)
     
     # Evaluate each tutorial
     tutorial_scores: List[AggregatedTutorialScore] = []
@@ -568,7 +542,7 @@ def main() -> None:
                 path_a = args.baseline / file_name
                 path_b = args.deep / file_name
                 
-                result = evaluate_pair(model, model_id, file_name, path_a, path_b, rag_store)
+                result = evaluate_pair(model, model_id, file_name, path_a, path_b)
                 
                 if result:
                     all_results.append(result)
@@ -577,7 +551,7 @@ def main() -> None:
                           f"{result.get('pedagogy_A', 0):<5} | {result.get('pedagogy_B', 0):<5} | "
                           f"{result.get('coverage_A', 0):<5} | {result.get('coverage_B', 0):<5}")
                 
-                # Inter-file throttle - Reduced since RAG is lighter
+                 # Inter-file throttle
                 time.sleep(1.0)
                 
         except Exception as e:

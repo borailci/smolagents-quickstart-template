@@ -1,0 +1,18 @@
+{
+  "processed_tasks": [
+    "instructor/core",
+    "instructor",
+    "instructor/dsl",
+    "instructor/batch",
+    "instructor/processing",
+    "instructor/providers"
+  ],
+  "results": {
+    "instructor/core": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent_output/instructor/sub_agents_kb/instructor_core\", \"status\": \"completed\", \"validation\": \"Valid: True. Issues: []\", \"preview\": \"File created at summary.md. Valid: True. Issues: []\"}",
+    "instructor": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent_output/instructor/sub_agents_kb/instructor\", \"status\": \"completed\", \"validation\": \"Valid: True. Issues: []\", \"preview\": \"File created at summary.md. Valid: True. Issues: []\"}",
+    "instructor/dsl": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent_output/instructor/sub_agents_kb/instructor_dsl\", \"status\": \"completed\", \"validation\": \"Valid: True. Issues: []\", \"preview\": \"File created at summary.md. Valid: True. Issues: []\"}",
+    "instructor/batch": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent_output/instructor/sub_agents_kb/instructor_batch\", \"status\": \"completed\", \"validation\": \"Valid: True. Issues: []\", \"preview\": \"File created at summary.md. Valid: True. Issues: []\"}",
+    "instructor/processing": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent_output/instructor/sub_agents_kb/instructor_processing\", \"status\": \"completed\", \"validation\": \"Valid: True. Issues: []\", \"preview\": \"File created at summary.md. Valid: True. Issues: []\"}",
+    "instructor/providers": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent_output/instructor/sub_agents_kb/instructor_providers\", \"status\": \"completed\", \"validation\": \"Valid: True. Issues: []\", \"preview\": \"File created at summary.md. Valid: True. Issues: []\"}"
+  }
+}

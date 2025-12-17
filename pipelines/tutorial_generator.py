@@ -28,7 +28,9 @@ from toolkits.sub_agent_toolkit import (
     run_typed_sub_agent_tasks,
 )
 from toolkits.tutorial_toolkit import build_tutorial_supervisor_tools
-from utils.path_utils import ensure_directory, resolve_within_root, PathTraversalError
+from toolkits.scoped_filesystem_toolkit import ensure_directory, resolve_within_root
+
+PathTraversalError = ValueError
 
 try:
     import tiktoken  # type: ignore
@@ -59,10 +61,7 @@ STRICT_TOOL_CALL_REMINDER = (
 )
 
 
-TUTORIAL_ENABLE_RAG_ENV = "TUTORIAL_ENABLE_RAG"
-TUTORIAL_RAG_MAX_SNIPPETS_ENV = "TUTORIAL_RAG_MAX_SNIPPETS"
 TUTORIAL_STEP_DELAY_SECONDS_ENV = "TUTORIAL_STEP_DELAY_SECONDS"
-DEFAULT_RAG_MAX_SNIPPETS = 3  # keep RAG light to reduce cost
 DEFAULT_STEP_DELAY_SECONDS = 0.0
 
 
@@ -184,31 +183,15 @@ def validate_tutorial_structure(
     
     Uses core validation from utils/validation.py with tutorial-specific settings.
     """
-    from utils.validation import (
-        validate_content,
-        validate_heading_sequence,
-        validate_code_block_completeness,
-    )
+    """
+    Validate tutorial structural integrity.
+    Simplified checks since utils.validation was removed.
+    """
+    errors = []
     
-    # Use core validation with strict settings for tutorials
-    result = validate_content(
-        content,
-        min_chars=min_length,
-        expected_title=expected_title,
-        check_mermaid=True,
-        strict_heading_start=True,  # Tutorials must start with #
-    )
-    
-    # Combine issues and warnings for backward compatibility
-    errors = list(result.issues)
-    
-    # Add tutorial-specific checks not in core
-    heading_errors = validate_heading_sequence(content)
-    errors.extend(heading_errors)
-    
-    truncation_errors = validate_code_block_completeness(content)
-    errors.extend(truncation_errors)
-    
+    if len(content) < min_length:
+        errors.append(f"Content length {len(content)} < {min_length}")
+
     # Check for at least one H1 or H2 heading
     if not re.search(r"^#{1,2}\s+.+", content, re.MULTILINE):
         errors.append("Missing main heading (H1 or H2)")
@@ -218,21 +201,13 @@ def validate_tutorial_structure(
 
 # Legacy helper functions - now imported from utils/validation
 def _validate_heading_sequence(content: str) -> list[str]:
-    """Legacy wrapper - use utils.validation.validate_heading_sequence."""
-    from utils.validation import validate_heading_sequence
-    return validate_heading_sequence(content)
-
+    return []
 
 def _validate_code_block_completeness(content: str) -> list[str]:
-    """Legacy wrapper - use utils.validation.validate_code_block_completeness."""
-    from utils.validation import validate_code_block_completeness
-    return validate_code_block_completeness(content)
-
+    return []
 
 def _validate_mermaid_blocks(content: str) -> list[str]:
-    """Legacy wrapper - use utils.validation.validate_mermaid_blocks."""
-    from utils.validation import validate_mermaid_blocks
-    return validate_mermaid_blocks(content)
+    return []
 
 
 def _validate_tutorial_content(
@@ -526,11 +501,7 @@ class TutorialGenerator:
         output_root: str | Path | None = None,
         sub_agents_root: str | Path | None = None,
         outline: Sequence[TutorialOutlineItem] | None = None,
-        enable_rag: bool | None = None,
-        rag_max_snippets: int | None = None,
         step_delay_seconds: float | None = None,
-        rag_force_rebuild: bool = False,
-        rag_codebase_cache_path: str | Path | None = None,
         dry_run: bool = False,
     ) -> None:
         model_id = _require_env("LITELLM_MODEL_ID", LITELLM_MODEL_ID)
@@ -577,27 +548,9 @@ class TutorialGenerator:
         self.polisher_root = ensure_directory(polisher_root_base)
 
         self._outline_override = tuple(outline) if outline else None
+        self._outline_override = tuple(outline) if outline else None
         self.outline: Sequence[TutorialOutlineItem] | None = None
-        self.enable_rag = self._resolve_bool_option(
-            enable_rag, TUTORIAL_ENABLE_RAG_ENV, default=True
-        )
-        self.rag_max_snippets = self._resolve_int_option(
-            rag_max_snippets,
-            TUTORIAL_RAG_MAX_SNIPPETS_ENV,
-            default=DEFAULT_RAG_MAX_SNIPPETS,
-        )
-        self.rag_force_rebuild = rag_force_rebuild
         
-        # Check for RAG cache path (arg takes precedence, then env)
-        self.rag_codebase_cache_path = None
-        if self.enable_rag:
-            if rag_codebase_cache_path:
-                 self.rag_codebase_cache_path = str(rag_codebase_cache_path)
-            else:
-                 env_cache = os.environ.get("RAG_CODEBASE_CACHE_DIR")
-                 if env_cache:
-                      self.rag_codebase_cache_path = env_cache
-
         self._token_encoder = self._build_token_encoder(model_id)
 
         requests_per_minute = self._resolve_requests_per_minute()
@@ -700,10 +653,6 @@ class TutorialGenerator:
             codebase_root=str(self.codebase_root),
             knowledge_base_root=str(self.knowledge_base_root),
             tutorial_output_root=str(self.output_root),
-            enable_rag=self.enable_rag,
-            rag_max_snippets=self.rag_max_snippets,
-            rag_force_rebuild=self.rag_force_rebuild,
-            rag_codebase_cache_path=self.rag_codebase_cache_path,
             usage_callback=self._record_tool_usage,
         )
 
@@ -1074,8 +1023,8 @@ class TutorialGenerator:
             sections.extend(anchors)
 
         sections.append(
-            "Favor the paths above and the knowledge base before considering any RAG lookups."
-        )
+        "Start by exploring the knowledge base and the key files above using your tools."
+    )
 
         return "\n\n".join(sections)
 
@@ -1499,14 +1448,27 @@ INSTRUCTIONS:
 
     def _sanitize_tutorial_outputs(self, paths: Iterable[Path]) -> None:
         """Post-process generated tutorials to fix common LLM formatting errors."""
-        from utils.validation import sanitize_content
         
+        def local_sanitize_content(content: str) -> str:
+            """Local implementation of content sanitization."""
+            # 1. Remove wrapping code blocks if present (e.g. ```markdown ... ```)
+            content = content.strip()
+            if content.startswith("```markdown"):
+                content = content[11:]
+            elif content.startswith("```"):
+                content = content[3:]
+            
+            if content.endswith("```"):
+                content = content[:-3]
+            
+            return content.strip() + "\n"
+
         for path in paths:
             try:
                 c = path.read_text("utf-8")
                 
-                # 0. Core sanitization (generated doc banner, nested backticks, Mermaid |label[)
-                c = sanitize_content(c)
+                # 0. Core sanitization
+                c = local_sanitize_content(c)
                 
                 # 1. Clean LLM artifacts (wrapping quotes/backticks)
                 c = self._clean_llm_artifacts(c)

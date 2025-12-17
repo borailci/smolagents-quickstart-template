@@ -9,10 +9,7 @@ from dotenv import load_dotenv
 from loguru import logger
 from smolagents import ToolCallingAgent
 from prompts import prompts
-from utils.path_utils import ensure_directory
 from config import settings
-from pipelines.types import DocumentationTarget
-from pipelines.checkpoint import CheckpointedPipelineRunner
 
 __all__ = ["KnowledgeBaseBuilder"]
 
@@ -30,15 +27,12 @@ class KnowledgeBaseBuilder:
         max_targets: int | None = None,
     ):
         self.codebase_root = Path(codebase_root).expanduser().resolve() if codebase_root else settings.CODEBASE_ROOT
-        self.output_root = ensure_directory(Path(output_root).expanduser().resolve() if output_root else settings.KNOWLEDGE_BASE_OUTPUT)
-        self.sub_agents_root = ensure_directory(Path(sub_agents_root).expanduser().resolve() if sub_agents_root else settings.SUB_AGENTS_ROOT)
+        self.output_root = Path(output_root).expanduser().resolve() if output_root else settings.KNOWLEDGE_BASE_OUTPUT
+        self.output_root.mkdir(parents=True, exist_ok=True)
+        self.sub_agents_root = Path(sub_agents_root).expanduser().resolve() if sub_agents_root else settings.SUB_AGENTS_ROOT
+        self.sub_agents_root.mkdir(parents=True, exist_ok=True)
         self.dry_run = dry_run
         self.force_rebuild = force_rebuild
-        self.checkpoint = CheckpointedPipelineRunner(
-            output_root=self.output_root,
-            codebase_name=self.codebase_root.name,
-            force_rebuild=force_rebuild
-        )
         self.plan_path = self.output_root / "plan.md"
 
     def generate(self) -> List[Path]:
@@ -48,19 +42,14 @@ class KnowledgeBaseBuilder:
 
     def generate_with_supervisor(self) -> List[Path]:
         """Generate knowledge base using the Supervisor Agent."""
-        if self.checkpoint.checkpoint.phase == "kb_completed" and not self.force_rebuild:
-            logger.info("Knowledge Base phase marked complete in checkpoint. returning existing files.")
-            return sorted(list(self.output_root.glob("*.md")), key=lambda p: p.name)
-
         if self.force_rebuild and not self.dry_run:
             self._reset_directory(self.sub_agents_root)
             self._reset_directory(self.output_root)
             self._clear_rag_vector_store()
-            self.checkpoint = CheckpointedPipelineRunner(
-                output_root=self.output_root,
-                codebase_name=self.codebase_root.name,
-                force_rebuild=True
-            )
+        
+        if self.dry_run:
+            logger.debug("[DRY RUN] Would run Supervisor Agent")
+            return []
         
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.sub_agents_root.mkdir(parents=True, exist_ok=True)
@@ -69,22 +58,15 @@ class KnowledgeBaseBuilder:
             logger.debug("[DRY RUN] Would run Supervisor Agent")
             return []
             
-        self.checkpoint.set_phase("kb_generation")
         supervisor = self._create_supervisor_agent()
         
         base_task = prompts.KB_SUPERVISOR_TASK_TEMPLATE.format(codebase_root=self.codebase_root)
-        completed_targets = self.checkpoint.checkpoint.kb_completed_targets
-        if completed_targets:
-             base_task += "\\n\\nPREVIOUSLY COMPLETED TARGETS (Skip these):"
-             for t in completed_targets:
-                 base_task += f"\\n- {t}"
         
         max_retries = 10
         retry_delay = 5.0
         
         for attempt in range(1, max_retries + 1):
             try:
-                self.checkpoint.mark_kb_target_complete("processing_attempt")
                 logger.info("Supervisor Task: Starting attempt {}/{}", attempt, max_retries)
                 result = supervisor.run(base_task, max_steps=50)
                 logger.info("Supervisor Agent completed: {}", str(result)[:200])
@@ -110,7 +92,6 @@ class KnowledgeBaseBuilder:
             summary_path = self._run_summary_agent(output_files)
             if summary_path:
                 output_files.append(summary_path)
-            self.checkpoint.set_phase("kb_completed")
         
         logger.info("Knowledge base generated with {} files", len(output_files))
         return sorted(output_files, key=lambda p: p.name)

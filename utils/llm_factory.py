@@ -4,8 +4,45 @@ from typing import List, Dict, Any, Optional, Literal
 from loguru import logger
 from smolagents import LiteLLMModel
 from dotenv import load_dotenv
-from pipelines.usage_tracker import throttled_api_call
 
+
+
+# ---------------------------------------------------------------------------
+# Robust API Throttling & Retry Logic
+# ---------------------------------------------------------------------------
+import time
+import random
+
+def throttled_api_call(func, *args, estimated_tokens=0, **kwargs):
+    """
+    Executes an API call with robust retry logic for 429/Resource Exhausted errors.
+    Uses exponential backoff with jitter.
+    """
+    max_retries = 15  # Very high retry count for resilience
+    base_delay = 5.0
+    
+    for attempt in range(max_retries):
+        try:
+            return func(*args, **kwargs)
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Detect Rate Limit / Resource Exhausted errors
+            if "429" in error_msg or "resource exhausted" in error_msg or "quota" in error_msg or "rate limit" in error_msg:
+                if attempt == max_retries - 1:
+                    logger.error(f"❌ Max retries ({max_retries}) exhausted for API call. Error: {e}")
+                    raise
+                
+                # Exponential backoff: 5s, 10s, 20s, 40s...
+                delay = (base_delay * (2 ** attempt)) + (random.random() * 2.0)
+                # Cap delay at 60 seconds
+                delay = min(delay, 60.0)
+                
+                logger.warning(f"⚠️ API Rate Limit (429). Retry {attempt+1}/{max_retries} in {delay:.1f}s...")
+                time.sleep(delay)
+            else:
+                # Re-raise other errors immediately
+                raise
 
 class RateLimitedLiteLLMModel(LiteLLMModel):
     """Wrapper around LiteLLMModel that enforces rate limits."""
@@ -13,7 +50,8 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
     def __call__(self, messages: List[Dict[str, Any]], *args, **kwargs) -> Any:
         # Estimate input tokens (rough approximation)
         est_tokens = sum(len(str(m.get("content", ""))) for m in messages) // 4
-        est_tokens += 1000  # Buffer for output
+        # Add basic throttling for high-frequency calls
+        time.sleep(1.0) 
         
         return throttled_api_call(
             super().__call__, 
@@ -79,8 +117,9 @@ def create_model(
     if not mid or not key:
         raise ValueError("LITELLM_MODEL_ID and LITELLM_API_KEY must be configured in environment or passed explicitly.")
 
-    # Configure automatic retries via environment variable
-    os.environ["LITELLM_NUM_RETRIES"] = "10"
+    # Configure automatic retries via environment variable (Resilience for 429)
+    os.environ["LITELLM_NUM_RETRIES"] = "5"
+    os.environ["LITELLM_REQUEST_TIMEOUT"] = "120"
     
     logger.info(f"Creating model: {mid} (role: {role or 'default'})")
     

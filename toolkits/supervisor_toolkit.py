@@ -206,6 +206,21 @@ class SpawnAnalyzerAgentTool(Tool):
                 if is_valid:
                     self.checkpoint.save_progress(target_path, result_json)
                     
+                    # --- AUTO-UPDATE COMPILATION PLAN ---
+                    try:
+                        plan_file = self.ctx.output_root / "compilation_plan.md"
+                        if plan_file.exists():
+                            lines = plan_file.read_text(encoding="utf-8").splitlines()
+                            updated_lines = []
+                            for line in lines:
+                                if target_path in line and "[ ]" in line:
+                                    line = line.replace("[ ]", "[x]")
+                                updated_lines.append(line)
+                            plan_file.write_text("\n".join(updated_lines), encoding="utf-8")
+                            logger.info(f"Marked '{target_path}' as complete in compilation_plan.md")
+                    except Exception as e:
+                        logger.warning(f"Failed to auto-update compilation plan: {e}")
+                    
                 return result_json
             else:
                 self.ctx.spawned_agents[target_path] = {
@@ -453,7 +468,8 @@ class FinalizeKnowledgeBaseTool(Tool):
             # Extract target name from workspace path (e.g., "app" from ".../app/sub_agent_1")
             # Go up from sub_agent_1 to find the target directory name
             target_name = workspace.parent.name
-            if target_name in ("sub_agents_workspace", "data"):
+            # If parent is a generic container, use the workspace name itself (e.g. instructor_dsl_validation)
+            if target_name in ("sub_agents_kb", "sub_agents_workspace", "sub_agents") or target_name.startswith("sub_agent"):
                 target_name = workspace.name
             
             # Find the first/main markdown file in this workspace

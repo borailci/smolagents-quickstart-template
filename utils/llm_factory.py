@@ -129,7 +129,7 @@ def create_model(
     # Enable reasoning for 2.5-pro models
     if "gemini-2.5-pro" in mid:
         # Revert thinking parameter to avoid tool call issues
-        # kwargs["thinking"] = {"type": "enabled", "budget_tokens": -1}
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": -1}
         # Increase token limit for large file generation
         kwargs["max_tokens"] = 16384
         logger.debug("Disabled explicit thinking/reasoning for Pro model to fix empty tool args")

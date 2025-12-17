@@ -145,35 +145,51 @@ class KnowledgeBaseBuilder:
         # 1. Define Tools strictly for the output directory
         from smolagents import Tool
         
-        class ListKBTool(Tool):
-            name = "list_knowledge_base"
-            description = "List available knowledge base files (summaries)."
+        class GetKBTreeTool(Tool):
+            name = "get_kb_tree"
+            description = "Get a tree view of the raw sub-agent knowledge base files."
             inputs = {}
             output_type = "string"
             
             def forward(self2) -> str:
-                # Filter out system files
-                valid_files = []
-                for f in self.output_root.glob("*.md"):
-                    if f.name not in ("executive_summary.md", "compilation_plan.md", "metrics.md", "plan.md", "sub_agents_kb.md"):
-                        valid_files.append(f.name)
-                return "\\n".join(sorted(valid_files))
+                tree_str = ""
+                # We want to see what's inside sub_agents_root
+                # Structure: sub_agents_root / target_name / workspace / summary.md
+                # We can iterate and build a nice tree
+                if not self.sub_agents_root.exists():
+                    return "Sub-agents root directory not found."
+                
+                for path in sorted(self.sub_agents_root.rglob("*.md")):
+                    # Relativize path
+                    try:
+                        rel = path.relative_to(self.sub_agents_root)
+                        tree_str += f"- {rel}\n"
+                    except ValueError:
+                        pass
+                return tree_str if tree_str else "No markdown files found in sub-agents root."
 
         class ReadKBTool(Tool):
             name = "read_knowledge_base_file"
-            description = "Read a knowledge base summary file."
-            inputs = {"filename": {"type": "string", "description": "Filename to read"}}
+            description = "Read a knowledge base summary file from the sub-agents directory."
+            inputs = {"filename": {"type": "string", "description": "Relative path to the file (from get_kb_tree)"}}
             output_type = "string"
             
             def forward(self2, filename: str) -> str:
                 # Security check
-                if filename in ("executive_summary.md", "compilation_plan.md", "metrics.md", "plan.md", "sub_agents_kb.md"):
-                     return f"Access to system file '{filename}' is denied."
+                if ".." in filename or filename.startswith("/"):
+                     return "Access denied for absolute or parent paths."
                 
-                path = self.output_root / filename
-                if path.exists() and path.parent == self.output_root:
+                # Check in sub_agents_root first (primary source now)
+                path = self.sub_agents_root / filename
+                if path.exists() and self.sub_agents_root in path.resolve().parents:
                     return path.read_text(encoding="utf-8")
-                return "File not found."
+                
+                # Fallback to output_root for older files
+                path_out = self.output_root / filename
+                if path_out.exists() and self.output_root in path_out.resolve().parents:
+                    return path_out.read_text(encoding="utf-8")
+
+                return f"File '{filename}' not found."
 
         class WriteKBTool(Tool):
             name = "write_workspace_file"
@@ -198,7 +214,7 @@ class KnowledgeBaseBuilder:
         agent = ToolCallingAgent(
             name="summarizer",
             description="Synthesizes knowledge base execution summary",
-            tools=[ListKBTool(), ReadKBTool(), WriteKBTool()],
+            tools=[GetKBTreeTool(), ReadKBTool(), WriteKBTool()],
             model=model,
             instructions=prompts.SUMMARIZER_KB_PROMPT,
         )

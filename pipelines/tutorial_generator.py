@@ -1631,9 +1631,16 @@ INSTRUCTIONS:
         max_retries = 10
         retry_delay = 5.0  # seconds
 
+        # Prepare the task prompt
+        task_prompt = prompts.TUTORIAL_SUPERVISOR_TASK_TEMPLATE.format(
+            repo_name=self.output_root.parent.name, # e.g. 'instructor'
+            knowledge_base_root=str(self.knowledge_base_root),
+            output_root=str(self.output_root)
+        )
+
         for attempt in range(1, max_retries + 1):
             try:
-                supervisor.run("Plan and generate the tutorial series.", max_steps=50)
+                supervisor.run(task_prompt, max_steps=50)
                 break
             except Exception as e:
                 error_str = str(e).lower()

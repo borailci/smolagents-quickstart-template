@@ -12,8 +12,10 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from loguru import logger
+import shutil
 
 from pipelines.knowledge_base_builder import KnowledgeBaseBuilder
+from pipelines.tutorial_generator import TutorialGenerator
 @dataclass
 class DeepAgentConfig:
     codebase_root: Path
@@ -22,23 +24,39 @@ class DeepAgentConfig:
     # Sub-paths
     kb_output_path: Path
     kb_sub_agents_path: Path
+    tutorial_output_path: Path
+    tutorial_sub_agents_path: Path
     
     # Flags
     dry_run: bool = False
     force_rebuild_kb: bool = False
+    force_rebuild_tutorials: bool = False
     
     # RAG
-    enable_rag: bool = True
     rag_codebase_cache_path: Optional[Path] = None
 
 class DeepAgent:
     def __init__(self, config: DeepAgentConfig):
         self.config = config
-        
         # Ensure roots exist
-        ensure_directory(self.config.output_root)
+        self.config.output_root.mkdir(parents=True, exist_ok=True)
 
         # Initialize components with config
+        
+        if self.config.force_rebuild_kb:
+            logger.info("Force rebuilding Knowledge Base...")
+            if self.config.kb_sub_agents_path.exists():
+                logger.info(f"Cleaning KB sub-agents directory: {self.config.kb_sub_agents_path}")
+                shutil.rmtree(self.config.kb_sub_agents_path)
+            
+            # CLEAR CHECKPOINT on force rebuild
+            from utils.checkpoint import TaskCheckpoint
+            checkpoint_path = self.config.output_root / "analysis_checkpoint.json"
+            if checkpoint_path.exists():
+                 logger.info(f"Clearing task checkpoint: {checkpoint_path}")
+                 TaskCheckpoint(checkpoint_path).clear()
+                 
+            self.config.kb_sub_agents_path.mkdir(parents=True, exist_ok=True)
         
         # KB Builder
         self.kb_builder = KnowledgeBaseBuilder(
@@ -47,6 +65,15 @@ class DeepAgent:
             sub_agents_root=config.kb_sub_agents_path,
             dry_run=config.dry_run,
             force_rebuild=config.force_rebuild_kb,
+        )
+
+        # Tutorial Generator
+        self.tutorial_generator = TutorialGenerator(
+            codebase_root=config.codebase_root,
+            knowledge_base_root=config.kb_output_path,
+            output_root=config.tutorial_output_path,
+            sub_agents_root=config.tutorial_sub_agents_path,
+            dry_run=config.dry_run,
         )
         
     def run(self) -> Dict[str, Any]:
@@ -82,6 +109,15 @@ class DeepAgent:
             else:
                 logger.warning("KB Generation returned no new files, but previous content exists. Proceeding.")
         
+        # Phase 2: Tutorial Generation
+        logger.info("=== Phase 2: Tutorial Generation ===")
+        tutorial_metrics = metrics.start_tutorial_phase()
+
+        tutorial_files = self.tutorial_generator.generate_with_supervisor()
+
+        tutorial_metrics.finish()
+        logger.info(f"Tutorial Phase completed in {tutorial_metrics.duration_seconds:.1f}s")
+        
         # Finalize metrics
         metrics.finish()
         self._save_metrics(metrics)
@@ -91,6 +127,7 @@ class DeepAgent:
         
         return {
             "kb_files": [str(p) for p in kb_files],
+            "tutorial_files": [str(p) for p in tutorial_files],
             "metrics": metrics.to_dict(),
         }
     

@@ -10,11 +10,47 @@ from typing import Any, Callable, Dict, List, Optional
 
 from smolagents import Tool
 
-from utils.path_utils import ensure_directory, resolve_within_root
-from utils.constants import IGNORED_DIRS, BLOCKED_EXTENSIONS
+
+# Inlined from utils.path_utils and utils.constants
+IGNORED_DIRS = {
+    "__pycache__", ".git", ".idea", ".vscode", "node_modules", "venv", ".venv",
+    "site-packages", "dist", "build", ".DS_Store", "docs", "tests", "examples",
+    "scripts", ".gradio", ".pytest_cache"
+}
+BLOCKED_EXTENSIONS = {
+    ".pyc", ".pyo", ".pyd", ".so", ".dll", ".dylib", ".exe", ".bin", ".pkl",
+    ".zip", ".tar", ".gz", ".7z", ".rar", ".jpg", ".jpeg", ".png", ".gif",
+    ".webp", ".ico", ".svg", ".mp4", ".mp3", ".wav", ".pdf", ".docx",
+    ".yml", ".yaml", ".json", ".toml", ".txt", ".lock", ".md"
+}
+
+def ensure_directory(path: str | Path) -> Path:
+    p = Path(path).resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+def resolve_within_root(root: Path, path: str | Path) -> Path:
+    """Resolve path and ensure it's within root."""
+    # Normalize paths
+    root = root.resolve()
+    try:
+        # Handle absolute paths that might be inside root
+         p = Path(path)
+         if p.is_absolute():
+             resolved = p.resolve()
+         else:
+             resolved = (root / path).resolve()
+             
+         if not str(resolved).startswith(str(root)):
+             raise ValueError(f"Path traversal detected: {path} is outside {root}")
+         return resolved
+    except Exception as e:
+        # Fallback for weird path issues
+        raise ValueError(f"Invalid path {path}: {e}")
+
 from config import settings
 
-__all__ = ["build_scoped_tools"]
+__all__ = ["build_scoped_tools", "ensure_directory", "resolve_within_root", "IGNORED_DIRS"]
 
 # Use centralized config for limits
 MAX_READ_LINES = settings.MAX_READ_LINES
@@ -166,6 +202,13 @@ class WriteWorkspaceFileTool(Tool):
         self.usage_callback = usage_callback
     
     def forward(self, file_path: str, content: str, append: bool = False) -> str:
+        if not content or not content.strip():
+            raise ValueError(
+                "Content cannot be empty or only whitespace. "
+                "You must generate the file content (the plan or the summary) "
+                "in your thought process FIRST, and then call this tool with the complete text."
+            )
+            
         if self.usage_callback:
             self.usage_callback("write_workspace_file")
         
@@ -207,7 +250,9 @@ class GetCodebaseTreeTool(Tool):
             entries = sorted(
                 child
                 for child in directory.iterdir()
-                if not child.name.startswith(".") and child.name not in IGNORED_DIRS
+                if not child.name.startswith(".") 
+                and child.name not in IGNORED_DIRS
+                and (child.is_dir() or child.suffix.lower() not in BLOCKED_EXTENSIONS)
             )
 
             for index, entry in enumerate(entries):

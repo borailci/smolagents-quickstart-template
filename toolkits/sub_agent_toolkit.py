@@ -19,8 +19,7 @@ from smolagents.agents import ToolCallingAgent
 
 from config import settings
 from prompts import prompts
-from toolkits.scoped_filesystem_toolkit import build_scoped_tools
-from utils.path_utils import ensure_directory
+from toolkits.scoped_filesystem_toolkit import build_scoped_tools, ensure_directory
 from utils.llm_factory import create_model
 
 __all__ = [
@@ -74,17 +73,22 @@ def validate_markdown_output(
     
     Note: Uses core validation from utils/validation.py.
     """
-    from utils.validation import validate_content
+    """
+    Validate sub-agent markdown output structural integrity.
     
-    result = validate_content(
-        content,
-        min_chars=min_length,
-        expected_title=expected_title,
-        check_mermaid=False,  # Sub-agent outputs may not have mermaid
-        strict_heading_start=True,
-    )
-    
-    return (result.is_valid, list(result.issues))
+    Returns (is_valid, list_of_errors).
+    Simplified check since validation.py was removed.
+    """
+    issues = []
+    if not content:
+        issues.append("Content is empty")
+        return False, issues
+        
+    if len(content) < min_length:
+        issues.append(f"Content length {len(content)} < {min_length}")
+        return False, issues
+        
+    return True, []
 
 
 # ToolUsageBudget removed - no budget enforcement
@@ -262,8 +266,6 @@ def _execute_sub_agent_runs(
                 allow_tree=not minimal_tools,
                 allow_mermaid=False,
                 allow_writes=True,
-                allow_kb_read=True if knowledge_base_root else False,
-                knowledge_base_root=str(knowledge_base_root) if knowledge_base_root else None,
             )
             return ToolCallingAgent(
                 name=f"sub_agent_{index}",

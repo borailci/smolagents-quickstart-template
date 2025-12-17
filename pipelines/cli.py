@@ -13,8 +13,7 @@ from pipelines.knowledge_base_builder import KnowledgeBaseBuilder
 from pipelines.tutorial_generator import TutorialGenerator
 
 
-from toolkits.rag_store import SimpleChromaRAGStore
-from utils.path_utils import ensure_directory
+
 
 
 def _format_paths(paths: Iterable[Path]) -> str:
@@ -71,13 +70,8 @@ def parse_args() -> argparse.Namespace:
         help="Generate tutorials using the existing knowledge base.",
     )
     tutorial_parser.set_defaults(command="tutorials")
-    tutorial_parser.add_argument(
-        "--rag",
-        dest="rag",
-        default=None,
-        action=argparse.BooleanOptionalAction,
-        help="Enable retrieval helper tools for gathering supporting snippets.",
-    )
+    tutorial_parser.set_defaults(command="tutorials")
+
 
     # Evaluate command (LLM Judge)
     eval_parser = subparsers.add_parser(
@@ -114,18 +108,6 @@ def parse_args() -> argparse.Namespace:
         required=False,
         default=None,
         help="Path to the codebase. If not provided, looks for directories in data/agent_workspace.",
-    )
-    deep_agent_parser.add_argument(
-        "--output",
-        type=Path,
-        default=None,
-        help="Output root directory (defaults to data/deep_agent_output/{codebase_name}).",
-    )
-    deep_agent_parser.add_argument(
-        "--rag-cache-path",
-        type=Path,
-        default=None,
-        help="Path to pre-computed RAG cache.",
     )
     deep_agent_parser.add_argument(
         "--force-rebuild",
@@ -173,8 +155,6 @@ def generate_tutorials(
     codebase: str | Path | None = None,
     knowledge_base: str | Path | None = None,
     output: str | Path | None = None,
-    enable_rag: bool | None = None,
-    rag_max_snippets: int | None = None,
     step_delay_seconds: float | None = None,
     dry_run: bool = False,
 ) -> list[Path]:
@@ -182,46 +162,13 @@ def generate_tutorials(
         codebase_root=codebase,
         knowledge_base_root=knowledge_base,
         output_root=output,
-        enable_rag=enable_rag,
-        rag_max_snippets=rag_max_snippets,
         step_delay_seconds=step_delay_seconds,
         dry_run=dry_run,
     )
     return generator.generate()
 
 
-def generate_rag_cache(
-    codebase: Path,
-    output: Path | None = None,
-    force: bool = False,
-) -> None:
-    """Pre-compute RAG embeddings for the codebase."""
-    codebase = codebase.expanduser().resolve()
-    
-    if output:
-        out_path = output.expanduser().resolve()
-    else:
-        out_path = (Path("data/rag_cache") / codebase.name).resolve()
-        
-    out_path = ensure_directory(out_path)
-    
-    logger.info(f"Generating RAG cache for {codebase} at {out_path}...")
-    
-    # We use a dummy KB root since we only want codebase embeddings
-    # But SimpleChromaRAGStore requires a path. We use output just to have a valid path.
-    store = SimpleChromaRAGStore(
-        codebase_root=codebase,
-        knowledge_base_root=out_path,
-        persist_directory=out_path,
-        collection_name="codebase_rag_cache",
-    )
-    
-    store.ensure_index(
-        include_codebase=True,
-        include_knowledge_base=False,
-        force_rebuild=force,
-    )
-    logger.info("RAG cache generation complete.")
+
 
 
 def setup_logging() -> None:
@@ -246,7 +193,7 @@ def main() -> None:
         )
         logger.info("Knowledge base written to:\n{}", _format_paths(outputs))
     elif args.command == "tutorials":
-        generator = TutorialGenerator(enable_rag=args.rag)
+        generator = TutorialGenerator()
         outputs = generator.generate()
         logger.info("Tutorials written to:\n{}", _format_paths(outputs))
     elif args.command == "evaluate":
@@ -275,12 +222,7 @@ def main() -> None:
         write_markdown_report(report, output_dir / "evaluation_report.md")
         
         logger.info(f"Evaluation complete! Overall score: {report.overall_avg}/5.0")
-    elif args.command == "gen-rag":
-        generate_rag_cache(
-            codebase=args.codebase,
-            output=args.output,
-            force=args.force,
-        )
+
     elif args.command == "deep-agent":
         from pipelines.deep_agent import DeepAgent, DeepAgentConfig
         
@@ -314,10 +256,7 @@ def main() -> None:
 
 
         # Determine output root for both modes
-        if args.output:
-            output_root = args.output.expanduser().resolve()
-        else:
-            output_root = (Path("data/deep_agent_output") / codebase_path.name).resolve()
+        output_root = (Path("data/deep_agent_output") / codebase_path.name).resolve()
 
         # Mode Selection
         if args.mode == "baseline":
@@ -331,7 +270,6 @@ def main() -> None:
                 knowledge_base_root=output_root / "knowledge_base", # Dummy
                 output_root=output_root,
                 sub_agents_root=output_root / "sub_agents_tutorials",
-                enable_rag=True,
                 dry_run=False,
             )
             # Use wrapped baseline generator
@@ -350,8 +288,6 @@ def main() -> None:
             tutorial_output_path=output_root / "tutorials",
             kb_sub_agents_path=output_root / "sub_agents_kb",
             tutorial_sub_agents_path=output_root / "sub_agents_tutorials",
-            enable_rag=True,
-            rag_codebase_cache_path=None, 
             force_rebuild_kb=args.force_rebuild if hasattr(args, "force_rebuild") else False,
             force_rebuild_tutorials=args.force_rebuild if hasattr(args, "force_rebuild") else False,
             dry_run=False,

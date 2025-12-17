@@ -636,13 +636,52 @@ class TutorialGenerator:
             or "429" in message
         )
 
-    def generate(self) -> List[Path]:
+    def generate(self, metrics: Any = None) -> List[Path]:
         """Generate tutorials using supervisor mode (default).
         
         This method now always delegates to generate_with_supervisor()
         for consistent, autonomous tutorial generation.
         """
-        return self.generate_with_supervisor()
+        return self.generate_with_supervisor(metrics=metrics)
+
+
+
+    def generate_with_supervisor(self, metrics: Any = None) -> List[Path]:
+        """Generate tutorials using the Tutorial Supervisor Agent."""
+        logger.info("Starting supervised tutorial generation...")
+        
+        # Reset directories if not dry run
+        if not self.dry_run:
+            if self.sub_agents_root.exists():
+                shutil.rmtree(self.sub_agents_root)
+            self.sub_agents_root.mkdir(parents=True, exist_ok=True)
+            
+            if self.output_root.exists():
+                shutil.rmtree(self.output_root)
+            self.output_root.mkdir(parents=True, exist_ok=True)
+            
+        supervisor = self._create_supervisor_agent(metrics=metrics)
+        
+        # Use centralized rate limit retry wrapper
+        from pipelines.checkpoint import run_with_rate_limit_retry
+        
+        try:
+             run_with_rate_limit_retry(
+                 supervisor.run, 
+                 "Plan and generate the tutorial series.", 
+                 max_steps=50
+             )
+        except Exception as e:
+            logger.error(f"Supervisor failed: {e}")
+            if not self.dry_run:
+                # We could fallback here, but supervisor failure usually means fatal config/model issue
+                raise
+
+        # Collect output
+        output_files = list(self.output_root.glob("*.md"))
+        logger.info(f"Generated {len(output_files)} tutorials.")
+        self._sanitize_tutorial_outputs(output_files)
+        return sorted(output_files, key=lambda p: p.name)
 
 
     def _prepare_tutorial_state(self, base_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -1447,86 +1486,73 @@ INSTRUCTIONS:
         path.mkdir(parents=True, exist_ok=True)
 
     def _sanitize_tutorial_outputs(self, paths: Iterable[Path]) -> None:
-        """Post-process generated tutorials to fix common LLM formatting errors."""
+        if self.dry_run:
+            logger.info("Dry run: Skipping validation.")
+            return
+
+        self._run_validator_agent(paths)
+
+    def _run_validator_agent(self, paths: List[Path]):
+        """Run the Validator Agent on generated files."""
+        if not paths:
+            return
+
+        from toolkits.validator_toolkit import build_validator_tools
+        from utils.llm_factory import create_model
         
-        def local_sanitize_content(content: str) -> str:
-            """Local implementation of content sanitization."""
-            # 1. Remove wrapping code blocks if present (e.g. ```markdown ... ```)
-            content = content.strip()
-            if content.startswith("```markdown"):
-                content = content[11:]
-            elif content.startswith("```"):
-                content = content[3:]
-            
-            if content.endswith("```"):
-                content = content[:-3]
-            
-            return content.strip() + "\n"
+        # Use Pro model for intelligent validation
+        model = create_model(role="supervisor") 
+        
+        # Build tools pointing to the output root (where the files are)
+        # Note: All paths generated are in output_root
+        tools = build_validator_tools(target_root=self.output_root)
+        
+        validator = ToolCallingAgent(
+            name="markdown_validator",
+            description="Validates and fixes markdown formatting.",
+            tools=tools,
+            model=model,
+            instructions=prompts.VALIDATOR_AGENT_PROMPT,
+        )
 
         for path in paths:
+            # Skip plan files as per user request
+            if "plan" in path.name.lower():
+                logger.debug(f"Skipping validation for plan file: {path.name}")
+                continue
+
+            backup_path = path.with_suffix(".bak")
             try:
-                c = path.read_text("utf-8")
+                # Backup original
+                if path.exists():
+                    shutil.copy(path, backup_path)
+
+                # Relative filename for the tool
+                filename = path.name
+                logger.info(f"🔍 Validating {filename}...")
                 
-                # 0. Core sanitization
-                c = local_sanitize_content(c)
+                validator.run(f"Validate and fix formatting issues in '{filename}'.")
                 
-                # 1. Clean LLM artifacts (wrapping quotes/backticks)
-                c = self._clean_llm_artifacts(c)
-                
-                # 2. Fix broken code blocks (unclosed)
-                c = self._fix_unclosed_code_blocks(c)
-                
-                # 3. Sanitize Mermaid (enhanced)
-                c = self._sanitize_mermaid_blocks(c)
-                
-                path.write_text(c, "utf-8")
-                logger.info(f"Sanitized {path.name}")
+                # Post-validation safety check
+                if path.exists():
+                    content = path.read_text(encoding="utf-8")
+                    if len(content.strip()) < 50:
+                        logger.warning(f"⚠️ Validator produced suspicious output ('{content[:20]}...'). Restoring backup.")
+                        shutil.copy(backup_path, path)
+                    else:
+                        logger.info(f"✅ Validation complete for {filename}")
             except Exception as e:
-                logger.warning(f"Failed to sanitize {path}: {e}")
+                logger.warning(f"Validator failed for {filename}: {e}")
+                # Restore on crash
+                if backup_path.exists():
+                    logger.info("Restoring backup due to crash.")
+                    shutil.copy(backup_path, path)
+            finally:
+                 if backup_path.exists():
+                     backup_path.unlink()
 
 
-    def _clean_llm_artifacts(self, content: str) -> str:
-        s = content.strip()
-        
-        # Remove wrapping quote blocks (common artifact)
-        if s.startswith("'''") and s.endswith("'''"):
-             s = s[3:-3].strip()
-        elif s.startswith('"""') and s.endswith('"""'):
-             s = s[3:-3].strip()
-        elif s.startswith("'") and s.endswith("'"):
-             s = s[1:-1].strip()
-             
-        # Remove wrapping markdown code blocks if the entire content is wrapped
-        # e.g. ```markdown ... ```
-        if s.startswith("```") and s.endswith("```"):
-            lines = s.splitlines()
-            if len(lines) >= 2:
-                # Check if the first line is just opening fence (maybe with language)
-                if lines[0].strip().startswith("```") and " " not in lines[0].strip():
-                    # Check if last line is just closing fence
-                    if lines[-1].strip() == "```":
-                        # Return everything in between
-                        return "\n".join(lines[1:-1]).strip()
-
-        # Remove literal "Observations:" prefix causing invalid markdown
-        if s.startswith("Observations:"):
-            s = s.replace("Observations:", "", 1).strip()
-        
-        # Remove random leading '"' if present (sometimes happens with JSON string dumps)
-        if s.startswith('"') and s.endswith('"') and "\n" in s:
-             s = s[1:-1].replace('\\"', '"').replace("\\n", "\n")
-
-        return s
-
-    def _fix_unclosed_code_blocks(self, content: str) -> str:
-        # Count triple backticks
-        count = content.count("```")
-        if count % 2 != 0:
-            logger.warning("Found unclosed code block, appending closing fence.")
-            return content + "\n```"
-        return content
-
-    def _create_supervisor_agent(self):
+    def _create_supervisor_agent(self, metrics: Any = None):
         """Create the Tutorial Supervisor Agent."""
         from toolkits.tutorial_toolkit import build_tutorial_supervisor_tools
         from utils.llm_factory import create_model
@@ -1536,6 +1562,7 @@ INSTRUCTIONS:
             sub_agents_root=self.sub_agents_root,
             output_root=self.output_root,
             knowledge_base_root=self.knowledge_base_root,
+            metrics=metrics,
         )
         
         # Supervisor uses Pro model for better planning (hybrid strategy)
@@ -1551,7 +1578,7 @@ INSTRUCTIONS:
         )
 
 
-    def _create_baseline_supervisor_agent(self):
+    def _create_baseline_supervisor_agent(self, metrics: Any = None):
         """Create the Baseline Tutorial Supervisor Agent."""
         from toolkits.tutorial_toolkit import build_tutorial_supervisor_tools
         from utils.llm_factory import create_model
@@ -1562,6 +1589,7 @@ INSTRUCTIONS:
             output_root=self.output_root,
             knowledge_base_root=self.knowledge_base_root, # Passed but unused by baseline tools
             baseline_mode=True,
+            metrics=metrics,
         )
 
         
@@ -1575,7 +1603,7 @@ INSTRUCTIONS:
             instructions=prompts.BASELINE_TUTORIAL_SUPERVISOR_PROMPT,
         )
 
-    def generate_baseline_with_supervisor(self) -> List[Path]:
+    def generate_baseline_with_supervisor(self, metrics: Any = None) -> List[Path]:
         """Generate tutorials using the Baseline Supervisor (No KB)."""
         logger.info("Starting BASELINE supervised tutorial generation (No KB)...")
         
@@ -1589,7 +1617,7 @@ INSTRUCTIONS:
                shutil.rmtree(self.output_root)
             self.output_root.mkdir(parents=True, exist_ok=True)
 
-        supervisor = self._create_baseline_supervisor_agent()
+        supervisor = self._create_baseline_supervisor_agent(metrics=metrics)
     
         # Use centralized rate limit retry wrapper
         from pipelines.checkpoint import run_with_rate_limit_retry
@@ -1611,58 +1639,7 @@ INSTRUCTIONS:
         self._sanitize_tutorial_outputs(output_files)
         return sorted(output_files, key=lambda p: p.name)
 
-    def generate_with_supervisor(self) -> List[Path]:
-        """Generate tutorials using the Supervisor Agent."""
-        logger.info("Starting supervised tutorial generation...")
-        
-        # Reset directories if not dry run (similar to KB builder)
-        if not self.dry_run:
-            if self.sub_agents_root.exists():
-                shutil.rmtree(self.sub_agents_root)
-            self.sub_agents_root.mkdir(parents=True, exist_ok=True)
-            
-            if self.output_root.exists():
-               shutil.rmtree(self.output_root)
-            self.output_root.mkdir(parents=True, exist_ok=True)
 
-        supervisor = self._create_supervisor_agent()
-    
-        # Retry loop for rate limits
-        max_retries = 10
-        retry_delay = 5.0  # seconds
-
-        # Prepare the task prompt
-        task_prompt = prompts.TUTORIAL_SUPERVISOR_TASK_TEMPLATE.format(
-            repo_name=self.output_root.parent.name, # e.g. 'instructor'
-            knowledge_base_root=str(self.knowledge_base_root),
-            output_root=str(self.output_root)
-        )
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                supervisor.run(task_prompt, max_steps=50)
-                break
-            except Exception as e:
-                error_str = str(e).lower()
-                is_rate_limit = "rate" in error_str or "429" in error_str or "exhausted" in error_str
-                
-                if is_rate_limit and attempt < max_retries:
-                    logger.warning(
-                        "Rate limit hit (attempt {}/{}). Waiting {}s before retry...",
-                        attempt, max_retries, retry_delay
-                    )
-                    time.sleep(retry_delay)
-                    # retry_delay = min(retry_delay * 1.5, 60.0)  # Fixed delay as requested
-                else:
-                    logger.error(f"Tutorial Supervisor failed: {e}")
-                    if not self.dry_run:
-                         raise
-        
-        # Collect output
-        output_files = list(self.output_root.glob("*.md"))
-        logger.info(f"Generated {len(output_files)} tutorials.")
-        self._sanitize_tutorial_outputs(output_files)
-        return sorted(output_files, key=lambda p: p.name)
 
 
 __all__ = ["TutorialGenerator", "TutorialOutlineItem", "TutorialRunMetrics"]

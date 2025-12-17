@@ -128,17 +128,17 @@ def create_model(
     
     # Enable reasoning for 2.5-pro models
     if "gemini-2.5-pro" in mid:
-        # Revert thinking parameter to avoid tool call issues
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": -1}
+        # Limited thinking budget to prevent tool call failures (empty content)
+        # kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
         # Increase token limit for large file generation
         kwargs["max_tokens"] = 16384
-        logger.debug("Disabled explicit thinking/reasoning for Pro model to fix empty tool args")
+        logger.debug("Thinking mode disabled for Pro model")
 
     # Enable thinking for 2.5-flash (Sub-agents)
     if "gemini-2.5-flash" in mid:
-        # thinkingBudget=-1 enables dynamic thinking
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": -1}
-        logger.debug("Enabled dynamic thinking (budget=-1) for Flash model")
+        # Limited thinking budget for efficiency
+        # kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
+        logger.debug("Thinking mode disabled for Flash model")
 
     # Support for explicit Vertex credentials (ADC workaround)
     vertex_creds_path = os.getenv("VERTEX_CREDENTIALS")

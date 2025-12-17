@@ -94,7 +94,7 @@ class DeepAgent:
         logger.info("=== Phase 1: Knowledge Base Generation ===")
         kb_metrics = metrics.start_kb_phase()
         
-        kb_files = self.kb_builder.generate_with_supervisor()
+        kb_files = self.kb_builder.generate(metrics=kb_metrics)
         
         kb_metrics.finish()
         logger.info(f"KB Phase completed in {kb_metrics.duration_seconds:.1f}s")
@@ -113,7 +113,7 @@ class DeepAgent:
         logger.info("=== Phase 2: Tutorial Generation ===")
         tutorial_metrics = metrics.start_tutorial_phase()
 
-        tutorial_files = self.tutorial_generator.generate_with_supervisor()
+        tutorial_files = self.tutorial_generator.generate()
 
         tutorial_metrics.finish()
         logger.info(f"Tutorial Phase completed in {tutorial_metrics.duration_seconds:.1f}s")

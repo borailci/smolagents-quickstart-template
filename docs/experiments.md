@@ -54,24 +54,6 @@ Below are some example repositories you can use that are contamination-free:
 - [POML](https://github.com/microsoft/poml)
 - [RAG Anything](https://github.com/HKUDS/RAG-Anything)
 
-#### Example GPUs
-
-You can deploy your LLM in Digital Ocean with one of these GPU droplets using Ollama:
-
-- AMD Instinct™ MI300X×8 (GPU memory: 1,536 GB)
-- NVIDIA HGX H100×8 (GPU memory: 640 GB)
-
-You can [see the pricing here.](https://www.digitalocean.com/pricing/gpu-droplets)
-
-#### Example LLMs
-
-On these setups, you can deploy many LLMs, but among the best ones are:
-
-- [GPT OSS 120B](https://ollama.com/library/gpt-oss:120b) (in Thinking=High or Thinking=Medium modes)
-- [Qwen3 30B A3B Instruct](https://ollama.com/library/qwen3:30b-a3b-instruct-2507-q4_K_M)
-
-NOTE: Deploy the LLMs in **FULL CONTEXT**. Both of the models above support 128K context.
-
 #### IMPORTANT NOTE:
 
 PLEASE NOTE THAT YOU SHOULD ONLY USE THE KNOWLEDGE BASE AS AN EXTRA CONTEXT TO GUIDE YOUR DEEP AGENT. IN BOTH APPROACHES, WHEN IT COMES TO CREATING TUTORIALS, BOTH AGENTS (BASELINE AND DEEPAGENT) SHOULD BE ABLE TO DISCOVER THE CODEBASE. For example, you cannot only generate the knowledge base and then convert this knowledge base to a tutorial. For generating the tutorial, even the deep agent has to explore the codebase using the tools it has, but its context is enriched with the knowledge base you generated before.

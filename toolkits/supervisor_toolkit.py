@@ -44,12 +44,15 @@ class SupervisorContext:
         output_root: Path,
         max_retries: int = 2,
         knowledge_base_root: Path | None = None,
+        metrics: Any = None,
     ):
         self.codebase_root = codebase_root
         self.sub_agents_root = sub_agents_root
         self.output_root = output_root
         self.max_retries = max_retries
         self.knowledge_base_root = knowledge_base_root
+        self.metrics = metrics
+        self.spawned_agents: Dict[str, Dict[str, Any]] = {}
         self.spawned_agents: Dict[str, Dict[str, Any]] = {}
         self.retry_counts: Dict[str, int] = {}
 
@@ -68,23 +71,24 @@ class SupervisorContext:
 # ReadWorkspaceFileTool, RewriteWorkspaceFileTool also moved
 
 
-class SpawnAnalyzerAgentTool(Tool):
-    name = "spawn_analyzer_agent"
-    description = "Spawn analyzer sub-agent for a directory. Returns JSON {workspace, status}."
+class SpawnSubAgentsTool(Tool):
+    name = "spawn_sub_agents"
+    description = "Spawn multiple sub-agents in batch to analyze parts of the codebase. Returns a summary of results."
     inputs = {
-        "target_path": {
-            "type": "string",
-            "description": "Relative path to the directory/file to analyze",
-        },
-        "focus_files": {
+        "tasks": {
             "type": "array",
-            "description": "List of specific files to focus on (3-5 recommended)",
-        },
-        "custom_instructions": {
-            "type": "string",
-            "description": "Additional instructions from Supervisor",
-            "nullable": True,
-        },
+            "description": "List of task objects. Each object must have: 'target_path', 'focus_files' (list), 'agent_type' ('analyzer'|'summarizer'), and optional 'custom_instructions'.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "target_path": {"type": "string"},
+                    "focus_files": {"type": "array", "items": {"type": "string"}},
+                    "agent_type": {"type": "string", "enum": ["analyzer", "summarizer"]},
+                    "custom_instructions": {"type": "string", "nullable": True}
+                },
+                "required": ["target_path", "focus_files"]
+            }
+        }
     }
     output_type = "string"
 
@@ -96,148 +100,150 @@ class SpawnAnalyzerAgentTool(Tool):
         checkpoint_path = ctx.output_root / "analysis_checkpoint.json"
         self.checkpoint = TaskCheckpoint(checkpoint_path)
 
-    def forward(self, target_path: str, focus_files: List[str], custom_instructions: str = "") -> str:
-        # CHECKPOINT CHECK
-        if self.checkpoint.is_processed(target_path):
-            result = self.checkpoint.get_result(target_path)
-            if result:
-                 # Restore into in-memory context to keep Supervisor sync
-                self.ctx.spawned_agents[target_path] = json.loads(result)
-                logger.info(f"⏩ [SKIP] {target_path} already analyzed. Loading from checkpoint.")
-                return result
+    def forward(self, tasks: List[Dict[str, Any]]) -> str:
+        results_summary = []
+        specs_to_run = []
+        task_metadata = [] # Keep track of metadata for the specs
 
-        # RATE LIMITING
-        import time
-        time.sleep(2.0)  # Prevent 429 burst errors
+        # 1. Filter and Prepare Tasks
+        for task in tasks:
+            target_path = task.get("target_path")
+            focus_files = task.get("focus_files", [])
+            agent_type = task.get("agent_type", "analyzer")
+            custom_instructions = task.get("custom_instructions", "")
 
-        # Use only the last 2 path components to avoid excessively long folder names
-        path_obj = Path(target_path)
-        parts = path_obj.parts[-2:] if len(path_obj.parts) >= 2 else path_obj.parts
-        short_name = "_".join(parts).replace("/", "_").replace("\\", "_").strip("_") or "root"
-        safe_name = short_name[:50]  # Truncate to max 50 chars
-        workspace_root = self.ctx.sub_agents_root / safe_name
+            # CHECKPOINT CHECK
+            if self.checkpoint.is_processed(target_path):
+                result = self.checkpoint.get_result(target_path)
+                if result:
+                    self.ctx.spawned_agents[target_path] = json.loads(result)
+                    logger.info(f"⏩ [SKIP] {target_path} already analyzed.")
+                    results_summary.append(f"- {target_path}: Skipped (Already Completed)")
+                    continue
+            
+            # Prepare Spec
+            focus_list = "\n".join(f"- `{f}`" for f in focus_files) if focus_files else "(none)"
+            
+            # Determine Real Directory (for 'partX' virtual paths)
+            real_directory = target_path
+            if focus_files:
+                import os
+                # Use the directory of the first file as the "real" directory context
+                first_file = focus_files[0]
+                real_directory = os.path.dirname(first_file)
+                if not real_directory: # If file is at root
+                    real_directory = "."
+            
+            from prompts import prompts
+            if agent_type == "summarizer":
+                task_desc = prompts.SUMMARIZER_SPAWN_TASK_TEMPLATE.format(
+                    target_path=target_path,
+                    focus_list=focus_list,
+                    real_directory=real_directory
+                )
+            else:
+                 task_desc = prompts.ANALYZER_SPAWN_TASK_TEMPLATE.format(
+                    target_path=target_path,
+                    focus_list=focus_list,
+                    real_directory=real_directory,
+                    custom_instructions=custom_instructions or ""
+                )
+            
+            spec = SubAgentTaskSpec(
+                description=task_desc,
+                role=SubAgentRole.ANALYZER, # Underlying role is same, prompt differs
+            )
+            
+            specs_to_run.append(spec)
+            task_metadata.append({
+                "target_path": target_path,
+                "agent_type": agent_type
+            })
 
-        if workspace_root.exists():
-            shutil.rmtree(workspace_root)
-        workspace_root.mkdir(parents=True, exist_ok=True)
+        if not specs_to_run:
+            return "All requested tasks were already completed (Checkpoint).\n" + "\n".join(results_summary)
 
-        # PRE-LOAD DISABLED - Agent reads files on its own to reduce input tokens
-        focus_list = "\n".join(f"- `{f}`" for f in focus_files) if focus_files else "(none)"
+        # 2. Run Batch
+        logger.info(f"🚀 Spawning batch of {len(specs_to_run)} sub-agents...")
         
-        # Use centralized task template from prompts.py
-        from prompts import prompts
-        task_desc = prompts.ANALYZER_SPAWN_TASK_TEMPLATE.format(
-            target_path=target_path,
-            focus_list=focus_list,
-            custom_instructions=custom_instructions or ""
-        )
-
-        spec = SubAgentTaskSpec(
-            description=task_desc,
-            role=SubAgentRole.ANALYZER,
-        )
-
+        # We need a way to map workspaces back to targets. 
+        # run_typed_sub_agent_tasks returns list[Path].
+        # We assume order is preserved (it should be).
+        
         try:
-            start_time = time.monotonic()
             workspaces = run_typed_sub_agent_tasks(
-                [spec],
+                specs_to_run,
                 codebase_root=self.ctx.codebase_root,
-                sub_agents_root=workspace_root,
+                sub_agents_root=self.ctx.sub_agents_root, # They will be specialized inside
                 min_interval_seconds=5.0,
                 max_tool_calls=None,
                 max_directory_calls=None,
-            minimal_tools=False,  # Enable all tools per architecture spec
+                minimal_tools=False,
+                metrics=self.ctx.metrics,
             )
             
-            # --- METRICS LOGGING ---
-            duration = time.monotonic() - start_time
-            try:
-                metrics_file = self.ctx.output_root / "metrics.md"
-                if not metrics_file.exists():
-                    metrics_file.write_text("# Agent Execution Metrics\n\n| Date | Agent | Target | Duration |\n|---|---|---|---|\n", encoding="utf-8")
+            # 3. Process Results
+            for i, workspace in enumerate(workspaces):
+                meta = task_metadata[i]
+                target_path = meta["target_path"]
                 
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                target_name = target_path if len(target_path) < 40 else f"...{target_path[-37:]}"
-                metrics_line = f"| {timestamp} | Analyzer | `{target_name}` | {duration:.2f}s |\n"
-                
-                with metrics_file.open("a", encoding="utf-8") as f:
-                    f.write(metrics_line)
-            except Exception as e:
-                logger.warning(f"Failed to write metrics: {e}")
-            # -----------------------
-
-            workspace = workspaces[0] if workspaces else None
-            result_json = ""
-            
-            if workspace and workspace.exists():
-                # Perform immediate validation
-                output_file = workspace / "summary.md"
-                validation_info = "No output file found."
-                is_valid = False
-                
-                if output_file.exists():
-                    try:
+                if workspace and workspace.exists():
+                    # Validate
+                    output_file = workspace / "summary.md"
+                    validation_info = "No output file."
+                    is_valid = False
+                    
+                    if output_file.exists():
                         content = output_file.read_text(encoding="utf-8")
                         is_valid = len(content) >= 100
-                        issues = [] if is_valid else [f"Length {len(content)} < 100"]
-                        res = type('obj', (object,), {'is_valid': is_valid, 'issues': issues})
-                        validation_info = f"Valid: {res.is_valid}. Issues: {res.issues}"
-                    except Exception as ve:
-                        validation_info = f"Validation failed: {ve}"
-                
-                status = "completed" if is_valid else "completed_with_issues"
-                
-                result_data = {
-                    "workspace": str(workspace), 
-                    "status": status, 
-                    "validation": validation_info,
-                    "preview": f"File created at {output_file.name}. {validation_info}"
-                }
-                
-                self.ctx.spawned_agents[target_path] = {
-                    "workspace": str(workspace),
-                    "status": status,
-                    "validation": validation_info
-                }
-                
-                result_json = json.dumps(result_data)
-                
-                # SAVE CHECKPOINT if successful
-                if is_valid:
-                    self.checkpoint.save_progress(target_path, result_json)
+                        validation_info = "Valid" if is_valid else f"Too short ({len(content)})"
                     
-                    # --- AUTO-UPDATE COMPILATION PLAN ---
-                    try:
-                        plan_file = self.ctx.output_root / "compilation_plan.md"
-                        if plan_file.exists():
-                            lines = plan_file.read_text(encoding="utf-8").splitlines()
-                            updated_lines = []
-                            for line in lines:
-                                if target_path in line and "[ ]" in line:
-                                    line = line.replace("[ ]", "[x]")
-                                updated_lines.append(line)
-                            plan_file.write_text("\n".join(updated_lines), encoding="utf-8")
-                            logger.info(f"Marked '{target_path}' as complete in compilation_plan.md")
-                    except Exception as e:
-                        logger.warning(f"Failed to auto-update compilation plan: {e}")
+                    status = "completed" if is_valid else "completed_with_issues"
+                    result_data = {
+                        "workspace": str(workspace),
+                        "status": status,
+                        "validation": validation_info
+                    }
                     
-                return result_json
-            else:
-                self.ctx.spawned_agents[target_path] = {
-                    "workspace": str(workspace_root),
-                    "status": "failed",
-                    "error": "No workspace returned",
-                }
-                return json.dumps({"workspace": str(workspace_root), "status": "failed", "error": "No workspace returned"})
+                    self.ctx.spawned_agents[target_path] = result_data
+                    
+                    # Update Checkpoint
+                    if is_valid:
+                        self.checkpoint.save_progress(target_path, json.dumps(result_data))
+                        results_summary.append(f"- {target_path}: Success ({workspace.name})")
+                    else:
+                        results_summary.append(f"- {target_path}: Failed validation ({workspace.name})")
+
+                else:
+                    results_summary.append(f"- {target_path}: Failed (No workspace)")
+                    
+            # Auto-update compilation plan
+            self._update_compilation_plan(task_metadata)
 
         except Exception as e:
-            logger.warning(f"spawn_analyzer_agent failed for {target_path}: {e}")
-            self.ctx.spawned_agents[target_path] = {
-                "workspace": str(workspace_root),
-                "status": "failed",
-                "error": str(e),
-            }
-            return json.dumps({"workspace": str(workspace_root), "status": "failed", "error": str(e)})
+            logger.error(f"Batch execution failed: {e}")
+            return f"Batch execution failed: {e}"
+
+        return "Batch Execution Summary:\n" + "\n".join(results_summary)
+
+    def _update_compilation_plan(self, metadata: List[Dict]):
+        try:
+            plan_file = self.ctx.output_root / "compilation_plan.md"
+            if plan_file.exists():
+                content = plan_file.read_text(encoding="utf-8")
+                lines = content.splitlines()
+                updated_lines = []
+                targets = [m["target_path"] for m in metadata]
+                
+                for line in lines:
+                    for t in targets:
+                        if t in line and "[ ]" in line:
+                            line = line.replace("[ ]", "[x]")
+                    updated_lines.append(line)
+                
+                plan_file.write_text("\n".join(updated_lines), encoding="utf-8")
+        except Exception:
+            pass
 
 
 
@@ -426,6 +432,7 @@ class RetryAgentTool(Tool):
                 max_directory_calls=None,  # No limit
                 knowledge_base_root=self.ctx.knowledge_base_root,
                 minimal_tools=minimal_tools,
+                metrics=self.ctx.metrics,
             )
 
             workspace = workspaces[0] if workspaces else None
@@ -462,7 +469,21 @@ class FinalizeKnowledgeBaseTool(Tool):
         collected_files = []
         for ws_path in workspaces:
             workspace = Path(ws_path)
+            # If path doesn't exist, try looking in sub_agents_root
             if not workspace.exists():
+                candidate = self.ctx.sub_agents_root / ws_path
+                if candidate.exists():
+                    workspace = candidate
+            
+            # If still not found, check if it's a logical target name (e.g. "src/auth") mapped in context
+            if not workspace.exists() and ws_path in self.ctx.spawned_agents:
+                data = self.ctx.spawned_agents[ws_path]
+                if "workspace" in data:
+                    workspace = Path(data["workspace"])
+                    logger.info(f"Resolved logical path '{ws_path}' to workspace '{workspace.name}'")
+
+            if not workspace.exists():
+                logger.warning(f"Workspace path not found: {ws_path}")
                 continue
 
             # Extract target name from workspace path (e.g., "app" from ".../app/sub_agent_1")
@@ -518,6 +539,7 @@ def build_supervisor_tools(
     codebase_root: str | Path,
     sub_agents_root: str | Path,
     output_root: str | Path,
+    metrics: Any = None,
 ) -> List[Tool]:
     """Create tools for the Knowledge Base Supervisor."""
     from toolkits.scoped_filesystem_toolkit import (
@@ -531,19 +553,26 @@ def build_supervisor_tools(
         codebase_root=Path(codebase_root).expanduser().resolve(),
         sub_agents_root=ensure_directory(sub_agents_root),
         output_root=ensure_directory(output_root),
+        metrics=metrics,
     )
     
     codebase_path = ctx.codebase_root
     workspace_path = ctx.output_root
 
+    usage_cb = None
+    if metrics:
+        def _cb(tool_name: str):
+            metrics.record_tool_call(tool_name)
+        usage_cb = _cb
+
     return [
         # Filesystem tools from scoped_filesystem_toolkit
-        GetCodebaseTreeTool(codebase_path, None),  # get_codebase_overview equivalent
-        ListCodebaseDirectoryTool(codebase_path, None),
-        ReadCodebaseFileTool(codebase_path, workspace_path, None),
-        WriteWorkspaceFileTool(workspace_path, None),
+        GetCodebaseTreeTool(codebase_path, usage_cb),  # get_codebase_overview equivalent
+        ListCodebaseDirectoryTool(codebase_path, usage_cb),
+        ReadCodebaseFileTool(codebase_path, workspace_path, usage_cb),
+        WriteWorkspaceFileTool(workspace_path, usage_cb),
         # Agent management tools
-        SpawnAnalyzerAgentTool(ctx),
+        SpawnSubAgentsTool(ctx),
         EvaluateOutputQualityTool(),
         RetryAgentTool(ctx),
         FinalizeKnowledgeBaseTool(ctx),

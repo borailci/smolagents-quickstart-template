@@ -213,6 +213,6 @@ __marimo__/
 
 # Generated knowledge base artifacts
 data/*
-docs/*
+
 # Local filtered logs
 filtered_log*.txt

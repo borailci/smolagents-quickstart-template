@@ -1,111 +1,146 @@
-# Getting Started with Instructor
+# Getting Started with `instructor`
 
 ## Goal
-This tutorial aims to introduce you to `instructor`, a powerful library for controlling the output of Large Language Models (LLMs) with Python types. You'll learn what `instructor` is, its key features, and how to get started with its installation and basic usage.
+This tutorial will guide you through the basics of the `instructor` library, demonstrating how to use it to coerce Large Language Models (LLMs) into returning structured, Pydantic-validated output. By the end, you'll be able to integrate `instructor` into your Python projects to build more reliable and predictable LLM-powered applications.
 
-## What is Instructor?
-`instructor` is a library that extends the capabilities of LLMs by enabling them to return structured data directly as Python types. This means instead of parsing raw text output from an LLM, you can define your expected output as a Pydantic model (or similar), and `instructor` will ensure the LLM's response conforms to that structure. This significantly simplifies integration of LLMs into applications by eliminating the need for complex parsing logic.
+## 1. Introduction to `instructor`
+The `instructor` library is a powerful tool designed to bring structure and reliability to your interactions with Large Language Models (LLMs). It acts as a middleware, allowing you to define the exact format of the LLM's output using Pydantic models. This ensures that the responses you receive are always validated, type-safe, and ready for programmatic use, eliminating the need for manual parsing and error handling.
 
-### Why use Instructor?
-- **Structured Output**: Guarantees that LLMs return data in a predefined, usable format.
-- **Type Safety**: Leverage Python's type hinting for robust and error-free LLM integrations.
-- **Reduced Parsing Logic**: Eliminate boilerplate code for parsing LLM responses.
-- **Enhanced Reliability**: Improve the consistency and predictability of LLM outputs.
-- **Streamlined Development**: Focus on application logic rather than output formatting.
+`instructor` supports a wide range of LLM providers, including OpenAI, Anthropic, Google Gemini, and more, offering a unified interface to streamline multi-LLM development. Its core idea revolves around "patching" existing LLM client libraries to inject its structured output capabilities seamlessly.
 
-## Key Features
+## 2. Core Concepts
 
-### 1. Pydantic Integration
-`instructor` works seamlessly with Pydantic, allowing you to define complex data structures for your LLM outputs using familiar Python classes.
+### Structured Output with Pydantic
+At its core, `instructor` leverages Pydantic models to define the desired structure of LLM responses. Instead of receiving free-form text, you instruct the LLM to return data that conforms to a specific schema. This is achieved by using the LLM's function calling or JSON mode capabilities under the hood, ensuring predictable output.
 
-### 2. OpenAI, Anthropic, and other LLM API Compatibility
-It provides a consistent interface for popular LLM providers, abstracting away their specific API differences when it comes to structured output.
-
-### 3. Automatic Retries and Validation
-If an LLM initially fails to produce valid structured output, `instructor` can automatically retry and guide the model until a valid response is generated.
-
-### 4. Function Calling Abstraction
-It simplifies the use of function calling features in LLMs, allowing you to directly map LLM outputs to Python functions.
-
-### 5. Streaming Support
-`instructor` supports streaming responses, allowing for interactive and real-time data processing.
-
-## Installation
-
-Installing `instructor` is straightforward using `pip`:
-
-```bash
-pip install instructor
-```
-
-If you want to include support for specific LLM providers, you can install them as extras. For example, for OpenAI:
-
-```bash
-pip install instructor[openai]
-```
-
-Or for Anthropic:
-
-```bash
-pip install instructor[anthropic]
-```
-
-## Basic Usage Example
-
-Let's see how `instructor` can be used to extract structured data from a simple text input.
-
-First, define a Pydantic model for the expected output:
+### Provider Agnostic Interface (`from_provider`)
+`instructor` offers a convenient `from_provider` function to initialize clients for various LLM providers. You simply specify the model, and `instructor` intelligently configures the client to enable structured output, abstracting away provider-specific API nuances.
 
 ```python
-from pydantic import BaseModel, Field
 import instructor
-from openai import OpenAI
 
-class User(BaseModel):
-    name: str = Field(description="The name of the user")
-    age: int = Field(description="The age of the user")
-    occupation: str = Field(description="The occupation of the user")
+# Example with OpenAI
+client = instructor.from_provider("openai/gpt-4")
 
-# Patch the OpenAI client to enable instructor's features
-client = instructor.patch(OpenAI())
-
-# Now, when you call chat.completions.create, you can pass response_model
-def extract_user_info(text: str) -> User:
-    response = client.chat.completions.create(
-        model="gpt-4", # or your preferred model
-        response_model=User,
-        messages=[
-            {"role": "user", "content": f"Extract user information from the following text: {text}"}
-        ]
-    )
-    return response
-
-# Example usage
-text_data = "John Doe is 30 years old and works as a software engineer."
-user_info = extract_user_info(text_data)
-
-print(user_info.name) # Output: John Doe
-print(user_info.age)  # Output: 30
-print(user_info.occupation) # Output: software engineer
+# Example with Google Gemini (requires google-generativeai installed)
+# client = instructor.from_provider("google/gemini-pro")
 ```
 
-## How Instructor Works (Conceptual Diagram)
+### Seamless Patching
+One of `instructor`'s most elegant features is its ability to "patch" existing LLM client libraries. When you initialize an `Instructor` client, it modifies the `create` method of the underlying LLM client (e.g., `openai.chat.completions.create`). This allows you to continue using the familiar API calls while `instructor` transparently handles the transformation of your Pydantic `response_model` into the LLM's function call schema and validates the incoming response.
 
-Here's a simplified flow of how `instructor` intercepts and processes LLM calls to ensure structured output:
+Here's a simplified visual representation of how `instructor` patches the LLM client:
 
 ```mermaid
 graph TD
-    A[Your Application] --> B{Call LLM API with `response_model`}
-    B --> C(Instructor's Patched Client)
-    C --> D{Instruct LLM with Schema & Constraints}
-    D --> E[LLM API (e.g., OpenAI)]
-    E --> F[Raw LLM Response (JSON/Text)]
-    F --> G{Instructor's Validator/Parser}
-    G -- Invalid --> D
-    G -- Valid --> H[Pydantic Model Instance]
-    H --> A
+    A[Your Application Code] --> B{Call LLM Client `create` method};
+    B --> C[Instructor Patch intercepts call];
+    C --> D{Transforms Pydantic `response_model` to LLM function/tool schema};
+    D --> E[Sends request to LLM API];
+    E --> F[LLM API returns response];
+    F --> G{Instructor validates and parses response into Pydantic model};
+    G --> H[Returns Pydantic instance to your application];
+```
+
+## 3. Step-by-Step Tutorial: Basic Structured Output
+
+Let's walk through a simple example to extract information about a person from a piece of text using `instructor` and Pydantic.
+
+### Prerequisites
+
+Before you begin, ensure you have the necessary libraries installed and an OpenAI API key configured.
+
+1.  **Install `instructor` and `openai`**:
+    ```bash
+    pip install "instructor[openai]" "pydantic>=2"
+    ```
+
+2.  **Set your OpenAI API Key**:
+    Make sure your `OPENAI_API_KEY` environment variable is set.
+
+### Defining Your Pydantic Model
+
+First, we'll define a Pydantic model that represents the structured data we want to extract.
+
+```python
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class UserDetail(BaseModel):
+    """
+    Represents detailed information about a user.
+    """
+    name: str = Field(description="The name of the user.")
+    age: int = Field(description="The age of the user in years.")
+    occupation: str = Field(description="The primary occupation or job title of the user.")
+    marital_status: Literal["single", "married", "divorced", "widowed"] = Field(
+        description="The marital status of the user."
+    )
+```
+
+### Using `instructor` to Extract Structured Data
+
+Now, let's use `instructor` to call an LLM and have it return an instance of our `UserDetail` model.
+
+```python
+import instructor
+import openai
+from pydantic import BaseModel, Field
+from typing import Literal
+
+# 1. Define your Pydantic model (as shown above)
+class UserDetail(BaseModel):
+    """
+    Represents detailed information about a user.
+    """
+    name: str = Field(description="The name of the user.")
+    age: int = Field(description="The age of the user in years.")
+    occupation: str = Field(description="The primary occupation or job title of the user.")
+    marital_status: Literal["single", "married", "divorced", "widowed"] = Field(
+        description="The marital status of the user."
+    )
+
+# 2. Initialize the OpenAI client and patch it with instructor
+# We use instructor.patch to enable structured output on the OpenAI client.
+# instructor.from_provider("openai/gpt-4") is an alternative for broader provider support.
+client = instructor.patch(openai.OpenAI())
+
+# 3. Make an LLM call with response_model
+# The 'response_model' argument tells instructor to coerce the output into UserDetail.
+user_info = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    response_model=UserDetail,
+    messages=[
+        {"role": "user", "content": "Extract information about the person: John Doe, 30 years old, a software engineer, and is married."}
+    ]
+)
+
+# 4. Print the extracted structured data
+print("Extracted User Information:")
+print(f"Name: {user_info.name}")
+print(f"Age: {user_info.age}")
+print(f"Occupation: {user_info.occupation}")
+print(f"Marital Status: {user_info.marital_status}")
+print(f"Type of object: {type(user_info)}")
+
+# You can also verify the data type
+assert isinstance(user_info, UserDetail)
+print("\nSuccessfully extracted data as a UserDetail Pydantic object!")
+```
+
+### Expected Output
+
+```
+Extracted User Information:
+Name: John Doe
+Age: 30
+Occupation: software engineer
+Marital Status: married
+Type of object: <class '__main__.UserDetail'>
+
+Successfully extracted data as a UserDetail Pydantic object!
 ```
 
 ## Conclusion
 
-`instructor` significantly simplifies working with LLMs by guaranteeing structured outputs and integrating seamlessly with Python's type system. By patching your LLM client, you can define the exact data shape you expect, making your LLM integrations more robust and easier to manage. Start experimenting with `instructor` today to unlock the full potential of structured LLM interactions!
+You've successfully taken your first steps with `instructor`! By combining the power of Pydantic models with `instructor`'s intelligent patching, you can transform unstructured LLM responses into reliable, type-safe Python objects. This approach significantly reduces boilerplate, enhances data quality, and accelerates the development of robust AI applications. Explore further to leverage `instructor`'s advanced features like iterable models, parallel tool calls, and distillation for even more complex use cases.

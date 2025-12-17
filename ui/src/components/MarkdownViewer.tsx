@@ -79,22 +79,28 @@ function MermaidDiagram({ code }: { code: string }) {
 
 export function MarkdownViewer({ content }: MarkdownViewerProps) {
     return (
-        <div className="prose prose-invert max-w-none prose-headings:text-white prose-p:text-slate-300 prose-a:text-violet-400 prose-strong:text-white prose-code:text-cyan-400 prose-pre:bg-transparent prose-pre:p-0">
+        <div className="prose prose-invert max-w-none prose-headings:text-white prose-p:text-slate-300 prose-a:text-violet-400 prose-strong:text-white prose-code:text-cyan-400 prose-pre:bg-transparent prose-pre:p-0 prose-code:before:content-none prose-code:after:content-none">
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
-                    code({ className, children, ...props }) {
+                    //@ts-ignore
+                    code({ node, inline, className, children, ...props }) {
                         const match = /language-(\w+)/.exec(className || '');
                         const language = match ? match[1] : '';
                         const codeString = String(children).replace(/\n$/, '');
 
                         // Handle Mermaid diagrams
-                        if (language === 'mermaid') {
+                        if (!inline && language === 'mermaid') {
                             return <MermaidDiagram code={codeString} />;
                         }
 
+                        // Heuristic: If it has a language detected, OR contains newlines, treat as block.
+                        // Otherwise, treat as inline.
+                        // using 'inline' prop is best, but if it fails, fallback to simple check.
+                        const isInline = inline ?? (!match && !String(children).includes('\n'));
+
                         // Inline code
-                        if (!className) {
+                        if (isInline) {
                             return (
                                 <code className="rounded bg-slate-800 px-1.5 py-0.5 text-cyan-400" {...props}>
                                     {children}

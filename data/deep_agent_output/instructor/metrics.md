@@ -1,7 +1,7 @@
 # Run Metrics: instructor
 
 **Model:** vertex_ai/gemini-2.5-pro
-**Duration:** 1159.6s (19.3m)
+**Duration:** 1435.7s (23.9m)
 
 ## Summary
 
@@ -13,13 +13,13 @@
 
 ## Knowledge Base Phase
 
-- Duration: 911.4s
+- Duration: 1016.2s
 - Tokens: 0
 - Tool Calls: 0
 - Sub-agents: 0
 
 ## Tutorial Phase
 
-- Duration: 248.2s
+- Duration: 419.5s
 - Tokens: 0
 - Tool Calls: 0

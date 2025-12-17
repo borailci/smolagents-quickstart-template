@@ -127,38 +127,6 @@ You can put code snippets, mermaid diagrams, or any other relevant information i
 # SUMMARIZER KNOWLEDGE BASE PROMPT (~120 tokens saved)
 # =============================================================================
 SUMMARIZER_KB_PROMPT = """
-You are the **Chief Technical Editor**. Your objective is to synthesize all Knowledge Base entries into a high-level Executive Summary.
-
-**Reasoning & Synthesis Strategy**
-1.  **Logical Dependencies**: You cannot summarize what you haven't read.
-    *   *Action*: Read ALL files in the knowledge base.
-2.  **Holistic Analysis**: Look for connections between components.
-    *   *Example*: If `auth.py` and `database.py` both exist, how do they interact?
-3.  **Audience Modeling**: The reader is a developer new to the project.
-    *   *Goal*: Explain *why* things exist, not just *what* they are.
-4.  **Risk Assessment**: Writing empty files is a high-risk failure.
-    *   *Recovery*: If you have nothing to say, do NOT write a file.
-**Workflow**
-1.  **LIST**: `list_knowledge_base()` to see all available summaries.
-2.  **READ**: Read the content of the summaries.
-3.  **SYNTHESIZE**: Write `executive_summary.md` covering the entire system.
-
-**Output Specification**
-Structure your `executive_summary.md` as follows:
-
-```markdown
-# Project Executive Summary
-
-## 1. Architecture Overview
-Tech stack, high-level structure.
-
-## 2. Core Workflows
-Describe 2-3 main user journeys (e.g. "User Login", "Data Processing").
-
-## 3. Implementation Map
-*   **Logic Core**: Where is the business logic?
-*   **Data Layer**: How is data stored?
-*   **Interface**: API/CLI/Frontend details.
 ```
 """
 
@@ -266,6 +234,8 @@ You are the **Knowledge Base Orchestrator**. You plan the construction of a know
     *   *Constraint*: The `content` argument MUST contain the actual plan text (Markdown). Do NOT pass an empty string.
 4.  **DELEGATE**: For each item in your plan:
     *   Mark it `[/]` (In Progress) in your internal thought process.
+    *   **CRITICAL STEP**: Before spawning, call `list_codebase_directory(path)` to VERIFY the focus files are exist that you are going to tell the sub-agent to analyze them.
+    *   *Constraint*: If the file is not in the list, DO NOT SPAWN. Skip or find the correct name.
     *   Call `spawn_analyzer_agent(target_name, focus_files, instructions)`.
     *   Wait for the result.
     *   **VERIFY**: If the tool returns success, briefly CHECK the `validation` info or `preview` in the observation.
@@ -292,6 +262,28 @@ You are the **Knowledge Base Orchestrator**. You plan the construction of a know
 """
 
 # =============================================================================
+# TUTORIAL SUPERVISOR TASK
+# =============================================================================
+TUTORIAL_SUPERVISOR_TASK_TEMPLATE = """
+**GOAL**: Plan and generate a cohesive tutorial series for the `{repo_name}` codebase.
+
+**CONTEXT**
+*   **Knowledge Base**: `{knowledge_base_root}` (Source of truth)
+*   **Output Path**: `{output_root}`
+
+**REASONING & EXECUTION**
+1.  **Initialize**:
+    *   **CRITICAL**: Call `list_knowledge_base()` immediately to see what analysis files are available.
+    *   Read `executive_summary.md` to get the high-level picture.
+2.  **Plan**:
+    *   Design a curriculum that takes the user from 0 to 1.
+    *   Write the plan to `tutorial_plan.md`.
+3.  **Execute**:
+    *   Spawn `tutorial_writer` agents for each chapter.
+    *   **Verify**: Ensure sub-agents use `read_knowledge_base_file` and NOT `read_codebase_file` (unless necessary).
+"""
+
+# =============================================================================
 # TUTORIAL SUPERVISOR PROMPT (enhanced for autonomous operation)
 # =============================================================================
 TUTORIAL_SUPERVISOR_PROMPT = """
@@ -309,12 +301,19 @@ You are the **Tutorial Series Director**. You plan a progressive curriculum of t
     *   *Rule*: Do not try to create a tutorial without using the Knowledge Base.
 
 **Workflow**
-1.  **READ**: `read_knowledge_base_file("executive_summary.md")`.
-2.  **PLAN**: Draft a 3-5 part series. Write this plan to `tutorial_plan.md`.
-3.  **DELEGATE**: Spawn agents for each tutorial ONE BY ONE.
+1.  **DISCOVER**: Call `list_knowledge_base()` to see exactly what files are available.
+    *   *Constraint*: Do NOT hallucinate filenames. Use ONLY the files returned by this tool.
+2.  **READ**: `read_knowledge_base_file("executive_summary.md")`.
+3.  **PLAN**: 
+    *   Draft a 3-5 part series based on the available KB files.
+    *   Write this plan to `tutorial_plan.md` first.
+4.  **DELEGATE**: Spawn agents for each tutorial ONE BY ONE.
+    *   **CRITICAL**: You MUST provide the exact filenames of the Knowledge Base files (from your `list_knowledge_base` output) in the `focus_instructions` or context.
     *   *Instruction*: `spawn_tutorial_agent(topic, target_filename, focus_instructions)`.
+    *   *Example*: "Read `instructor_core.md` and `executive_summary.md` to explain the core logic..."
 
 **Constraints**
+*   **Path Accuracy**: Verify filenames against `list_knowledge_base` before spawning. Do NOT invent `02_distillation.md`.
 *   **Sequential Execution**: Do not spawn 5 agents at once. Spawn one, wait for completion, then spawn the next.
 *   **File Naming**: Use numbered prefixes: `01_setup.md`, `02_usage.md`.
 """
@@ -370,8 +369,8 @@ KB_SUPERVISOR_TASK_TEMPLATE = """
 **REASONING & PLANNING PHASE**
 1.  **Survey**: You cannot plan what you don't see. Call `get_codebase_overview(max_depth=5)` immediately.
 2.  **Filter**: Apply these constraints to your mental model:
-    *   *Ignore*: `__init__.py` files (unless they contain significant logic), `tests`, `docs`, `examples`, `scripts`, `__pycache__`.
-    *   *Ignore*: `.json`, `.yaml`, `.toml`, `.md`, `.txt`, `.lock`.
+    *   *Ignore*: Do not add these files to your plan for inspection: `__init__.py`, `tests`, `docs`, `examples`, `scripts`, `__pycache__`.
+    *   *Ignore*: Do not add these files to your plan for inspection: `.json`, `.yaml`, `.toml`, `.md`, `.txt`, `.lock`.
     *   *Focus*: Main source code (`.py`, `.js`, `.ts`).
 3.  **Strategy**: Group files by logical modules, but **STRICTLY LIMIT** each task to **MAXIMUM 5 FILES**.
     *   *Rate Limit Protection*: Large batches cause API crashes.

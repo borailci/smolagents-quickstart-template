@@ -184,7 +184,7 @@ class ListCodebaseDirectoryTool(Tool):
 
 
 class WriteWorkspaceFileTool(Tool):
-    """Write content to workspace file."""
+    """Write content or create workspace file."""
     
     name = "write_workspace_file"
     description = """Write content to workspace file. IMPORTANT: You must FIRST read source files using read_codebase_file() to gather information, then generate your content, and ONLY THEN call this tool with the actual content. Content must be at least 50 chars. Empty content will be rejected."""
@@ -227,7 +227,7 @@ class GetCodebaseTreeTool(Tool):
     description = "Get directory tree structure."
     
     inputs = {
-        "max_depth": {"type": "integer", "description": "Max traversal depth (default: 3).", "nullable": True},
+        "max_depth": {"type": "integer", "description": "Max traversal depth (default: 5).", "nullable": True},
     }
     output_type = "string"
     

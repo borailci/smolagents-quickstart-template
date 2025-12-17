@@ -287,6 +287,8 @@ You are the **Knowledge Base Orchestrator**. You plan the construction of a know
 *   **YOU** write the plan. Sub-agents do not write the plan.
 *   **Focus Files**: You MUST provide specific file paths to sub-agents. Empty `focus_files` = Failure.
 *   **Batch Limit**: Do NOT assign more than 5 files to a single agent, it is overloading the agent and makes it hit the rate limit. Split large modules into multiple tasks (e.g., "Auth Part 1", "Auth Part 2").
+*   **No Code Execution**: You do NOT have a Python interpreter. Do NOT output `<execute_ipython>` or python code blocks. You MUST write the plan as a Markdown string directly in the tool call.
+*   **Unique Target Names**: When splitting a directory into multiple tasks, you MUST use unique target names (e.g. `instructor/core`, `instructor/validation`). If you use `instructor/` twice, the second task will be skipped by the checkpoint system.
 """
 
 # =============================================================================
@@ -473,6 +475,9 @@ TUTORIAL_SPAWN_TASK_TEMPLATE = """
 **OUTPUT**: Save to `{target_filename}`.
 
 **CONTEXT**
+Working Directory: `{sub_agent_path}`
+Knowledge Base: `{knowledge_base_path}`
+
 RELEVANT FILES (Read these):
 {focus_list}
 

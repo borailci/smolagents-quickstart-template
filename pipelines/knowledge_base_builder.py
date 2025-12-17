@@ -139,26 +139,79 @@ class KnowledgeBaseBuilder:
         )
 
     def _run_summary_agent(self, files: List[Path]) -> Path | None:
+        """Run the Summarizer Agent to generate the Executive Summary."""
         summary_path = self.output_root / "executive_summary.md"
-        if not files:
-            summary_path.write_text("# Executive Summary\\n\\nNo documentation files generated.", encoding="utf-8")
-            return summary_path
         
-        file_summaries = []
-        for f in files:
-            if f.exists() and f.suffix == ".md" and f.name != "executive_summary.md":
-                try:
-                    text = f.read_text(encoding="utf-8")
-                    snippet = text[:500].strip() + ("..." if len(text) > 500 else "")
-                    file_summaries.append(f"### {f.stem}\\n{snippet}\\n")
-                except Exception: pass
+        # 1. Define Tools strictly for the output directory
+        from smolagents import Tool
         
-        content = f"# Executive Summary\\n\\nDocumentation for **{self.codebase_root.name}**.\\n\\n## Files\\n\\n"
-        content += "\\n".join(file_summaries) if file_summaries else "No files."
-        content += f"\\n\\n*Generated from {len(files)} files.*"
+        class ListKBTool(Tool):
+            name = "list_knowledge_base"
+            description = "List available knowledge base files (summaries)."
+            inputs = {}
+            output_type = "string"
+            
+            def forward(self2) -> str:
+                # Filter out system files
+                valid_files = []
+                for f in self.output_root.glob("*.md"):
+                    if f.name not in ("executive_summary.md", "compilation_plan.md", "metrics.md", "plan.md", "sub_agents_kb.md"):
+                        valid_files.append(f.name)
+                return "\\n".join(sorted(valid_files))
+
+        class ReadKBTool(Tool):
+            name = "read_knowledge_base_file"
+            description = "Read a knowledge base summary file."
+            inputs = {"filename": {"type": "string", "description": "Filename to read"}}
+            output_type = "string"
+            
+            def forward(self2, filename: str) -> str:
+                # Security check
+                if filename in ("executive_summary.md", "compilation_plan.md", "metrics.md", "plan.md", "sub_agents_kb.md"):
+                     return f"Access to system file '{filename}' is denied."
+                
+                path = self.output_root / filename
+                if path.exists() and path.parent == self.output_root:
+                    return path.read_text(encoding="utf-8")
+                return "File not found."
+
+        class WriteKBTool(Tool):
+            name = "write_workspace_file"
+            description = "Write the executive summary."
+            inputs = {
+                "file_path": {"type": "string", "description": "Must be 'executive_summary.md'"},
+                "content": {"type": "string", "description": "Markdown content"}
+            }
+            output_type = "string"
+            
+            def forward(self2, file_path: str, content: str) -> str:
+                if file_path != "executive_summary.md":
+                    return "Error: You can only write to 'executive_summary.md'."
+                
+                (self.output_root / file_path).write_text(content, encoding="utf-8")
+                return "Successfully wrote executive_summary.md"
+
+        # 2. Build Agent
+        from utils.llm_factory import create_model
+        model = create_model(role="summarizer")
         
-        summary_path.write_text(content, encoding="utf-8")
-        return summary_path
+        agent = ToolCallingAgent(
+            name="summarizer",
+            description="Synthesizes knowledge base execution summary",
+            tools=[ListKBTool(), ReadKBTool(), WriteKBTool()],
+            model=model,
+            instructions=prompts.SUMMARIZER_KB_PROMPT,
+        )
+        
+        logger.info("Starting Summarizer Agent...")
+        try:
+            agent.run("Generate the Executive Summary based on the available Knowledge Base files.")
+            if summary_path.exists():
+                return summary_path
+        except Exception as e:
+            logger.error(f"Summarizer Agent failed: {e}")
+            
+        return None
 
     def _reset_directory(self, path: Path):
         if path.exists(): shutil.rmtree(path)

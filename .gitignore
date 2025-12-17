@@ -212,13 +212,7 @@ __marimo__/
 .gradio/
 
 # Generated knowledge base artifacts
-data/knowledge_base/
-!data/knowledge_base/.gitkeep
-
-# Agent workspaces / scratchpads
-data/sub_agents_workspace/
-!data/sub_agents_workspace/.gitkeep
-data/agent_workspace/
-
+data/*
+docs/*
 # Local filtered logs
 filtered_log*.txt

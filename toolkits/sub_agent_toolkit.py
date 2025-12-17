@@ -267,6 +267,42 @@ def _execute_sub_agent_runs(
                 allow_mermaid=False,
                 allow_writes=True,
             )
+
+            # ADD KB TOOL FOR SUB-AGENTS
+            if knowledge_base_root and Path(knowledge_base_root).exists():
+                kb_path_obj = Path(knowledge_base_root)
+                
+                class ReadKBTool(Tool):
+                    name = "read_knowledge_base_file"
+                    description = "Read a knowledge base file (markdown summary)."
+                    inputs = {
+                        "filename": {
+                            "type": "string",
+                            "description": "Name of the file to read (e.g., executive_summary.md). Do NOT provide full path.",
+                        }
+                    }
+                    output_type = "string"
+                    
+                    def forward(self, filename: str) -> str:
+                        # Handle both simple filenames and full paths if agent hallucinates
+                        target = None
+                        if "/" in filename:
+                             # Try to treat as relative or check if it matches kb_path
+                             maybe_path = Path(filename)
+                             if str(kb_path_obj) in str(maybe_path.resolve()):
+                                 target = maybe_path
+                             else:
+                                 # Try stripping path
+                                 target = kb_path_obj / maybe_path.name
+                        else:
+                            target = kb_path_obj / filename
+                            
+                        if target and target.exists() and str(kb_path_obj) in str(target.resolve()):
+                             return target.read_text(encoding="utf-8")
+                        return f"File '{filename}' not found in Knowledge Base."
+
+                scoped_tools.append(ReadKBTool())
+
             return ToolCallingAgent(
                 name=f"sub_agent_{index}",
                 description=f"Knowledge-base agent for task {index}",

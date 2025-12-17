@@ -89,6 +89,7 @@ class SpawnTutorialAgentTool(Tool):
                 max_directory_calls=None,  # No limit
                 knowledge_base_root=self.ctx.knowledge_base_root,
                 minimal_tools=False,  # Allow exploration + RAG for tutorial writers
+                metrics=self.ctx.metrics,
             )
 
             workspace = workspaces[0] if workspaces else None
@@ -176,7 +177,14 @@ class FinalizeTutorialsTool(Tool):
         collected_files = []
         for ws_path in sorted_workspaces:
             workspace = Path(ws_path)
+            # If path doesn't exist, try looking in sub_agents_root
             if not workspace.exists():
+                candidate = self.ctx.sub_agents_root / ws_path
+                if candidate.exists():
+                    workspace = candidate
+            
+            if not workspace.exists():
+                logger.warning(f"Workspace path not found: {ws_path}")
                 continue
 
             md_files = list(workspace.glob("*.md"))
@@ -209,6 +217,7 @@ def build_tutorial_supervisor_tools(
     output_root: str | Path,
     knowledge_base_root: str | Path | None = None,
     baseline_mode: bool = False,
+    metrics: Any = None,
 ) -> List[Tool]:
     """Create tools for the Tutorial Supervisor."""
     from toolkits.supervisor_toolkit import RetryAgentTool
@@ -218,6 +227,7 @@ def build_tutorial_supervisor_tools(
         sub_agents_root=ensure_directory(sub_agents_root),
         output_root=ensure_directory(output_root),
         knowledge_base_root=Path(knowledge_base_root).expanduser().resolve() if knowledge_base_root else None,
+        metrics=metrics,
     )
     
     # Handle KB path safely
@@ -230,6 +240,8 @@ def build_tutorial_supervisor_tools(
         output_type = "string"
         
         def forward(self) -> str:
+            if metrics:
+                metrics.record_tool_call(self.name)
             if baseline_mode:
                 return "[Knowledge Base Not Available in Baseline Mode - Use Codebase Tools]"
             if not kb_path or not kb_path.exists():
@@ -248,6 +260,8 @@ def build_tutorial_supervisor_tools(
         output_type = "string"
         
         def forward(self, filename: str) -> str:
+            if metrics:
+                metrics.record_tool_call(self.name)
             if baseline_mode:
                 return "[Knowledge Base Not Available in Baseline Mode]"
             if not kb_path or not kb_path.exists():
@@ -256,6 +270,23 @@ def build_tutorial_supervisor_tools(
             if p.exists(): 
                 return p.read_text(encoding="utf-8")[:30000] # Truncate large files
             return "File not found."
+
+    
+    # Baseline Mode Tools (Exploration)
+    if baseline_mode:
+        from toolkits.scoped_filesystem_toolkit import (
+            ReadCodebaseFileTool,
+            ListCodebaseDirectoryTool,
+            GetCodebaseTreeTool,
+        )
+        return [
+            GetCodebaseTreeTool(ctx.codebase_root, usage_callback=lambda n: metrics.record_tool_call(n) if metrics else None),
+            ListCodebaseDirectoryTool(ctx.codebase_root, usage_callback=lambda n: metrics.record_tool_call(n) if metrics else None),
+            ReadCodebaseFileTool(ctx.codebase_root, ctx.output_root, usage_callback=lambda n: metrics.record_tool_call(n) if metrics else None),
+            SpawnTutorialAgentTool(ctx),
+            RetryAgentTool(ctx),
+            FinalizeTutorialsTool(ctx),
+        ]
 
     return [
         ListKBTool(),

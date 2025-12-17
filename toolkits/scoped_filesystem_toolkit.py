@@ -21,7 +21,7 @@ BLOCKED_EXTENSIONS = {
     ".pyc", ".pyo", ".pyd", ".so", ".dll", ".dylib", ".exe", ".bin", ".pkl",
     ".zip", ".tar", ".gz", ".7z", ".rar", ".jpg", ".jpeg", ".png", ".gif",
     ".webp", ".ico", ".svg", ".mp4", ".mp3", ".wav", ".pdf", ".docx",
-    ".yml", ".yaml", ".json", ".toml", ".txt", ".lock", ".md"
+    ".lock"
 }
 
 def ensure_directory(path: str | Path) -> Path:

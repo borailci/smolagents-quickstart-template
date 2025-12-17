@@ -16,7 +16,8 @@ import glob
 from pathlib import Path
 from loguru import logger
 from utils.llm_factory import create_model
-from smolagents import LiteLLMModel
+from smolagents import LiteLLMModel, CodeAgent
+from toolkits.scoped_filesystem_toolkit import build_scoped_tools
 
 
 
@@ -100,9 +101,271 @@ Return ONLY valid JSON (no markdown fences):
 }}
 """
 
-def evaluate_pair(model: LiteLLMModel, model_id: str, file_name: str, path_a: Path, path_b: Path) -> dict | None:
+AGENT_JUDGE_PROMPT = """You are an expert technical documentation reviewer and judge.
+Your task is to compare two **Tutorial Series** (A and B) for the provided codebase and pick a winner.
+You have access to tools to read the codebase files. 
+You MUST use these tools to verify:
+1. **Fidelity**: Does the code in the tutorials match the actual codebase? (Check file existence, function names, signatures).
+2. **Coverage**: Do the tutorials cover the main components found in the codebase tree? (Use `get_codebase_tree` to see structure).
+
+## Tutorial Series A
+{content_a}
+
+## Tutorial Series B
+{content_b}
+
+## Evaluation Criteria
+1. **Fidelity** (Crucial): Is the code accurate?
+2. **Pedagogy**: Is the progression logical?
+3. **Coverage**: Is the scope complete?
+
+## Instructions
+1. First, explore the codebase using `get_codebase_tree` and `read_codebase_file` to understand the actual project structure and content.
+2. Read the tutorials sections above (they are provided in full context).
+3. Verify at least 3 assertions/code snippets from the tutorials against the codebase using your tools.
+4. Form your judgment.
+5. **FINAL ANSWER**: Your task is NOT done until you return the result.
+   You must end your execution by calling the `final_answer` function with a Python dictionary matching this structure:
+   ```python
+   final_answer({{
+       "winner": "A" or "B" or "Tie",
+       "fidelity_A": 1-5,
+       "fidelity_B": 1-5,
+       "pedagogy_A": 1-5,
+       "pedagogy_B": 1-5,
+       "coverage_A": 1-5,
+       "coverage_B": 1-5,
+       "rationale": "Detailed explanation..."
+   }})
+   ```
+"""
+
+def evaluate_series(model_id: str, codebase_context: str, baseline_paths: List[Path], deep_paths: List[Path]) -> dict | None:
+    """Compare two complete sets of tutorials using an Agentic Judge."""
+    
+    # Check codebase_context - we actually interpret it as "codebase_root path" for the agent?
+    # CLI passes "full_context" string currently.
+    # Refactoring: CLI needs to pass the ROOT PATH, not the content string.
+    # But wait, `evaluate_series` signature in CLI call (Step 935) was `evaluate_series(model_id, full_context, ...)`
+    # I need to change CLI to pass ROOT PATH.
+    # For now, I will extract root path from the FIRST deep_path parent's parent if not passed explicitly?
+    # No, I should fix the signature. But let's look at `codebase_context` arg.
+    # If the user passed `full_context` string, that won't work for `build_scoped_tools`.
+    # I will assume `codebase_context` MIGHT be a Path object or a string.
+    # I will update CLI to pass `codebase_root` (Path) instead of `full_context`.
+    
+    # Logic to locate codebase root if passed as string (won't work). 
+    # I will assume CLI update is coming next.
+    # For now, assume `codebase_context` is a Path or valid path string.
+    
+    # Logic to locate codebase root
+    candidate_root = Path(codebase_context) if isinstance(codebase_context, (str, Path)) else None
+    if not candidate_root or (isinstance(candidate_root, Path) and not candidate_root.exists()):
+         # Fallback inference
+         candidate_root = deep_paths[0].parent.parent.parent.parent / "agent_workspace" / deep_paths[0].parent.parent.name
+         logger.warning(f"Inferred codebase root for Agent Judge: {candidate_root}")
+    
+    if not candidate_root.exists():
+        logger.error(f"Cannot find codebase root at {candidate_root} for agent tools.")
+        return {"winner": "Error", "rationale": "Codebase root not found for agent tools."}
+        
+    logger.info(f"Agent Judge initializing with tools for: {candidate_root}")
+
+    # Setup Evaluation Context in Codebase Root
+    import shutil
+    
+    # We create a temporary evaluation directory inside the codebase root
+    # This allows the agent to access them using the scoped tools (which are bound to codebase_root)
+    eval_root = candidate_root / "_evaluation_temp"
+    dir_a = eval_root / "Series_A"
+    dir_b = eval_root / "Series_B"
+    
+    # Clean/Create dirs
+    if eval_root.exists(): shutil.rmtree(eval_root)
+    dir_a.mkdir(parents=True)
+    dir_b.mkdir(parents=True)
+    
+    # Copy files
+    files_a_names = []
+    files_b_names = []
+    
+    for p in baseline_paths:
+        dest = dir_a / p.name
+        shutil.copy2(p, dest)
+        files_a_names.append(str(dest.relative_to(candidate_root)))
+
+    for p in deep_paths:
+        dest = dir_b / p.name
+        shutil.copy2(p, dest)
+        files_b_names.append(str(dest.relative_to(candidate_root)))
+        
+    logger.info(f"Staged tutorials in {eval_root}")
+    
+    # Construct Listing Strings for Prompt
+    list_a = "\n".join([f"- {n}" for n in sorted(files_a_names)])
+    list_b = "\n".join([f"- {n}" for n in sorted(files_b_names)])
+
+    prompt = AGENT_JUDGE_PROMPT.format(
+        content_a=f"Files located at:\n{list_a}\n\n(Use `read_codebase_file` to read them.)",
+        content_b=f"Files located at:\n{list_b}\n\n(Use `read_codebase_file` to read them.)"
+    )
+    
+    # Initialize Agent
+    tools = build_scoped_tools(
+        codebase_root=str(candidate_root),
+        workspace_root=str(candidate_root), # Allow reading everything in root
+        allow_tree=True,
+        allow_directory_listing=True,
+        allow_writes=False # Judge is read-only
+    )
+    
+    model = LiteLLMModel(model_id=model_id, max_tokens=4096)
+    
+    agent = CodeAgent(
+        tools=tools,
+        model=model,
+        add_base_tools=True, # Allow python helpers
+        max_steps=12 # Allow 12 steps of exploration
+    )
+
+    try:
+        response = agent.run(prompt)
+        
+        # Cleanup
+        if eval_root.exists(): shutil.rmtree(eval_root)
+        
+        # If agent uses final_answer(dict), response is the dict!
+        if isinstance(response, dict):
+            response["file_name"] = "Comparison (Agentic)"
+            response["model"] = model_id
+            return response
+            
+        content = str(response)
+        
+        # Parse JSON from Agent Answer
+        content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE).strip()
+        content = re.sub(r"\s*```$", "", content).strip()
+        
+        # Simple cleanup
+        content = re.sub(r",\s*\}", "}", content)
+        content = re.sub(r",\s*\]", "]", content)
+
+        try:
+            data = json.loads(content)
+            data["file_name"] = "Comparison (Agentic)"
+            data["model"] = model_id
+            return data
+        except json.JSONDecodeError:
+             # Try regex for brace block
+             match = re.search(r"(\{.*\})", content, flags=re.DOTALL)
+             if match:
+                 block = match.group(1)
+                 # Try fixing trailing commas
+                 fixed = re.sub(r",\s*\}", "}", block)
+                 fixed = re.sub(r",\s*\]", "]", fixed)
+                 try:
+                    data = json.loads(fixed)
+                    data["file_name"] = "Comparison (Agentic)"
+                    data["model"] = model_id
+                    return data
+                 except: 
+                    # Try AST for single quoted dicts
+                    try:
+                        import ast
+                        data = ast.literal_eval(block)
+                        if isinstance(data, dict):
+                             data["file_name"] = "Comparison (Agentic)"
+                             data["model"] = model_id
+                             return data
+                    except: pass
+
+             # Try AST on raw content?
+             try:
+                import ast
+                data = ast.literal_eval(content)
+                if isinstance(data, dict):
+                     data["file_name"] = "Comparison (Agentic)"
+                     data["model"] = model_id
+                     return data
+             except: pass
+             
+             return {"file_name": "Comparison", "model": model_id, "winner": "Error", "rationale": f"JSON parse error: {content[:200]}"}
+            
+    except Exception as e:
+        logger.error(f"Agentic comparison failed: {e}")
+        return {"file_name": "Comparison", "model": model_id, "winner": "Error", "rationale": str(e)}
+
+
+def evaluate_pair(model_id: str, file_name: str, codebase_context: str, path_a: Path, path_b: Path) -> dict | None:
+    """Compare two tutorials using an LLM."""
     content_a = path_a.read_text(errors="replace") if path_a.exists() else "MISSING"
     content_b = path_b.read_text(errors="replace") if path_b.exists() else "MISSING"
+    
+    if content_a == "MISSING" and content_b == "MISSING":
+        return None
+        
+    truncate_len = 6000 # Shorter to fit two into context
+    
+    prompt = COMPARE_PROMPT.format(
+        codebase_context=codebase_context,
+        content_a=_truncate(content_a, truncate_len),
+        content_b=_truncate(content_b, truncate_len)
+    )
+    
+    try:
+        from utils.llm_factory import create_model
+        model = create_model(model_id=model_id)
+        
+        response = model(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=4096
+        )
+        
+        # smolagents Model returns ChatMessage directly
+        if hasattr(response, "content"):
+             content = str(response.content).strip()
+        else:
+             # Fallback for other potential return types
+             content = str(response).strip()
+        
+        if content in ["None", ""] or content is None:
+            logger.warning(f"Empty response for {file_name}. Retry suggested.")
+            return {"file_name": file_name, "model": model_id, "winner": "Error", "rationale": "Empty/Blocked response from model"}
+
+        # Strip markdown fences
+        content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE).strip()
+        content = re.sub(r"\s*```$", "", content).strip()
+        
+        # Simple cleanup for common JSON errors
+        content = re.sub(r",\s*\}", "}", content) # Trailing comma in object
+        content = re.sub(r",\s*\]", "]", content) # Trailing comma in list
+
+        try:
+            data = json.loads(content)
+            data["file_name"] = file_name
+            data["model"] = model_id
+            return data
+        except json.JSONDecodeError as exc:
+            # Fallback: Try to find the first JSON object in the string
+            match = re.search(r"(\{.*\})", content, flags=re.DOTALL)
+            if match:
+                 try:
+                    c_fixed = match.group(1)
+                    c_fixed = re.sub(r",\s*\}", "}", c_fixed)
+                    data = json.loads(c_fixed)
+                    data["file_name"] = file_name
+                    data["model"] = model_id
+                    return data
+                 except:
+                    pass
+            
+            logger.error(f"JSON Parse Error for {file_name}.\nError: {exc}\nContent:\n{content}")
+            return {"file_name": file_name, "model": model_id, "winner": "Error", "rationale": f"JSON parse error. Content: {content[:200]}"}
+            
+    except Exception as e:
+        logger.error(f"Comparison failed for {file_name}: {e}")
+        return {"file_name": file_name, "model": model_id, "winner": "Error", "rationale": str(e)}
+
 
 @dataclass
 class TutorialScore:
@@ -480,102 +743,113 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate tutorials using multiple LLM judges"
     )
+    # Mode 1: Single directory eval
     parser.add_argument(
-        "--tutorials", type=Path, required=True,
+        "--tutorials", type=Path, default=None,
         help="Path to tutorial directory containing .md files"
     )
+    
+    # Mode 2: A/B Comparison
+    parser.add_argument("--baseline", type=Path, default=None, help="Path to Baseline tutorials")
+    parser.add_argument("--deep", type=Path, default=None, help="Path to DeepAgent tutorials")
+    
+    # Common
     parser.add_argument(
         "--codebase", type=Path, default=None,
         help="Path to codebase root (auto-detected if not provided)"
     )
     parser.add_argument(
         "--output", type=Path, default=None,
-        help="Output directory for reports (defaults to same as tutorials)"
+        help="Output directory for reports"
     )
     parser.add_argument(
         "--models", type=str, default=None,
-        help="Comma-separated list of models (defaults to 4 diverse models)"
+        help="Comma-separated list of models"
     )
     args = parser.parse_args()
     
-    tutorial_dir = args.tutorials.expanduser().resolve()
-    if not tutorial_dir.exists():
-        logger.error(f"Tutorial directory not found: {tutorial_dir}")
-        return
-    
-    # Auto-detect codebase
+    # Determine Codebase
+    codebase_root = None
     if args.codebase:
         codebase_root = args.codebase.expanduser().resolve()
-    else:
-        # Try to find codebase from tutorial path structure
-        # Assumes: data/deep_agent_output/{codebase}/tutorials
-        if tutorial_dir.name == "tutorials":
-            potential_codebase = Path("data/agent_workspace") / tutorial_dir.parent.name
-            if potential_codebase.exists():
-                codebase_root = potential_codebase
-            else:
-                codebase_root = tutorial_dir.parent
-        else:
-            codebase_root = tutorial_dir.parent
     
-    # Parse models
-    models = JUDGE_MODELS
-    if args.models:
-        models = [m.strip() for m in args.models.split(",") if m.strip()]
-    
-    # Run evaluation
-    report = evaluate_tutorials(tutorial_dir, codebase_root, models)
-    
-    # Write reports
-    output_dir = args.output or tutorial_dir.parent
-    write_json_report(report, output_dir / "evaluation_report.json")
-    write_markdown_report(report, output_dir / "evaluation_report.md")
-    
-    logger.info(f"\n✓ Evaluation complete! Overall score: {report.overall_avg}/5.0")
+    # Mode: Compare
+    if args.baseline and args.deep:
+        if not codebase_root:
+            # Fallback assumption
+            codebase_root = args.deep.parent.parent # data/deep_agent_output/REPO/tutorials -> REPO ? No.
+            # safe fallback: current dir
+            if not codebase_root or not codebase_root.exists():
+                 codebase_root = Path(".")
+        
+        logger.info(f"Starting A/B Comparison: {args.baseline.name} vs {args.deep.name}")
+        
+        baseline_files = set(f.name for f in args.baseline.glob("*.md"))
+        deep_files = set(f.name for f in args.deep.glob("*.md"))
+        common_files = sorted(list(baseline_files.intersection(deep_files)))
+        
+        if not common_files:
+            logger.error("No common files to compare!")
+            return
 
-    for model_id in model_ids:
-        try:
-            # Create model instance for this specific judge
-            model = create_model(model_id=model_id)
+        logger.info(f"Comparing {len(common_files)} common files...")
+        context = _build_codebase_context(codebase_root)
+        
+        models = [m.strip() for m in args.models.split(",")] if args.models else JUDGE_MODELS
+        all_results = []
+        
+        for file_name in common_files:
+            for model_id in models:
+                logger.info(f"Comparing {file_name} with {model_id}...")
+                res = evaluate_pair(model_id, file_name, context, args.baseline/file_name, args.deep/file_name)
+                if res:
+                    all_results.append(res)
+                    print(f"Winner: {res.get('winner')} | {file_name}")
+
+        # Summary
+        wins = {"A": 0, "B": 0, "Tie": 0, "Error": 0}
+        for r in all_results:
+            w = r.get("winner", "Error")
+            wins[w] = wins.get(w, 0) + 1
             
-            for file_name in all_files:
-                path_a = args.baseline / file_name
-                path_b = args.deep / file_name
-                
-                result = evaluate_pair(model, model_id, file_name, path_a, path_b)
-                
-                if result:
-                    all_results.append(result)
-                    print(f"{model_id:<25} | {file_name:<30} | {result.get('winner', '?'):<6} | "
-                          f"{result.get('fidelity_A', 0):<5} | {result.get('fidelity_B', 0):<5} | "
-                          f"{result.get('pedagogy_A', 0):<5} | {result.get('pedagogy_B', 0):<5} | "
-                          f"{result.get('coverage_A', 0):<5} | {result.get('coverage_B', 0):<5}")
-                
-                 # Inter-file throttle
-                time.sleep(1.0)
-                
-        except Exception as e:
-            logger.error(f"Failed to initialize model {model_id}: {e}")
-
-    # Aggregation Table
-    if all_results:
         print("\n" + "="*50)
         print("AGGREGATE WIN RATES")
         print("="*50)
+        total = len(all_results)
+        if total > 0:
+            print(f"Total: {total}")
+            print(f"Baseline (A): {wins['A']} ({wins['A']/total*100:.1f}%)")
+            print(f"DeepAgent (B): {wins['B']} ({wins['B']/total*100:.1f}%)")
+            print(f"Tie:          {wins['Tie']} ({wins['Tie']/total*100:.1f}%)")
         
-        wins = {"A": 0, "B": 0, "Tie": 0}
-        total = 0
-        
-        for r in all_results:
-            w = r.get("winner", "Tie")
-            if w not in wins: w = "Tie"
-            wins[w] += 1
-            total += 1
+        # Write JSON
+        if args.output:
+            out_file = args.output / "comparison_report.json"
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_text(json.dumps(all_results, indent=2), encoding="utf-8")
+            logger.info(f"Saved comparison report to {out_file}")
             
-        print(f"Total Evaluations: {total}")
-        print(f"Baseline Wins (A): {wins['A']} ({wins['A']/total*100:.1f}%)")
-        print(f"Deep Agent Wins (B): {wins['B']} ({wins['B']/total*100:.1f}%)")
-        print(f"Ties:             {wins['Tie']} ({wins['Tie']/total*100:.1f}%)")
+        return
+
+    # Mode: Single Eval
+    if args.tutorials:
+        tutorial_dir = args.tutorials.expanduser().resolve()
+        if not tutorial_dir.exists():
+            logger.error(f"Tutorial directory not found: {tutorial_dir}")
+            return
+            
+        if not codebase_root:
+             codebase_root = tutorial_dir.parent # Best guess
+        
+        models = [m.strip() for m in args.models.split(",")] if args.models else JUDGE_MODELS
+        report = evaluate_tutorials(tutorial_dir, codebase_root, models)
+        
+        output_dir = args.output or tutorial_dir.parent
+        write_json_report(report, output_dir / "evaluation_report.json")
+        write_markdown_report(report, output_dir / "evaluation_report.md")
+        logger.info(f"Evaluation complete! Score: {report.overall_avg}/5.0")
+    else:
+        parser.print_help()
 
 if __name__ == "__main__":
     main()

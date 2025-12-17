@@ -176,6 +176,7 @@ def _execute_sub_agent_runs(
     max_directory_calls: int | None = None,
     knowledge_base_root: Optional[str | Path] = None,
     minimal_tools: bool = True,  # Disable exploration by default
+    metrics: Any = None,
 ) -> List[Path]:
     # Apply config defaults if not specified
     if window_seconds is None:
@@ -258,10 +259,17 @@ def _execute_sub_agent_runs(
 
         def _build_agent(instructions: str) -> ToolCallingAgent:
             # When minimal_tools=True, disable exploration to save tokens
+            usage_cb = None
+            if metrics:
+                def _cb(tool_name: str):
+                    metrics.record_tool_call(tool_name)
+                    # Sub-agents are spawned sequentially, so this increments the shared metrics object
+                usage_cb = _cb
+
             scoped_tools = build_scoped_tools(
                 codebase_root=str(codebase_path),
                 workspace_root=str(workspace),
-                usage_callback=None,  # budget system removed
+                usage_callback=usage_cb,
                 allow_directory_listing=not minimal_tools,
                 allow_tree=not minimal_tools,
                 allow_mermaid=False,
@@ -518,6 +526,7 @@ def run_typed_sub_agent_tasks(
     max_directory_calls: int | None = None,
     knowledge_base_root: Optional[str | Path] = None,
     minimal_tools: bool = True,  # Disable exploration by default
+    metrics: Any = None,
 ) -> List[Path]:
     """Execute sub-agents with explicit roles and return their workspace paths."""
 
@@ -537,6 +546,7 @@ def run_typed_sub_agent_tasks(
         max_directory_calls=max_directory_calls,
         knowledge_base_root=knowledge_base_root,
         minimal_tools=minimal_tools,
+        metrics=metrics,
     )
 
 

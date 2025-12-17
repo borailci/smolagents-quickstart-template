@@ -69,7 +69,9 @@ class SpawnTutorialAgentTool(Tool):
             topic=topic,
             target_filename=target_filename,
             focus_list=focus_list,
-            focus_instructions=focus_instructions
+            focus_instructions=focus_instructions,
+            sub_agent_path=str(workspace_root),
+            knowledge_base_path=str(self.ctx.knowledge_base_root) if self.ctx.knowledge_base_root else "N/A"
         )
 
         spec = SubAgentTaskSpec(

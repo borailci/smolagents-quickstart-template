@@ -20,7 +20,13 @@ from toolkits.sub_agent_toolkit import (
     run_typed_sub_agent_tasks,
 )
 from toolkits.supervisor_toolkit import SupervisorContext
+
+
 from toolkits.scoped_filesystem_toolkit import ensure_directory
+
+class TutorialSupervisorContext(SupervisorContext):
+    """Context for the Tutorial Supervisor Agent."""
+    pass
 
 
 class SpawnTutorialAgentTool(Tool):
@@ -56,8 +62,9 @@ class SpawnTutorialAgentTool(Tool):
         safe_name = target_filename.replace(".md", "").replace("/", "_").strip("_")
         workspace_root = self.ctx.sub_agents_root / safe_name
 
-        if workspace_root.exists():
-            shutil.rmtree(workspace_root)
+        # Preserve workspace for retries
+        # if workspace_root.exists():
+        #     shutil.rmtree(workspace_root)
         workspace_root.mkdir(parents=True, exist_ok=True)
 
         # PRE-LOAD DISABLED - Agent reads files on its own
@@ -65,14 +72,27 @@ class SpawnTutorialAgentTool(Tool):
 
         # Use centralized task template
         from prompts import prompts
-        task_desc = prompts.TUTORIAL_SPAWN_TASK_TEMPLATE.format(
-            topic=topic,
-            target_filename=target_filename,
-            focus_list=focus_list,
-            focus_instructions=focus_instructions,
-            sub_agent_path=str(workspace_root),
-            knowledge_base_path=str(self.ctx.knowledge_base_root) if self.ctx.knowledge_base_root else "N/A"
-        )
+        
+        kb_path_str = str(self.ctx.knowledge_base_root) if self.ctx.knowledge_base_root else None
+        
+        if kb_path_str:
+            task_desc = prompts.TUTORIAL_SPAWN_TASK_TEMPLATE.format(
+                topic=topic,
+                target_filename=target_filename,
+                focus_list=focus_list,
+                focus_instructions=focus_instructions,
+                sub_agent_path=str(workspace_root),
+                knowledge_base_path=kb_path_str
+            )
+        else:
+            # Baseline Mode
+            task_desc = prompts.BASELINE_TUTORIAL_SPAWN_TASK_TEMPLATE.format(
+                topic=topic,
+                target_filename=target_filename,
+                focus_list=focus_list,
+                focus_instructions=focus_instructions,
+                sub_agent_path=str(workspace_root)
+            )
 
         spec = SubAgentTaskSpec(
             description=task_desc,

@@ -129,6 +129,23 @@ If file is truncated, call again with start_line=N to continue reading."""
             except Exception:
                 pass # Ignore errors in workspace resolution fallback
 
+        # 3. Handle Common Typos (e.g. README/md -> README.md)
+        if not resolved.exists():
+            # Try replacing last / with . if it ends with a common extension format but swapped
+            if "/" in file_path and file_path.count("/") > 0:
+                # e.g. libs/deepagents-cli/README/md -> libs/deepagents-cli/README.md
+                # Split by last /
+                base, ext = file_path.rsplit("/", 1)
+                if ext in ["md", "py", "txt", "json", "yaml", "yml", "toml"]:
+                    typo_path = f"{base}.{ext}"
+                    try:
+                        typo_resolved = resolve_within_root(self.codebase_root, typo_path)
+                        if typo_resolved.exists():
+                            resolved = typo_resolved
+                            # Could log a warning here if we had logger
+                    except Exception:
+                        pass
+
         if not resolved.exists():
             raise FileNotFoundError(f"File '{file_path}' not found in codebase or workspace.")
         if not resolved.is_file():

@@ -321,8 +321,8 @@ class KnowledgeBaseBuilder:
         from toolkits.validator_toolkit import build_validator_tools
         from utils.llm_factory import create_model
         
-        # Use Pro model for intelligent validation
-        model = create_model(role="supervisor") 
+        # Use Flash model for validation (cost-efficient)
+        model = create_model(role="sub_agent") 
         
         tools = build_validator_tools(target_root=self.output_root)
         

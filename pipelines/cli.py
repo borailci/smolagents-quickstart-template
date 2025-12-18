@@ -166,6 +166,12 @@ def parse_args() -> argparse.Namespace:
         dest="no_kb",
         help="Skip Knowledge Base generation (for ablation study). Tutorial generation will proceed without KB context.",
     )
+    deep_agent_parser.add_argument(
+        "--kb",
+        action="store_true",
+        dest="kb_only",
+        help="Run ONLY the Knowledge Base generation phase (skip Tutorials).",
+    )
 
     return parser.parse_args()
 
@@ -344,6 +350,7 @@ def main() -> None:
                 output_root=cfg.BASELINE_TUTORIALS,
                 sub_agents_root=cfg.BASELINE_SUB_AGENTS,
                 dry_run=args.dry_run,
+                step_delay_seconds=getattr(args, "step_delay", None),
             )
             outputs = generator.generate_baseline_with_supervisor()
             logger.info("Baseline tutorials written to:\n{}", _format_paths(outputs))
@@ -363,6 +370,7 @@ def main() -> None:
             force_rebuild_tutorials=args.force_rebuild if hasattr(args, "force_rebuild") else False,
             dry_run=args.dry_run,
             skip_kb=getattr(args, "no_kb", False),  # Ablation mode
+            skip_tutorials=getattr(args, "kb_only", False),
         )
         
         agent = DeepAgent(config)

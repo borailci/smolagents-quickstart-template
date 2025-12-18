@@ -5,7 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
-data/
+data/agent_workspace
 # Distribution / packaging
 .Python
 build/

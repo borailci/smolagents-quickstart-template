@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 # ---------------------------------------------------------------------------
 import time
 import random
+from config import settings
 
 def throttled_api_call(func, *args, estimated_tokens=0, **kwargs):
     """
@@ -181,8 +182,10 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
     def __call__(self, messages: List[Dict[str, Any]], *args, **kwargs) -> Any:
         # Estimate input tokens (rough approximation)
         est_tokens = sum(len(str(m.get("content", ""))) for m in messages) // 4
-        # Add basic throttling for high-frequency calls
-        time.sleep(1.0) 
+        # Add configurable throttling between steps
+        delay = settings.RATE_LIMIT_MIN_INTERVAL
+        if delay > 0:
+            time.sleep(delay) 
         
         try:
             response = throttled_api_call(

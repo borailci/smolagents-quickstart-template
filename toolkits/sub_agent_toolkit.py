@@ -232,15 +232,9 @@ def _execute_sub_agent_runs(
 
 
         if workspace_exists:
-            try:
-                shutil.rmtree(workspace_dir)
-            except (PermissionError, OSError) as exc:
-                logger.warning(
-                    "Failed to remove existing workspace {}: {}. Proceeding anyway.",
-                    workspace_dir,
-                    exc,
-                )
-            workspace = ensure_directory(workspace_dir)
+            logger.info("Reusing existing workspace at {}", workspace_dir)
+            
+        workspace = ensure_directory(workspace_dir)
 
         logger.info("Launching sub-agent {} in {}", index, workspace)
 

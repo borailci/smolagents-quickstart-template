@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
-const DEEP_AGENT_OUTPUT_PATH = path.join(process.cwd(), '..', 'data', 'deep_agent_output');
-
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const codebaseId = searchParams.get('codebase');
@@ -24,7 +22,19 @@ export async function GET(request: NextRequest) {
         );
     }
 
-    const filePath = path.join(DEEP_AGENT_OUTPUT_PATH, codebaseId, 'tutorials', filename);
+    let basePath = '';
+
+    // Determine base path based on codebase ID
+    if (codebaseId === 'deep_agent') {
+        basePath = path.join(process.cwd(), '..', 'data', 'deep_agent', 'tutorials');
+    } else if (codebaseId === 'baseline') {
+        basePath = path.join(process.cwd(), '..', 'data', 'baseline', 'tutorials');
+    } else {
+        // Fallback for legacy or unknown paths (or standard structure)
+        basePath = path.join(process.cwd(), '..', 'data', 'deep_agent_output', codebaseId, 'tutorials');
+    }
+
+    const filePath = path.join(basePath, filename);
 
     try {
         if (!fs.existsSync(filePath)) {

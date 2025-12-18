@@ -32,6 +32,7 @@ class DeepAgentConfig:
     force_rebuild_kb: bool = False
     force_rebuild_tutorials: bool = False
     skip_kb: bool = False  # Ablation: skip KB generation
+    skip_tutorials: bool = False  # Skip tutorial generation (KB only mode)
     
     # RAG
     rag_codebase_cache_path: Optional[Path] = None
@@ -120,13 +121,17 @@ class DeepAgent:
                     logger.warning("KB Generation returned no new files, but previous content exists. Proceeding.")
         
         # Phase 2: Tutorial Generation
-        logger.info("=== Phase 2: Tutorial Generation ===")
-        tutorial_metrics = metrics.start_tutorial_phase()
+        tutorial_files = []
+        if not self.config.skip_tutorials:
+            logger.info("=== Phase 2: Tutorial Generation ===")
+            tutorial_metrics = metrics.start_tutorial_phase()
 
-        tutorial_files = self.tutorial_generator.generate()
+            tutorial_files = self.tutorial_generator.generate()
 
-        tutorial_metrics.finish()
-        logger.info(f"Tutorial Phase completed in {tutorial_metrics.duration_seconds:.1f}s")
+            tutorial_metrics.finish()
+            logger.info(f"Tutorial Phase completed in {tutorial_metrics.duration_seconds:.1f}s")
+        else:
+            logger.info("⏩ [SKIP] Tutorial Generation skipped (step disabled).")
         
         # Finalize metrics
         metrics.finish()

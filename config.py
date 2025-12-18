@@ -57,6 +57,6 @@ class Settings:
     # --- Rate Limiting ---
     RATE_LIMIT_WINDOW_SECONDS: float = 60.0
     RATE_LIMIT_MAX_REQUESTS: int = 60
-    RATE_LIMIT_MIN_INTERVAL: float = 1.0
+    RATE_LIMIT_MIN_INTERVAL: float = 2.0
 
 settings = Settings()

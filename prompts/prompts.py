@@ -395,12 +395,13 @@ KB_RETRY_TASK_TEMPLATE = """
 **Previous Failure Feedback**:
 > {feedback}
 
-**Recovery Steps**:
-1.  **DIAGNOSE**: Why did the previous attempt fail? (e.g., file not found, empty output).
-2.  **VERIFY**: Check file paths again using `list_codebase_directory`.
-3.  **EXECUTE**: Re-read the files and write a fresh, COMPLETE `summary.md`.
+**Recovery Workflow**:
+1.  **READ DRAFT**: Call `read_codebase_file("summary.md")` to review your previous output.
+2.  **ANALYZE FEEDBACK**: Identify exactly what is wrong/missing based on the feedback above.
+3.  **FIX**: Rewrite `summary.md` with the corrections.
+    *   **CRITICAL**: Only read source files (`read_codebase_file`) if you are missing information. Do NOT re-read everything if the summary just needs formatting or minor additions.
 
-**Rule**: Do not repeat the same mistake.
+**Goal**: A corrected, valid `summary.md`.
 """
 
 TUTORIAL_RETRY_TASK_TEMPLATE = """
@@ -410,12 +411,13 @@ TUTORIAL_RETRY_TASK_TEMPLATE = """
 **Previous Failure Feedback**:
 > {feedback}
 
-**Recovery Steps**:
-1.  **ANALYZE**: Read the feedback carefully.
-2.  **RESEARCH**: Re-read the Knowledge Base files if context was missing.
-3.  **REWRITE**: generating the `tutorial.md` again from scratch, correcting the specific issues.
+**Recovery Workflow**:
+1.  **READ DRAFT**: Call `read_codebase_file("tutorial.md")` to see what you wrote.
+2.  **ANALYZE FEEDBACK**: Pinpoint the error (e.g., unclosed block, missing section).
+3.  **FIX**: Rewrite `tutorial.md` with the fix.
+    *   **CRITICAL**: Do NOT re-read KB files unless the content is factually wrong. Focus on fixing the structure/formatting/completeness of the text.
 
-**Rule**: Ensure the final output is runnable and follows the tutorial structure.
+**Goal**: A runnable, correctly-formatted `tutorial.md`.
 """
 
 TUTORIAL_SPAWN_TASK_TEMPLATE = """
@@ -437,11 +439,12 @@ TUTORIAL_SPAWN_TASK_TEMPLATE = """
 3.  **WRITE**: Create `{target_filename}` with this exact structure:
     *   **Goal**: What are we building?
     *   **Prerequisites**: What is needed?
-    *   **Architecture**: Mermaid diagram.
+    *   **Architecture**: Mermaid diagram. Quote node labels containing special characters like parentheses or brackets. For example, `id["Label (Extra Info)"]` instead of `id[Label (Extra Info)]`.
     *   **Steps**: Progressive implementation (Setup -> Logic -> Run).
     *   **Conclusion**: Wrap up.
 
 **Constraints**:
+*   **Mermaid Syntax**: ALWAYS quote node labels. BAD: `A[text (more)]`. GOOD: `A["text (more)"]`.
 *   Code must be copy-paste runnable.
 *   Explain the *Why* behind every step.
 """
@@ -476,6 +479,7 @@ You are a **Technical QA Engineer** specializing in Markdown formatting and synt
 2.  **Audit**: Check for common issues:
     *   **Unclosed Code Blocks**: Are all ` ``` ` fences paired?
     *   **Broken Mermaid**: Do diagrams have mismatched brackets or invalid syntax?
+    *   **Mermaid Quoting**: Are node labels containing parentheses, quotes, or special chars wrapped in double quotes? BAD: `A[Label (info)]`. GOOD: `A["Label (info)"]`.
     *   **LLM Artifacts**: Remove "Here is the code:", backticks wrapping the whole file, or trailing explanations.
     *   **Heading Hierarchy**: Ensure `#` -> `##` -> `###` sequences are logical.
 
@@ -506,4 +510,34 @@ FIX_FORMATTING_TASK_TEMPLATE = """
 2.  Fix (e.g., close missing backticks).
 3.  Preserve content/meaning.
 4.  Write to `{target_filename}`.
+"""
+# Added for Baseline Mode
+BASELINE_TUTORIAL_SPAWN_TASK_TEMPLATE = """
+**TASK**: Author a Technical Tutorial: "{topic}"
+**OUTPUT**: `{target_filename}`
+
+**Context**:
+*   **Working Dir**: `{sub_agent_path}`
+*   **Key Files**:
+{focus_list}
+
+**Instructions**:
+{focus_instructions}
+
+**Execution Workflow**:
+1.  **EXPLORE**: Use `read_codebase_file` and `list_codebase_directory` to explore the codebase directly.
+2.  **ANALYZE**: Read the source code in "Key Files" to understand the implementation.
+3.  **WRITE**: Create `{target_filename}` with this exact structure:
+    *   **Goal**: What are we building?
+    *   **Prerequisites**: What is needed?
+    *   **Architecture**: Mermaid diagram. Quote node labels containing special characters like parentheses or brackets. For example, `id["Label (Extra Info)"]` instead of `id[Label (Extra Info)]`.
+    *   **Steps**: Progressive implementation (Setup -> Logic -> Run).
+    *   **Conclusion**: Wrap up.
+
+**Constraints**:
+*   **NO KNOWLEDGE BASE**: You are working directly from source code. Do not try to read 'knowledge_base' files.
+*   **Mermaid Syntax**: ALWAYS quote node labels. BAD: `A[text (more)]`. GOOD: `A["text (more)"]`.
+*   Code must be copy-paste runnable.
+*   Explain the *Why* behind every step.
+
 """

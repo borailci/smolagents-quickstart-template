@@ -21,15 +21,9 @@ from toolkits.scoped_filesystem_toolkit import build_scoped_tools
 
 
 
-import os
-import argparse
-import glob
-import time
 import json
 import re
-import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 from statistics import mean
 
@@ -52,7 +46,6 @@ except ImportError:
 # Judge models - sequential evaluation for diverse perspectives
 JUDGE_MODELS = [
     "vertex_ai/gemini-2.5-pro",
-    "vertex_ai/claude-3-5-sonnet@20240620",
 ]
 
 # Evaluation criteria

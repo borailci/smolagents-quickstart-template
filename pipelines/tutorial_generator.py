@@ -72,9 +72,15 @@ class TutorialGenerator:
         output_root: str | Path | None = None,
         sub_agents_root: str | Path | None = None,
         dry_run: bool = False,
+        step_delay_seconds: float | None = None,
     ) -> None:
         self.dry_run = dry_run
         self.metrics = TutorialRunMetrics()
+        
+        # Apply step delay override if provided
+        if step_delay_seconds is not None:
+            settings.RATE_LIMIT_MIN_INTERVAL = float(step_delay_seconds)
+            logger.info(f"Rate limit interval overridden to {step_delay_seconds}s")
         
         # Use config.py for paths
         self.codebase_root = (
@@ -199,7 +205,13 @@ class TutorialGenerator:
             output_root=self.output_root,
             sub_agents_root=self.sub_agents_root,
         )
-        tools = build_tutorial_supervisor_tools(ctx, metrics=metrics)
+        tools = build_tutorial_supervisor_tools(
+            codebase_root=self.codebase_root,
+            sub_agents_root=self.sub_agents_root,
+            output_root=self.output_root,
+            knowledge_base_root=self.knowledge_base_root,
+            metrics=metrics
+        )
         model = create_model(role="supervisor", metrics=metrics)
         
         return ToolCallingAgent(
@@ -219,7 +231,14 @@ class TutorialGenerator:
             output_root=self.output_root,
             sub_agents_root=self.sub_agents_root,
         )
-        tools = build_tutorial_supervisor_tools(ctx, metrics=metrics, baseline_mode=True)
+        tools = build_tutorial_supervisor_tools(
+            codebase_root=self.codebase_root,
+            sub_agents_root=self.sub_agents_root,
+            output_root=self.output_root,
+            knowledge_base_root=None,
+            baseline_mode=True,
+            metrics=metrics
+        )
         model = create_model(role="supervisor", metrics=metrics)
         
         return ToolCallingAgent(

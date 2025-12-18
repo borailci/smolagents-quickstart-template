@@ -36,20 +36,13 @@ class KnowledgeBaseBuilder:
         self.plan_path = self.output_root / "plan.md"
 
     def generate(self, metrics: Any = None) -> List[Path]:
-        """Generate knowledge base (delegates to supervisor with fallback)."""
+        """Generate knowledge base using supervisor agent."""
         logger.info("Starting knowledge base generation...")
         
-        # 1. Try Supervisor
-        try:
-            results = self.generate_with_supervisor(metrics=metrics)
-            if results:
-                return results
-            logger.warning("Supervisor returned no results. Falling back to heuristic...")
-        except Exception as e:
-            logger.error(f"Supervisor failed: {e}. Falling back to heuristic...")
-
-        # 2. Fallback to Simple Heuristic
-        return self.generate_with_simple_heuristic(metrics=metrics)
+        results = self.generate_with_supervisor(metrics=metrics)
+        if not results:
+            raise RuntimeError("Supervisor agent failed to generate any knowledge base files. Check the logs for details.")
+        return results
 
     def generate_with_simple_heuristic(self, metrics: Any = None) -> List[Path]:
         """
@@ -220,7 +213,7 @@ class KnowledgeBaseBuilder:
             output_root=str(self.output_root),
             metrics=metrics,
         )
-        model = create_model(role="supervisor")
+        model = create_model(role="supervisor", metrics=metrics)
         return ToolCallingAgent(
             name="knowledge_base_supervisor",
             description="Supervises and coordinates knowledge base generation",

@@ -160,6 +160,12 @@ def parse_args() -> argparse.Namespace:
         default="standard",
         help="Run mode: 'standard' (full KB + tutorials) or 'baseline' (tutorials from codebase exploration only).",
     )
+    deep_agent_parser.add_argument(
+        "--no-kb",
+        action="store_true",
+        dest="no_kb",
+        help="Skip Knowledge Base generation (for ablation study). Tutorial generation will proceed without KB context.",
+    )
 
     return parser.parse_args()
 
@@ -311,54 +317,34 @@ def main() -> None:
     elif args.command == "deep-agent":
         from pipelines.deep_agent import DeepAgent, DeepAgentConfig
         
-        # Priority: 1) .env CODEBASE_ROOT_PATH, 2) --codebase arg, 3) auto-discovery
-        import os
-        env_codebase = os.getenv("CODEBASE_ROOT_PATH")
+        # Use config.py for paths
+        from config import settings as cfg
         
-        if env_codebase:
-            codebase_path = Path(env_codebase).expanduser().resolve()
-            logger.info(f"Using codebase from .env: {codebase_path}")
-        elif args.codebase:
+        if args.codebase:
             codebase_path = args.codebase.expanduser().resolve()
             logger.info(f"Using codebase from --codebase arg: {codebase_path}")
         else:
-            # Auto-discover from data/agent_workspace
-            workspace_root = Path("data/agent_workspace").resolve()
-            candidates = [
-                d for d in workspace_root.iterdir() 
-                if d.is_dir() and not d.name.startswith(".") and d.name not in ("knowledge_base", "sub_agents_workspace")
-            ]
-            
-            if not candidates:
-                logger.error("No codebase found. Set CODEBASE_ROOT_PATH in .env, use --codebase, or add repos to data/agent_workspace.")
-                sys.exit(1)
-            
-            if len(candidates) > 1:
-                logger.warning(f"Multiple codebases found: {[c.name for c in candidates]}. Using the first one: {candidates[0].name}")
-            
-            codebase_path = candidates[0]
-            logger.info(f"Auto-selected codebase: {codebase_path}")
+            # Use config.py CODEBASE_ROOT
+            codebase_path = cfg.CODEBASE_ROOT
+            logger.info(f"Using codebase from config.py: {codebase_path}")
 
-
-        # Determine output root for both modes
+        # Determine output root from config.py
         if args.mode == "baseline":
-            output_root = (settings.BASELINE_OUTPUT_ROOT / codebase_path.name).resolve()
+            output_root = cfg.BASELINE_ROOT
         else:
-            output_root = (Path("data/deep_agent_output") / codebase_path.name).resolve()
+            output_root = cfg.DEEP_AGENT_ROOT
 
         # Mode Selection
         if args.mode == "baseline":
             logger.info("Running in BASELINE mode (No Knowledge Base Generation)")
             logger.info(f"Output directory: {output_root}")
-            # Baseline output structure
             generator = TutorialGenerator(
                 codebase_root=codebase_path,
-                knowledge_base_root=output_root / "knowledge_base", # Dummy
-                output_root=output_root,
-                sub_agents_root=output_root / "sub_agents_tutorials",
+                knowledge_base_root=cfg.BASELINE_KB,
+                output_root=cfg.BASELINE_TUTORIALS,
+                sub_agents_root=cfg.BASELINE_SUB_AGENTS,
                 dry_run=args.dry_run,
             )
-            # Use wrapped baseline generator
             outputs = generator.generate_baseline_with_supervisor()
             logger.info("Baseline tutorials written to:\n{}", _format_paths(outputs))
             return
@@ -369,14 +355,14 @@ def main() -> None:
         config = DeepAgentConfig(
             codebase_root=codebase_path,
             output_root=output_root,
-            # Sub-paths fully inspectable in data/<codebase-name>/ folder
-            kb_output_path=output_root / "knowledge_base",
-            tutorial_output_path=output_root / "tutorials",
-            kb_sub_agents_path=output_root / "sub_agents_kb",
-            tutorial_sub_agents_path=output_root / "sub_agents_tutorials",
+            kb_output_path=cfg.DEEP_AGENT_KB,
+            tutorial_output_path=cfg.DEEP_AGENT_TUTORIALS,
+            kb_sub_agents_path=cfg.DEEP_AGENT_SUB_AGENTS,
+            tutorial_sub_agents_path=cfg.DEEP_AGENT_SUB_AGENTS,
             force_rebuild_kb=args.force_rebuild if hasattr(args, "force_rebuild") else False,
             force_rebuild_tutorials=args.force_rebuild if hasattr(args, "force_rebuild") else False,
             dry_run=args.dry_run,
+            skip_kb=getattr(args, "no_kb", False),  # Ablation mode
         )
         
         agent = DeepAgent(config)

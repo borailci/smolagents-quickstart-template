@@ -31,6 +31,7 @@ class DeepAgentConfig:
     dry_run: bool = False
     force_rebuild_kb: bool = False
     force_rebuild_tutorials: bool = False
+    skip_kb: bool = False  # Ablation: skip KB generation
     
     # RAG
     rag_codebase_cache_path: Optional[Path] = None
@@ -68,9 +69,11 @@ class DeepAgent:
         )
 
         # Tutorial Generator
+        # If skip_kb, pass None as knowledge_base_root (ablation mode)
+        effective_kb_root = None if config.skip_kb else config.kb_output_path
         self.tutorial_generator = TutorialGenerator(
             codebase_root=config.codebase_root,
-            knowledge_base_root=config.kb_output_path,
+            knowledge_base_root=effective_kb_root,
             output_root=config.tutorial_output_path,
             sub_agents_root=config.tutorial_sub_agents_path,
             dry_run=config.dry_run,
@@ -90,24 +93,31 @@ class DeepAgent:
         logger.info(f"Target: {self.config.codebase_root}")
         logger.info(f"Output: {self.config.output_root}")
         
-        # Phase 1: Knowledge Base
-        logger.info("=== Phase 1: Knowledge Base Generation ===")
-        kb_metrics = metrics.start_kb_phase()
-        
-        kb_files = self.kb_builder.generate(metrics=kb_metrics)
-        
-        kb_metrics.finish()
-        logger.info(f"KB Phase completed in {kb_metrics.duration_seconds:.1f}s")
-        
-        if not kb_files:
-            existing = list(self.config.kb_output_path.glob("*.md"))
-            if not existing:
-                logger.error("KB Generation failed or produced no files.")
-                metrics.finish()
-                self._save_metrics(metrics)
-                return {"error": "KB Generation failed", "metrics": metrics.to_dict()}
-            else:
-                logger.warning("KB Generation returned no new files, but previous content exists. Proceeding.")
+        # Phase 1: Knowledge Base (skipped if --no-kb)
+        kb_files = []
+        if self.config.skip_kb:
+            logger.info("=== Phase 1: Knowledge Base Generation [SKIPPED - Ablation Mode] ===")
+            # Still start phase for timing purposes
+            kb_metrics = metrics.start_kb_phase()
+            kb_metrics.finish()
+        else:
+            logger.info("=== Phase 1: Knowledge Base Generation ===")
+            kb_metrics = metrics.start_kb_phase()
+            
+            kb_files = self.kb_builder.generate(metrics=kb_metrics)
+            
+            kb_metrics.finish()
+            logger.info(f"KB Phase completed in {kb_metrics.duration_seconds:.1f}s")
+            
+            if not kb_files:
+                existing = list(self.config.kb_output_path.glob("*.md"))
+                if not existing:
+                    logger.error("KB Generation failed or produced no files.")
+                    metrics.finish()
+                    self._save_metrics(metrics)
+                    return {"error": "KB Generation failed", "metrics": metrics.to_dict()}
+                else:
+                    logger.warning("KB Generation returned no new files, but previous content exists. Proceeding.")
         
         # Phase 2: Tutorial Generation
         logger.info("=== Phase 2: Tutorial Generation ===")

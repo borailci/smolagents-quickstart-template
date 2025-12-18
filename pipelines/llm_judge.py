@@ -52,9 +52,7 @@ except ImportError:
 # Judge models - sequential evaluation for diverse perspectives
 JUDGE_MODELS = [
     "vertex_ai/gemini-2.5-pro",
-    "openai/gpt-4o",
-    "anthropic/claude-3-5-sonnet-20241022",
-    "vertex_ai/gemini-2.5-flash",
+    "vertex_ai/claude-3-5-sonnet@20240620",
 ]
 
 # Evaluation criteria
@@ -219,7 +217,7 @@ def evaluate_series(model_id: str, codebase_context: str, baseline_paths: List[P
         allow_writes=False # Judge is read-only
     )
     
-    model = LiteLLMModel(model_id=model_id, max_tokens=4096)
+    model = create_model(model_id=model_id)
     
     agent = CodeAgent(
         tools=tools,
@@ -477,18 +475,23 @@ def _call_judge(
                 max_tokens=2000
             )
             
-            choices = resp.get("choices") or []
-            if not choices:
-                raise RuntimeError("Judge model returned no choices")
-            
-            content = str(choices[0].get("message", {}).get("content", "")).strip()
+            # Handle smolagents.models.ChatMessage or LiteLLM response
+            if hasattr(response, "content"):
+                content = str(response.content).strip()
+            elif isinstance(response, dict):
+                choices = response.get("choices") or []
+                if not choices:
+                    raise RuntimeError("Judge model returned no choices")
+                content = str(choices[0].get("message", {}).get("content", "")).strip()
+            else:
+                content = str(response).strip()
+
             if not content:
                 raise RuntimeError("Judge model returned empty content")
             
             # Strip markdown fences if present
-            if content.startswith("```"):
-                content = re.sub(r"^```\w*\n?", "", content)
-                content = re.sub(r"\n?```$", "", content)
+            content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE).strip()
+            content = re.sub(r"\s*```$", "", content).strip()
             
             # Parse JSON
             try:

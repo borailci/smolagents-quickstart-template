@@ -38,12 +38,13 @@ class SubAgentOutputError(Exception):
 
 load_dotenv()
 
-LITELLM_MODEL_ID = os.getenv("LITELLM_MODEL_ID")
-LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
-CODEBASE_ROOT_PATH = os.getenv("CODEBASE_ROOT_PATH")
-SUB_AGENTS_ROOT_PATH = os.getenv("SUB_AGENTS_ROOT_PATH")
+# Import config for settings
+from config import settings
 
-DEFAULT_SUB_AGENT_MAX_RETRIES = 10
+# API key still from env (security)
+LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
+
+DEFAULT_SUB_AGENT_MAX_RETRIES = settings.SUB_AGENT_MAX_RETRIES
 
 _RETRY_IN_PATTERN = re.compile(
     r"retry\s+(?:in|after)\s+([0-9]+(?:\.[0-9]+)?)\s*s", re.IGNORECASE
@@ -227,15 +228,8 @@ def _execute_sub_agent_runs(
         workspace_exists = workspace_dir.exists()
         workspace = ensure_directory(workspace_dir)
 
-        existing_summary = workspace / "summary.md"
-        if workspace_exists and existing_summary.exists():
-            logger.info(
-                "Skipping sub-agent {}; existing output detected at {}.",
-                index,
-                existing_summary,
-            )
-            workspaces.append(workspace)
-            continue
+        # Checkpoint logic removed - always re-run if requested
+
 
         if workspace_exists:
             try:
@@ -307,7 +301,10 @@ def _execute_sub_agent_runs(
                             
                         if target and target.exists() and str(kb_path_obj) in str(target.resolve()):
                              return target.read_text(encoding="utf-8")
-                        return f"File '{filename}' not found in Knowledge Base."
+                        
+                        # Helpful error message
+                        available_files = [f.name for f in kb_path_obj.glob("*.md")][:10]
+                        return f"File '{filename}' not found in Knowledge Base. This tool is ONLY for KB summary files. Available KB files: {available_files}. For codebase files like README.md or .py files, use `read_codebase_file` instead."
 
                 scoped_tools.append(ReadKBTool())
 

@@ -53,8 +53,49 @@ class SupervisorContext:
         self.knowledge_base_root = knowledge_base_root
         self.metrics = metrics
         self.spawned_agents: Dict[str, Dict[str, Any]] = {}
-        self.spawned_agents: Dict[str, Dict[str, Any]] = {}
         self.retry_counts: Dict[str, int] = {}
+
+
+def _llm_validate_output(content: str, target_path: str) -> Dict[str, Any]:
+    """Use LLM to validate sub-agent output quality."""
+    try:
+        from utils.llm_factory import create_model
+        import re
+        
+        model = create_model(role="sub_agent")  # Use fast model
+        prompt = f"""Evaluate this documentation output for completeness and quality.
+
+Content (first 3000 chars):
+```
+{content[:3000]}
+```
+
+Check:
+1. Does it have a clear Overview/Purpose section?
+2. Are code examples complete (not cut off mid-line)?
+3. Does it end properly (not mid-sentence or with incomplete code)?
+4. Are all code blocks properly closed (matching ``` pairs)?
+
+Respond ONLY with JSON:
+{{"is_valid": true/false, "issues": ["issue1", ...], "feedback": "brief feedback"}}
+"""
+        response = model(messages=[{"role": "user", "content": prompt}], max_tokens=300)
+        
+        # Parse response
+        resp_text = str(response.content) if hasattr(response, "content") else str(response)
+        resp_text = re.sub(r"```json?\s*", "", resp_text).strip()
+        resp_text = re.sub(r"```$", "", resp_text).strip()
+        
+        result = json.loads(resp_text)
+        return result
+        
+    except Exception as e:
+        logger.warning(f"LLM validation failed: {e}")
+        # Fallback: basic length check only
+        if len(content) >= 500:
+            return {"is_valid": True, "issues": [], "feedback": "LLM validation failed, length check passed"}
+        return {"is_valid": False, "issues": ["LLM validation failed and content too short"], "feedback": str(e)}
+
 
 
 # ---------------------------------------------------------------------------
@@ -182,37 +223,53 @@ class SpawnSubAgentsTool(Tool):
                 metrics=self.ctx.metrics,
             )
             
-            # 3. Process Results
+            # 3. Process Results with LLM Validation
             for i, workspace in enumerate(workspaces):
                 meta = task_metadata[i]
                 target_path = meta["target_path"]
                 
                 if workspace and workspace.exists():
-                    # Validate
+                    # Validate with LLM
                     output_file = workspace / "summary.md"
                     validation_info = "No output file."
                     is_valid = False
+                    llm_feedback = ""
                     
                     if output_file.exists():
                         content = output_file.read_text(encoding="utf-8")
-                        is_valid = len(content) >= 100
-                        validation_info = "Valid" if is_valid else f"Too short ({len(content)})"
+                        
+                        # LLM-powered validation
+                        validation_result = _llm_validate_output(content, target_path)
+                        is_valid = validation_result.get("is_valid", False)
+                        issues = validation_result.get("issues", [])
+                        llm_feedback = validation_result.get("feedback", "")
+                        
+                        if is_valid:
+                            validation_info = "Valid (LLM verified)"
+                        else:
+                            validation_info = f"Issues: {'; '.join(issues)}"
+                            logger.warning(f"⚠️ {target_path} failed validation: {validation_info}")
                     
-                    status = "completed" if is_valid else "completed_with_issues"
+                    status = "completed" if is_valid else "needs_retry"
                     result_data = {
                         "workspace": str(workspace),
                         "status": status,
-                        "validation": validation_info
+                        "validation": validation_info,
+                        "llm_feedback": llm_feedback,
                     }
                     
                     self.ctx.spawned_agents[target_path] = result_data
                     
-                    # Update Checkpoint
+                    # Update Checkpoint only if valid
                     if is_valid:
                         self.checkpoint.save_progress(target_path, json.dumps(result_data))
-                        results_summary.append(f"- {target_path}: Success ({workspace.name})")
+                        results_summary.append(f"- {target_path}: ✅ Success ({workspace.name})")
                     else:
-                        results_summary.append(f"- {target_path}: Failed validation ({workspace.name})")
+                        # Auto-retry if under retry limit
+                        retry_count = self.ctx.retry_counts.get(target_path, 0)
+                        if retry_count < self.ctx.max_retries:
+                            self.ctx.retry_counts[target_path] = retry_count + 1
+                            results_summary.append(f"- {target_path}: ⚠️ Needs retry ({llm_feedback})")
 
                 else:
                     results_summary.append(f"- {target_path}: Failed (No workspace)")
@@ -227,23 +284,43 @@ class SpawnSubAgentsTool(Tool):
         return "Batch Execution Summary:\n" + "\n".join(results_summary)
 
     def _update_compilation_plan(self, metadata: List[Dict]):
+        """Mark completed tasks in compilation_plan.md as [x]."""
         try:
             plan_file = self.ctx.output_root / "compilation_plan.md"
-            if plan_file.exists():
-                content = plan_file.read_text(encoding="utf-8")
-                lines = content.splitlines()
-                updated_lines = []
-                targets = [m["target_path"] for m in metadata]
+            if not plan_file.exists():
+                logger.warning("compilation_plan.md not found, skipping TODO update")
+                return
                 
-                for line in lines:
-                    for t in targets:
-                        if t in line and "[ ]" in line:
-                            line = line.replace("[ ]", "[x]")
-                    updated_lines.append(line)
-                
+            content = plan_file.read_text(encoding="utf-8")
+            lines = content.splitlines()
+            updated_lines = []
+            targets = [m["target_path"] for m in metadata]
+            marked_count = 0
+            
+            for line in lines:
+                original_line = line
+                # Check if this line contains any of our target paths
+                for t in targets:
+                    # Fuzzy match: check if target path (or last part) is in the line
+                    target_parts = t.replace("\\", "/").split("/")
+                    target_name = target_parts[-1] if target_parts else t
+                    
+                    if (t in line or target_name in line) and "[ ]" in line:
+                        line = line.replace("[ ]", "[x]")
+                        marked_count += 1
+                        logger.info(f"✅ Marked task as complete: {t}")
+                        break
+                        
+                updated_lines.append(line)
+            
+            if marked_count > 0:
                 plan_file.write_text("\n".join(updated_lines), encoding="utf-8")
-        except Exception:
-            pass
+                logger.info(f"📋 Updated compilation_plan.md: {marked_count} tasks marked complete")
+            else:
+                logger.debug("No tasks to mark in compilation_plan.md")
+                
+        except Exception as e:
+            logger.warning(f"Failed to update compilation_plan.md: {e}")
 
 
 

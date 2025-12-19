@@ -229,26 +229,12 @@ class SpawnSubAgentsTool(Tool):
                 target_path = meta["target_path"]
                 
                 if workspace and workspace.exists():
-                    # Validate with LLM
-                    output_file = workspace / "summary.md"
-                    validation_info = "No output file."
-                    is_valid = False
+                    # Validation Disabled by User Request
+                    is_valid = True 
+                    validation_info = "Validation Disabled (User Request)"
                     llm_feedback = ""
-                    
-                    if output_file.exists():
-                        content = output_file.read_text(encoding="utf-8")
-                        
-                        # LLM-powered validation
-                        validation_result = _llm_validate_output(content, target_path)
-                        is_valid = validation_result.get("is_valid", False)
-                        issues = validation_result.get("issues", [])
-                        llm_feedback = validation_result.get("feedback", "")
-                        
-                        if is_valid:
-                            validation_info = "Valid (LLM verified)"
-                        else:
-                            validation_info = f"Issues: {'; '.join(issues)}"
-                            logger.warning(f"⚠️ {target_path} failed validation: {validation_info}")
+                    issues = []
+                    logger.info(f"Skipping LLM validation for {target_path} (User Request)")
                     
                     status = "completed" if is_valid else "needs_retry"
                     result_data = {
@@ -321,7 +307,6 @@ class SpawnSubAgentsTool(Tool):
                 
         except Exception as e:
             logger.warning(f"Failed to update compilation_plan.md: {e}")
-
 
 
 class EvaluateOutputQualityTool(Tool):

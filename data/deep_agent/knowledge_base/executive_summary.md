@@ -1,102 +1,99 @@
-> **Disclaimer**: This is a high-level summary generated from detailed sub-agent analyses. For in-depth information on specific modules, refer to the source documents.
+# Executive Summary: `instructor` Library
 
-# DeepAgents Framework: Executive Summary
+## 1. High-Level Purpose
+The `instructor` library is a powerful toolkit designed to enhance Large Language Model (LLM) client libraries like those from OpenAI, Anthropic, and Google. Its primary purpose is to reliably extract structured, validated data (using Pydantic models) from LLM responses. It simplifies common patterns such as response validation, error correction (reasking), batch processing, and the generation of fine-tuning datasets, providing a unified and developer-friendly interface over various provider APIs.
 
-This document provides a consolidated overview of the DeepAgents framework, a comprehensive ecosystem for building, managing, and deploying sophisticated AI agents. The framework is designed with modularity, extensibility, and security in mind, enabling developers to create agents that can perform complex tasks, interact with filesystems, and delegate work to sub-agents.
+## 2. When to Use
+- **Structured Output:** When you need to get a specific JSON structure from an LLM and want it automatically parsed and validated into Pydantic objects.
+- **Response Guarantee:** When the reliability of the LLM's output is critical, and you need a system that can automatically re-ask the model to correct its response upon validation failure.
+- **Complex Data Extraction:** For extracting complex data structures, such as lists of objects (`Iterable`), optional results (`Maybe`), or multiple different objects in parallel (`Parallel`).
+- **Cross-Provider Batch Processing:** When you need to process large batches of requests efficiently across different LLM providers (OpenAI, Anthropic) using a single interface.
+- **Fine-Tuning Data Generation:** To automatically capture function calls and their outputs, creating a structured dataset suitable for fine-tuning models.
 
-## 1. High-Level Architecture
+## 3. System Architecture & Key Components
 
-The DeepAgents framework is composed of several key libraries that work together to provide a robust platform for agent development and execution.
+The `instructor` library works by "patching" the native client of an LLM provider. This intercepts the request/response flow, injecting its own logic for structured data handling. The architecture is modular, with distinct components for different functionalities.
 
 ```mermaid
 graph TD
-    subgraph User Interaction
-        CLI(deepagents_cli)
+    subgraph User Application
+        A["User Code (Defines Pydantic Model)"]
     end
 
-    subgraph Core Logic
-        Core(deepagents_core)
-        Backends(deepagents_backends)
+    subgraph Instructor Core
+        B["instructor.from_provider(client)"]
+        C["Patched LLM Client (.create)"]
+        D{"Response & Validation Logic (Reasking, DSL Handling)"}
     end
 
-    subgraph Extensibility
-        Skills(Skills & Tools)
-        Integrations(Remote Integrations)
+    subgraph LLM Provider
+        E["Provider API (OpenAI, Anthropic, etc.)"]
     end
 
-    subgraph Deployment
-        Harbor(Harbor Wrapper)
+    subgraph Supporting Tools
+        F["Batch Processor"]
+        G["CLI (Typer-based)"]
+        H["Distillation (`@distil`)"]
     end
 
-    CLI --> Core
-    CLI -- Manages --> Skills
-    CLI -- Uses --> Integrations
-    Core -- Uses --> Backends
-    Core -- Extends with --> Skills
-    Integrations -- Provides --> Backends
-    Harbor -- Wraps & Deploys --> Core
-    Harbor -- Implements --> Backends
+    A --> B
+    B --> C
+    C --> D
+    D -->|"Sends structured request"| E
+    E -->|"Returns raw response"| D
+    D -->|"Returns Pydantic object(s)"| A
+    D --x|"Validation Fails"| D
 
+    F --> E
+    G --> F
+    G --> E
+    A --> H
+    H -->|"Generates fine-tuning data"| Filesystem/Logs
 ```
 
-- **`deepagents_core`**: The heart of the framework. It provides the `create_deep_agent` function and a powerful middleware architecture (for filesystem access, sub-agent delegation, and message history patching) to construct complex agent behaviors.
-- **`deepagents_backends`**: A pluggable backend system that abstracts filesystem operations and command execution. It includes implementations for in-memory state, the local filesystem, and sandboxed environments, all unified under a `CompositeBackend` router.
-- **`deepagents_cli`**: The primary user-facing application. It provides a rich command-line interface for interacting with agents, managing their lifecycle (creating, listing, resetting), and handling human-in-the-loop (HITL) approvals for sensitive operations.
-- **Skills & Tools (`deepagents_cli`)**: An extension system allowing agents to be augmented with "skills" (structured instructions) and custom tools (e.g., `web_search`, `http_request`). This allows capabilities to be added without modifying the core agent logic.
-- **Remote Integrations (`deepagents_cli_integrations`)**: A factory module for connecting to and managing remote sandboxed execution environments like **Modal**, **Daytona**, and **Runloop**. This enables secure, isolated execution of agent-generated code.
-- **Harbor Integration (`deepagents_harbor`)**: A specialized wrapper for deploying and running DeepAgents within the Harbor evaluation environment, including a custom `HarborSandbox` backend and trajectory logging for analysis.
+### Key Components:
+- **Provider Integrations:** The entry point to the library, accessed via functions like `from_openai`, `from_anthropic`, etc. These patch the provider's client to enable `instructor`'s features.
+- **DSL (Domain Specific Language):** A suite of Pydantic-based tools for handling complex extraction patterns:
+    - `Iterable[...]`: For extracting a stream of multiple objects.
+    - `Maybe[Model]`: For handling cases where the requested object may not be in the response.
+    - `Parallel[ModelA, ModelB]`: For extracting multiple, different models from a single response using tool calls.
+- **Batch Processor:** A unified interface (`BatchProcessor`) for creating, submitting, and monitoring batch jobs across different providers, normalizing their disparate APIs.
+- **Distillation & Templating:** The `@distil` decorator captures function inputs/outputs to create fine-tuning datasets. Jinja2 templating allows for dynamic prompt engineering.
+- **CLI:** A command-line interface built with Typer for managing batch jobs and OpenAI fine-tuning jobs directly from the terminal.
 
-## 2. Key Concepts & Capabilities
+## 4. Quick Example: How to Use `instructor`
 
-### Agent Creation & Middleware
-The framework's core is the `create_deep_agent` function, which assembles an agent from a stack of middleware. This approach allows for a clean separation of concerns:
-- **`FilesystemMiddleware`**: Grants the agent tools like `ls`, `read`, `write`, and `execute` by connecting to a configured backend.
-- **`SubAgentMiddleware`**: Allows a primary agent to delegate complex, multi-step tasks to specialized, ephemeral sub-agents.
-- **`SkillsMiddleware`**: Dynamically injects documentation about available "skills" into the agent's system prompt, enabling progressive discovery of capabilities.
-- **`AgentMemoryMiddleware`**: Provides the agent with long-term memory by loading user-specific and project-specific context from `agent.md` files.
+The following example demonstrates the core workflow: defining a Pydantic model, patching an OpenAI client, and receiving a structured, validated object from the LLM.
 
-### Secure & Pluggable Backends
-The `deepagents_backends` library is crucial for security and flexibility. The `CompositeBackend` can route file operations to different storage systems based on path prefixes (e.g., `/workspace/*` to the local filesystem, `/memories/*` to in-memory state). The `SandboxBackendProtocol` ensures that all remote execution environments provide a consistent interface for `execute`, `upload`, and `download` operations, abstracting away platform-specific SDKs.
+```python
+import instructor
+from openai import OpenAI
+from pydantic import BaseModel
 
-### Interactive CLI & Human-in-the-Loop (HITL)
-The `deepagents-cli` is more than a simple command runner. It provides a rich interactive experience:
-- **Slash Commands**: For managing state (`/clear`), getting help (`/help`), and tracking costs (`/tokens`).
-- **Tool Approval**: A sophisticated, interactive prompt for approving or rejecting potentially dangerous tool calls (like `shell` or `write_file`), complete with color-coded diffs for file modifications.
-- **Skills Management**: CLI commands (`skills list`, `skills create`) for developers to manage the agent's capabilities.
+# 1. Define your desired data structure
+class UserDetail(BaseModel):
+    name: str
+    age: int
 
-## 3. How to Use the Framework
+# 2. Patch the OpenAI client
+client = instructor.from_openai(OpenAI())
 
-1.  **Define Agent Capabilities**: Create "skills" as `.md` files with YAML frontmatter in the `~/.deepagents/skills` (user) or `./.deepagents/skills` (project) directory. Add custom Python tools if needed.
+# 3. Call the client with the `response_model` parameter
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Extract Jason is 25 years old."}],
+    response_model=UserDetail
+)
 
-2.  **Configure the Agent**: The agent's personality and core instructions are defined in an `agent.md` file.
+# The `response` is now a validated Pydantic object
+assert isinstance(response, UserDetail)
+assert response.name == "Jason"
+assert response.age == 25
 
-3.  **Launch the CLI**: Run `deepagents-cli` to start an interactive session. Optionally, connect to a remote sandbox for secure code execution.
-    ```bash
-    # Run locally
-    deepagents-cli
-
-    # Run with a remote Modal sandbox
-    deepagents-cli --sandbox modal --setup-script ./setup.sh
-    ```
-
-4.  **Interact with the Agent**: Give the agent a task. The agent will reason, use its tools, and ask for approval for sensitive actions.
-
-    ```
-    > Refactor the `utils.py` file to improve readability and add a new function `calculate_average(numbers)`.
-
-    ⚠️ Tool Action Requires Approval
-    > edit_file(utils.py)
-    --- a/utils.py
-    +++ b/utils.py
-    @@ -1,3 +1,7 @@
-     import random
-     
-     def generate_id():
-    -  return random.randint(0, 1000)
-    +    return f"id_{random.randint(0, 1000)}"
-    +
-    +def calculate_average(numbers):
-    +    return sum(numbers) / len(numbers)
-
-    [Approve] | Reject | Auto-Accept
-    ```
+print(response.model_dump_json(indent=2))
+# Output:
+# {
+#   "name": "Jason",
+#   "age": 25
+# }
+```

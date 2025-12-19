@@ -100,10 +100,6 @@ class TutorialGenerator:
         )
         
         self._token_encoder = self._build_token_encoder(settings.MODEL_ID)
-        self.model = LiteLLMModel(
-            model_id=settings.MODEL_ID,
-            requests_per_minute=settings.RATE_LIMIT_MAX_REQUESTS,
-        )
     
     def _build_token_encoder(self, model_id: str) -> Callable[[str], int]:
         if tiktoken is None:
@@ -140,12 +136,16 @@ class TutorialGenerator:
         
         supervisor = self._create_supervisor_agent(metrics=metrics)
         
+        if self.dry_run:
+            logger.info("[DRY RUN] Would run Tutorial Supervisor Agent.")
+            return []
+
         from pipelines.checkpoint import run_with_rate_limit_retry
         
         try:
             run_with_rate_limit_retry(
                 supervisor.run,
-                "Plan and generate the tutorial series.",
+                "Plan and generate the tutorial series following your detailed Execution Workflow in your system prompt.",
                 max_steps=50
             )
         except Exception as e:
@@ -197,14 +197,6 @@ class TutorialGenerator:
     
     def _create_supervisor_agent(self, metrics: Any = None) -> ToolCallingAgent:
         """Create the Tutorial Supervisor Agent."""
-        from toolkits.tutorial_toolkit import TutorialSupervisorContext
-        
-        ctx = TutorialSupervisorContext(
-            codebase_root=self.codebase_root,
-            knowledge_base_root=self.knowledge_base_root,
-            output_root=self.output_root,
-            sub_agents_root=self.sub_agents_root,
-        )
         tools = build_tutorial_supervisor_tools(
             codebase_root=self.codebase_root,
             sub_agents_root=self.sub_agents_root,
@@ -223,14 +215,6 @@ class TutorialGenerator:
     
     def _create_baseline_supervisor_agent(self, metrics: Any = None) -> ToolCallingAgent:
         """Create the Baseline Tutorial Supervisor Agent."""
-        from toolkits.tutorial_toolkit import TutorialSupervisorContext
-        
-        ctx = TutorialSupervisorContext(
-            codebase_root=self.codebase_root,
-            knowledge_base_root=None,  # No KB in baseline
-            output_root=self.output_root,
-            sub_agents_root=self.sub_agents_root,
-        )
         tools = build_tutorial_supervisor_tools(
             codebase_root=self.codebase_root,
             sub_agents_root=self.sub_agents_root,
@@ -270,8 +254,3 @@ class TutorialGenerator:
                 path.write_text(content, encoding="utf-8")
                 logger.debug(f"Sanitized {path.name}")
     
-    @staticmethod
-    def _reset_directory(path: Path) -> None:
-        if path.exists():
-            shutil.rmtree(path)
-        path.mkdir(parents=True, exist_ok=True)

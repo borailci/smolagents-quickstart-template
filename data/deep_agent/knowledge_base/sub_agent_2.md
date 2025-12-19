@@ -1,182 +1,168 @@
-# deepagents_backends Analysis
+# DSL and Validation Analysis
 
 ## 1. Overview
-This set of modules defines the core backend protocols and implementations for file-system-like operations within the `deepagents` framework. It provides a flexible way to interact with different storage mechanisms (e.g., in-memory state, local filesystem) and allows for the composition of these backends. The `BackendProtocol` serves as the abstract interface, ensuring uniformity across various backend implementations. Key features include file listing, reading, writing, editing, and searching, with support for both synchronous and asynchronous operations.
+This document provides a technical analysis of the Domain Specific Language (DSL) and validation features within the `instructor/dsl` module. This module offers utilities to enhance Pydantic models for various use cases, including citation extraction, iterable model generation, optional value handling, and parallel model processing. These DSL components abstract common patterns in AI interaction, making it easier to define structured outputs and handle streaming responses.
 
 ## 2. File-by-File Analysis
 
-### `libs/deepagents/deepagents/backends/protocol.py`
-- **Purpose**: Defines the abstract base classes and data structures that all backend implementations must adhere to. This ensures a consistent interface for file operations across different storage solutions.
+### `instructor/dsl/citation.py`
+- **Purpose**: Provides a `CitationMixin` that enhances Pydantic models with the ability to extract and validate `substring_quotes` from a given context. It automatically verifies if the extracted quotes are present in the provided text, making it useful for verifiable AI responses.
 - **Key Components**:
-  - `FileOperationError`: A Literal type defining standardized error codes for file operations.
-  - `FileDownloadResponse`: Dataclass for the result of a single file download operation, including path, content, and an optional error.
-  - `FileUploadResponse`: Dataclass for the result of a single file upload operation, including path and an optional error.
-  - `FileInfo`: TypedDict for structured file listing information, including path, `is_dir`, `size`, and `modified_at`.
-  - `GrepMatch`: TypedDict for structured grep match entries, including path, line number, and text.
-  - `WriteResult`: Dataclass for the result of a write operation, including error, path, and `files_update` (for state-backed updates).
-  - `EditResult`: Dataclass for the result of an edit operation, including error, path, `files_update`, and the number of occurrences replaced.
-  - `BackendProtocol` (ABC): The abstract base class defining the standard interface for file operations such as `ls_info`, `read`, `write`, `edit`, `grep_raw`, `glob_info`, `upload_files`, and `download_files`, along with their asynchronous counterparts.
-  - `SandboxBackendProtocol` (ABC): Extends `BackendProtocol` to include `execute` for command execution in sandboxed environments.
-  - `ExecuteResponse`: Dataclass for the result of a command execution, including output, exit code, and truncation flag.
+  - `CitationMixin(BaseModel)`: A Pydantic BaseModel mixin that adds a `substring_quotes` field. It includes a `model_validator` to ensure that the extracted quotes exist within a provided `context`.
+  - `validate_sources(self, info: ValidationInfo)`: A `model_validator` that uses fuzzy matching (`regex`) to find the spans of `substring_quotes` within the `context` provided in `validation_context`. It updates `substring_quotes` with the actual substrings found.
+  - `_get_span(self, quote: str, context: str, errs: int = 5)`: A helper method that uses `regex.search` with an error tolerance (`e<={errs_}`) to find the starting and ending indices of a `quote` within the `context`.
+  - `get_spans(self, context: str)`: Iterates through `substring_quotes` and yields the spans for each quote found in the `context`.
 
-### `libs/deepagents/deepagents/backends/filesystem.py`
-- **Purpose**: Provides a concrete implementation of `BackendProtocol` that interacts directly with the local filesystem. It includes security measures for path resolution and supports efficient searching using `ripgrep` or a Python fallback.
+### `instructor/dsl/iterable.py`
+- **Purpose**: Enables the creation of Pydantic models that can process streaming responses containing multiple structured objects. It handles different streaming modes from various AI providers and extracts individual objects from the stream.
 - **Key Components**:
-  - `FilesystemBackend`: Implements `BackendProtocol`.
-    - `__init__()`: Initializes the backend with an optional root directory and `virtual_mode` setting. `virtual_mode` enables sandboxed operations within a specified root.
-    - `_resolve_path()`: Resolves file paths, enforcing security checks, especially in `virtual_mode` to prevent directory traversal.
-    - `ls_info()`: Lists files and directories, respecting `virtual_mode` for path presentation.
-    - `read()`: Reads file content with line numbers, using `O_NOFOLLOW` for security.
-    - `write()`: Writes content to a new file, ensuring it does not overwrite existing files and using `O_NOFOLLOW`.
-    - `edit()`: Edits an existing file by performing string replacements, with `O_NOFOLLOW`.
-    - `grep_raw()`: Searches for patterns in files, prioritizing `ripgrep` for performance and falling back to a Python implementation. Includes glob filtering.
-    - `_ripgrep_search()`: Internal method to perform `ripgrep` based searches.
-    - `_python_search()`: Internal method for Python-based regex search when `ripgrep` is unavailable or fails.
-    - `glob_info()`: Finds files matching a glob pattern.
-    - `upload_files()`: Uploads multiple files to the filesystem.
-    - `download_files()`: Downloads multiple files from the filesystem.
+  - `IterableBase`: A base class for iterable models, providing methods to handle streaming responses from different AI providers.
+  - `from_streaming_response(cls, completion: Iterable[Any], mode: Mode, **kwargs: Any)`: Class method to process synchronous streaming responses, extracting and validating models.
+  - `from_streaming_response_async(cls, completion: AsyncGenerator[Any, None], mode: Mode, **kwargs: Any)`: Asynchronous counterpart for processing asynchronous streaming responses.
+  - `tasks_from_chunks(cls, json_chunks: Iterable[str], **kwargs: Any)`: Processes chunks of JSON from the stream to reconstruct complete JSON objects and validate them against the `task_type`.
+  - `extract_cls_task_type(cls, task_json: str, **kwargs: Any)`: Validates a JSON string against the `task_type` (which can be a Union of models).
+  - `extract_json(completion: Iterable[Any], mode: Mode)`: Static method to extract JSON parts from various AI provider streaming formats.
+  - `extract_json_async(completion: AsyncGenerator[Any, None], mode: Mode)`: Asynchronous version of `extract_json`.
+  - `get_object(s: str, stack: int)`: Static method to extract a complete JSON object from a string, handling nested curly braces.
+  - `IterableModel(subtask_class: type[BaseModel], name: Optional[str] = None, description: Optional[str] = None)`: A factory function that dynamically creates a new Pydantic model. This new model (`Iterable[subtask_class]`) can then be used to parse a stream of objects of `subtask_class`.
 
-### `libs/deepagents/deepagents/backends/state.py`
-- **Purpose**: Implements `BackendProtocol` for storing files directly within the LangGraph agent's state. This provides an ephemeral, in-memory storage solution that benefits from LangGraph's checkpointing.
+### `instructor/dsl/maybe.py`
+- **Purpose**: Provides a `Maybe` DSL component that wraps an existing Pydantic model, allowing it to represent an optional result along with an `error` flag and a `message`. This is useful for scenarios where a model might or might not be extracted from a response, preventing errors from stopping the process.
 - **Key Components**:
-  - `StateBackend`: Implements `BackendProtocol`.
-    - `__init__()`: Initializes with a `ToolRuntime` instance to access the agent's state.
-    - `ls_info()`: Lists files and directories from the in-memory state.
-    - `read()`: Reads file content from the in-memory state.
-    - `write()`: Writes content to a new file in the in-memory state, returning a `WriteResult` with `files_update`.
-    - `edit()`: Edits a file in the in-memory state, returning an `EditResult` with `files_update` and `occurrences`.
-    - `grep_raw()`: Searches for patterns within the in-memory files.
-    - `glob_info()`: Finds files matching glob patterns within the in-memory files.
+  - `MaybeBase(BaseModel, Generic[T])`: A generic Pydantic base model that includes `result` (Optional[T]), `error` (boolean), and `message` (Optional[str]) fields.
+  - `__bool__(self)`: Overrides the boolean representation of the `MaybeBase` instance, returning `True` if `result` is not None, indicating a successful extraction.
+  - `Maybe(model: type[T])`: A factory function that dynamically creates a new Pydantic model named `Maybe{model.__name__}`. This new model incorporates the `MaybeBase` structure around the provided `model`, making the original model's content optional and adding error handling fields.
 
-### `libs/deepagents/deepagents/backends/sandbox.py`
-- **Purpose**: Provides a base implementation for sandboxed backends where file operations are performed by executing shell commands. Subclasses only need to implement the `execute()` method.
+### `instructor/dsl/parallel.py`
+- **Purpose**: Facilitates the parallel extraction of multiple, potentially different, Pydantic models from a single AI tool call response. It supports various AI providers like OpenAI, VertexAI, and Anthropic.
 - **Key Components**:
-  - `_GLOB_COMMAND_TEMPLATE`, `_WRITE_COMMAND_TEMPLATE`, `_EDIT_COMMAND_TEMPLATE`, `_READ_COMMAND_TEMPLATE`: Python script templates used to perform file operations via shell commands, ensuring proper escaping and error handling.
-  - `BaseSandbox` (ABC): Implements `SandboxBackendProtocol`.
-    - `execute()` (abstract method): The core method that subclasses must implement to execute shell commands within the sandbox.
-    - `ls_info()`: Implemented using a Python script executed via `execute()` to list directory contents.
-    - `read()`: Implemented using `_READ_COMMAND_TEMPLATE` via `execute()`.
-    - `write()`: Implemented using `_WRITE_COMMAND_TEMPLATE` via `execute()`.
-    - `edit()`: Implemented using `_EDIT_COMMAND_TEMPLATE` via `execute()`.
-    - `grep_raw()`: Uses the system `grep` command via `execute()` to search for patterns.
-    - `glob_info()`: Implemented using `_GLOB_COMMAND_TEMPLATE` via `execute()`.
-    - `id` (abstract property): Unique identifier for the sandbox backend.
-    - `upload_files()` (abstract method): Batch file upload (subclasses must implement).
-    - `download_files()` (abstract method): Batch file download (subclasses must implement).
-
-### `libs/deepagents/deepagents/backends/composite.py`
-- **Purpose**: Enables routing file operations to different backend implementations based on path prefixes. This allows for combining multiple storage backends into a single virtual filesystem.
-- **Key Components**:
-  - `CompositeBackend`:
-    - `__init__()`: Initializes with a `default` backend and a dictionary of `routes`, where each route maps a path prefix to a specific `BackendProtocol` instance. Routes are sorted by length for correct prefix matching.
-    - `_get_backend_and_key()`: Determines the appropriate backend for a given file path based on configured routes and strips the prefix from the path.
-    - `ls_info()`: Routes `ls_info` requests to the correct backend or aggregates results from all backends if the root path is requested.
-    - `read()`, `write()`, `edit()`: Routes these operations to the appropriate backend.
-    - `grep_raw()`: Routes or aggregates grep results from multiple backends.
-    - `glob_info()`: Routes or aggregates glob search results.
-    - `execute()`: Delegates command execution exclusively to the `default` backend, which must implement `SandboxBackendProtocol`.
-    - `upload_files()`: Batches file uploads by target backend for efficiency.
-    - `download_files()`: Batches file downloads by source backend for efficiency.
-    - Asynchronous counterparts (`als_info`, `aread`, `awrite`, `aedit`, `agrep_raw`, `aglob_info`, `aexecute`, `aupload_files`, `adownload_files`) are provided for all methods.
+  - `ParallelBase`: A base class that takes multiple Pydantic models (`*models`) in its constructor. It provides a `from_response` method to process a tool call response and yield validated instances of the registered models.
+  - `from_response(self, response: Any, mode: Mode, validation_context: Optional[Any] = None, strict: Optional[bool] = None)`: Processes the response from the AI, identifies the tool calls by name, and validates the arguments against the corresponding registered Pydantic model.
+  - `VertexAIParallelBase(ParallelBase)`: A subclass of `ParallelBase` specifically designed to handle tool call responses from VertexAI.
+  - `AnthropicParallelBase(ParallelBase)`: A subclass of `ParallelBase` tailored for handling tool call responses from Anthropic.
+  - `is_union_type(typehint: type[Iterable[T]])`: Helper function to check if a type hint represents a `Union` type within an `Iterable`.
+  - `get_types_array(typehint: type[Iterable[T]])`: Extracts the Pydantic model types from an `Iterable` type hint, supporting both single types and `Union` types.
+  - `handle_parallel_model(typehint: type[Iterable[T]])`: Generates the OpenAI function schema for each model in the provided type hint.
+  - `handle_anthropic_parallel_model(typehint: type[Iterable[T]])`: Generates the Anthropic tool schema for each model in the provided type hint.
+  - `ParallelModel(typehint: type[Iterable[T]])`: A factory function that returns an instance of `ParallelBase` (or its provider-specific subclasses) configured with the models extracted from the `typehint`. This allows a single `ParallelModel` to represent an `Iterable` of different Pydantic models.
+  - `VertexAIParallelModel(typehint: type[Iterable[T]])`: Factory for `VertexAIParallelBase`.
+  - `AnthropicParallelModel(typehint: type[Iterable[T]])`: Factory for `AnthropicParallelBase`.
 
 ## 3. Architecture & Data Flow
 
 ```mermaid
 graph TD
-    User --> CompositeBackend
-    CompositeBackend -- "Path based routing" --> FilesystemBackend
-    CompositeBackend -- "Path based routing" --> StateBackend
-    CompositeBackend -- "Default/Execution" --> SandboxBackend
+    A[AI Model Response Stream] -->|Chunked Data| B{IterableBase.extract_json}
+    B -->|JSON Chunks| C{IterableBase.tasks_from_chunks}
+    C -->|Individual JSON Objects| D[Pydantic Model Validation (task_type)]
+    D --> E[Validated Pydantic Objects (IterableModel)]
 
-    SandboxBackend -- "Shell Commands" --> OS
-    FilesystemBackend -- "Direct OS Calls" --> OS
+    F[User Defined Pydantic Model] --> G{Maybe(Model)}
+    G --> H[Maybe{Model} (Optional Result with Error Handling)]
 
-    StateBackend -- "Read/Write" --> LangGraphState[LangGraph Agent State]
+    I[AI Model Tool Calls] --> J{ParallelBase.from_response}
+    J -->|Tool Call Name & Arguments| K[Pydantic Model Registry Lookup]
+    K --> L[Pydantic Model Validation (registered model)]
+    L --> M[Validated Pydantic Objects (ParallelModel)]
 
-    subgraph Legend
-        direction LR
-        A[Component] --> B(Tool)
+    N[Pydantic Model with substring_quotes] --> O{CitationMixin}
+    O -->|validation_context with "context"| P[CitationMixin.validate_sources]
+    P --> Q{Regex Matching for Spans}
+    Q --> R[Validated substring_quotes (found in context)]
+
+    subgraph DSL Components
+        G
+        H
+        O
+        P
+        Q
+        R
+        C
+        D
+        E
+        J
+        K
+        L
+        M
     end
-
 ```
-
-The `CompositeBackend` acts as a central router, directing file operations to specific backend implementations based on the path provided. For example, a request to `/workspace/file.txt` might go to a `FilesystemBackend`, while `/memories/note.md` could be handled by a `StateBackend`. Operations like `execute` are always delegated to the `default` backend, which typically would be a `SandboxBackend` capable of running shell commands.
-
-`FilesystemBackend` interacts directly with the operating system's file system, providing persistent storage. `StateBackend` uses the ephemeral `LangGraph Agent State` for in-memory file storage, useful for conversational contexts where state needs to be managed and checkpointed.
-
-`BaseSandbox` provides a layer of abstraction for sandboxed execution, translating file operations into shell commands that are then executed by an underlying environment. Concrete `SandboxBackend` implementations (not detailed here but inheriting from `BaseSandbox`) would provide the actual `execute` method.
 
 ## 4. Code Deep Dive
 
-### `CompositeBackend` - Path Resolution and Routing
-
-The `_get_backend_and_key` method in `CompositeBackend` is crucial for its routing logic. It iterates through configured routes, sorted by length (longest first), to find the most specific match for a given path. This prevents shorter, more general prefixes from prematurely claiming paths that should be handled by a more specific route.
-
+### `instructor/dsl/citation.py` - `_get_span` for Fuzzy Matching
 ```python
-class CompositeBackend:
-    # ... (init and other methods)
+    def _get_span(
+        self, quote: str, context: str, errs: int = 5
+    ) -> Generator[tuple[int, int], None, None]:
+        import regex
 
-    def _get_backend_and_key(self, key: str) -> tuple[BackendProtocol, str]:
-        # Check routes in order of length (longest first) for correct prefix matching
-        for prefix, backend in self.sorted_routes:
-            if key.startswith(prefix):
-                # Strip full prefix and ensure a leading slash remains
-                suffix = key[len(prefix) :]
-                stripped_key = f"/{suffix}" if suffix else "/"
-                return backend, stripped_key
+        minor = quote
+        major = context
 
-        return self.default, key
+        errs_ = 0
+        s = regex.search(f"({minor}){{e<={errs_}}}", major)
+        while s is None and errs_ <= errs:
+            errs_ += 1
+            s = regex.search(f"({minor}){{e<={errs_}}}", major)
+
+        if s is not None:
+            yield from s.spans()
 ```
+This snippet from `CitationMixin` demonstrates the fuzzy matching logic used to locate `substring_quotes` within a larger `context`. It iteratively increases the error tolerance (`errs_`) in the `regex.search` until a match is found or the maximum error tolerance is reached. This robust approach helps in handling slight variations between the extracted quote and the original context.
 
-### `FilesystemBackend` - Secure Path Resolution
-
-The `_resolve_path` method in `FilesystemBackend` is critical for security, especially when `virtual_mode` is enabled. It ensures that all file operations are confined within the designated `cwd` and prevents directory traversal attacks (`..` or `~`).
-
+### `instructor/dsl/iterable.py` - `IterableModel` Factory
 ```python
-class FilesystemBackend(BackendProtocol):
-    # ... (init and other methods)
+def IterableModel(
+    subtask_class: type[BaseModel],
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+) -> type[BaseModel]:
+    # Import at runtime to avoid circular import
+    from ..processing.function_calls import OpenAISchema
 
-    def _resolve_path(self, key: str) -> Path:
-        if self.virtual_mode:
-            vpath = key if key.startswith("/") else "/" + key
-            if ".." in vpath or vpath.startswith("~"):
-                raise ValueError("Path traversal not allowed")
-            full = (self.cwd / vpath.lstrip("/")).resolve()
-            try:
-                full.relative_to(self.cwd)
-            except ValueError:
-                raise ValueError(f"Path:{full} outside root directory: {self.cwd}") from None
-            return full
+    task_name = subtask_class.__name__ if name is None else name
 
-        path = Path(key)
-        if path.is_absolute():
-            return path
-        return (self.cwd / path).resolve()
+    name = f"Iterable{task_name}"
+
+    list_tasks = (
+        list[subtask_class],  # type: ignore
+        Field(
+            default_factory=list,
+            repr=False,
+            description=f"Correctly segmented list of `{task_name}` tasks",
+        ),
+    )
+
+    base_models = cast(tuple[type[BaseModel], ...], (OpenAISchema, IterableBase))
+    new_cls = create_model(
+        name,
+        tasks=list_tasks,
+        __base__=base_models,
+    )
+    new_cls = cast(type[IterableBase], new_cls)
+
+    new_cls.task_type = subtask_class
+
+    new_cls.__doc__ = (
+        f"Correct segmentation of `{task_name}` tasks"
+        if description is None
+        else description
+    )
+    assert issubclass(new_cls, OpenAISchema),
+        "The new class should be a subclass of OpenAISchema"
+    return new_cls
 ```
+`IterableModel` is a powerful factory function that dynamically generates a new Pydantic model. This new model, designed to be an `Iterable` of `subtask_class` objects, inherits from `OpenAISchema` and `IterableBase`. It sets the `task_type` attribute, which is crucial for `IterableBase` to know how to validate and parse individual items from a streaming response. This design allows for flexible and dynamic creation of models capable of handling lists of structured outputs from AI.
 
-### `BaseSandbox` - Executing Python Scripts for File Operations
-
-The `BaseSandbox` utilizes embedded Python scripts executed via the `execute` method to perform file operations. This approach standardizes how file operations are handled within a sandboxed environment, abstracting away the underlying shell commands and ensuring proper handling of data (e.g., base64 encoding for content).
-
+### `instructor/dsl/parallel.py` - `ParallelModel` Creation
 ```python
-_WRITE_COMMAND_TEMPLATE = """python3 -c "\nimport os\nimport sys\nimport base64\n\nfile_path = '{file_path}'\n\n# Check if file already exists (atomic with write)\nif os.path.exists(file_path):\n    print(f'Error: File \\\'{file_path}\\\' already exists', file=sys.stderr)\n    sys.exit(1)\n\n# Create parent directory if needed\nparent_dir = os.path.dirname(file_path) or '.'\nos.makedirs(parent_dir, exist_ok=True)\n\n# Decode and write content\ncontent = base64.b64decode('{content_b64}').decode('utf-8')\nwith open(file_path, 'w') as f:\n    f.write(content)\n" 2>&1"""
-
-class BaseSandbox(SandboxBackendProtocol, ABC):
-    # ... (abstract execute method and other methods)
-
-    def write(
-        self,
-        file_path: str,
-        content: str,
-    ) -> WriteResult:
-        content_b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        cmd = _WRITE_COMMAND_TEMPLATE.format(file_path=file_path, content_b64=content_b64)
-        result = self.execute(cmd)
-        # ... (error handling)
-        return WriteResult(path=file_path, files_update=None)
+def ParallelModel(typehint: type[Iterable[T]]) -> ParallelBase:
+    the_types = get_types_array(typehint)
+    return ParallelBase(*[model for model in the_types])
 ```
+This function exemplifies how `ParallelModel` is constructed. It takes a `typehint` which is an `Iterable` of Pydantic models (or a `Union` of models). It then uses `get_types_array` to extract all individual model types and instantiates `ParallelBase` with these models. This setup enables the `ParallelBase` instance to register multiple Pydantic models and intelligently route incoming tool call arguments from an AI response to the correct model for validation.
 
 ## 5. Integration Points
+- **Dependencies**: The DSL components heavily rely on `pydantic` for model definition and validation. They also interact with `collections.abc` for various iterable and generator types. The `instructor.mode` module is used to differentiate between various AI provider specific streaming and tool calling formats. `instructor.processing.function_calls` (specifically `OpenAISchema` and `openai_schema`) is a key dependency for integrating with OpenAI's function calling mechanism. The factory functions (`IterableModel`, `Maybe`, `ParallelModel`) are designed for public consumption, allowing users to create specialized Pydantic models for their specific use cases.
+- **Dependents**: These DSL features are designed to be integrated into `instructor`'s core functionality, particularly where structured data extraction and validation from language model responses are required. They would likely be used by `instructor.patch` or similar utilities that handle the direct interaction with AI APIs, allowing users to define complex output structures with ease.))
 
-- **Dependencies**: These modules primarily depend on Python's standard library (e.g., `os`, `pathlib`, `re`, `subprocess`, `json`, `base64`, `shlex`, `asyncio`), `wcmatch.glob` for advanced globbing in `FilesystemBackend`, `langchain.tools.ToolRuntime` for `StateBackend`, and `typing_extensions` for `TypedDict` and `NotRequired`.
-- **Dependents**: The `deepagents_backends` package is a fundamental component for any `deepagents` application that requires file system interactions. It would be used by higher-level agent frameworks or tools that need to read, write, or manipulate files, providing a unified abstraction over various storage mechanisms. The `CompositeBackend` is particularly designed to be an entry point for agents that need to interact with multiple storage locations seamlessly.

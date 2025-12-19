@@ -1,250 +1,161 @@
-## Harbor DeepAgents Modules Analysis
+# Distillation and Templating Analysis
 
-### 1. Overview
-This document provides a technical analysis of the `harbor` modules, specifically focusing on `deepagents_harbor/backend.py`, `deepagents_harbor/deepagents_wrapper.py`, and `deepagents_harbor/tracing.py`. These modules collectively enable the integration of DeepAgents within the Harbor environment, allowing autonomous agents to execute tasks in a sandboxed context. The `backend.py` module implements the core sandbox functionalities using shell commands, `deepagents_wrapper.py` orchestrates the DeepAgent execution and trajectory saving, and `tracing.py` provides utilities for deterministic LangSmith example ID generation.
+## 1. Overview
+This document provides a technical analysis of the `distil.py` and `templating.py` modules within the `instructor` library. The `distil.py` module focuses on function distillation, allowing the tracking and replaying of function calls for fine-tuning language models, particularly with OpenAI's API. The `templating.py` module provides robust message templating capabilities using Jinja2, supporting various large language model (LLM) providers like OpenAI, Anthropic, Cohere, VertexAI, and Gemini.
 
-### 2. File-by-File Analysis
+## 2. File-by-File Analysis
 
-#### `libs/harbor/deepagents_harbor/backend.py`
-- **Purpose**: This file provides a concrete implementation of the `SandboxBackendProtocol` for DeepAgents within a Harbor environment. It allows DeepAgents to interact with the underlying system (e.g., file system, process execution) using bash commands.
+### `instructor/distil.py`
+- **Purpose**: This module enables the "distillation" of Python function calls and their responses into a format suitable for fine-tuning large language models. It also supports a "dispatch" mode to directly call an LLM instead of the original function. It tracks function input, output, and metadata, logging this information for later use in training.
 - **Key Components**:
-  - `HarborSandbox` class: This class extends `SandboxBackendProtocol` and provides asynchronous methods for executing shell commands and performing file operations. It handles common issues like non-interactive shell messages and ensures proper error reporting.
-  - `aexecute(self, command: str) -> ExecuteResponse`: Executes a bash command in the environment and filters out harmless bash error messages from the output.
-  - `aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> str`: Reads file content, optionally with line numbers, offset, and limit. It uses `awk` for efficient reading.
-  - `awrite(self, file_path: str, content: str) -> WriteResult`: Writes content to a new file. It base64 encodes the content to avoid shell escaping issues and uses `mkdir -p` to create parent directories.
-  - `aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult`: Edits a file by replacing occurrences of a string. It uses `perl` for robust string replacement and handles cases where the string is not found or appears multiple times without `replace_all`.
-  - `als_info(self, path: str) -> list[FileInfo]`: Lists directory contents, indicating whether each entry is a file or a directory.
-  - `agrep_raw(self, pattern: str, path: str | None = None, glob: str | None = None) -> list[GrepMatch] | str`: Searches for a pattern in files using `grep` and parses the output into `GrepMatch` objects.
-  - `aglob_info(self, pattern: str, path: str = "/") -> list[FileInfo]`: Finds files matching a glob pattern.
+  - `FinetuneFormat` (enum): Defines the output format for fine-tuning data: `MESSAGES` (OpenAI chat completion format) or `RAW` (raw function details).
+  - `Instructions` (class): The core class for managing distillation and dispatch. It configures the logging, fine-tuning format, and interaction with the OpenAI API.
+    - `__init__()`: Initializes the `Instructions` instance with a name, ID, logging handlers, fine-tune format, indentation settings, and an OpenAI client.
+    - `distil()` (decorator): A decorator that, when applied to a function, either tracks its execution (`distil` mode) or dispatches the function call to an LLM (`dispatch` mode). It ensures the function has a Pydantic `BaseModel` as its return type hint.
+    - `track()`: Logs the function call, its arguments, and the Pydantic `BaseModel` response in the specified `finetune_format`.
+    - `openai_kwargs()`: Constructs the `OpenAIChatKwargs` dictionary, preparing messages and function definitions for an OpenAI chat completion API call.
+  - `get_signature_from_fn()`: Extracts the function signature as a string.
+  - `format_function()`: Formats a function into a string including its definition, docstring, and body.
+  - `is_return_type_base_model_or_instance()`: Checks if a function's return type hint is a Pydantic `BaseModel`.
 
-#### `libs/harbor/deepagents_harbor/deepagents_wrapper.py`
-- **Purpose**: This file defines a wrapper for integrating DeepAgents with Harbor environments. It handles the setup, execution, and result logging of DeepAgent tasks, including integration with LangSmith for tracing and experiment tracking.
+### `instructor/templating.py`
+- **Purpose**: This module provides utilities for applying Jinja2 templates to messages exchanged with various LLM APIs. It standardizes message content across different providers by dynamically applying context variables.
 - **Key Components**:
-  - `DeepAgentsWrapper` class: Extends `BaseAgent` and orchestrates the DeepAgent execution.
-    - `__init__`: Initializes the wrapper with logging directory, model name, temperature, and flags for using CLI or SDK agents. It also sets up LangChain's chat model.
-    - `_get_formatted_system_prompt(self, backend: HarborSandbox) -> str`: Generates a dynamic system prompt for the DeepAgent, including the current working directory and a listing of the first 10 files. This provides crucial context to the agent.
-    - `run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None`: The main execution method. It sets up the `HarborSandbox` backend, creates a DeepAgent (either CLI or SDK based on configuration), integrates with LangSmith for tracing, invokes the DeepAgent with the given instruction, and saves the execution trajectory.
-    - `_save_trajectory(self, environment: BaseEnvironment, instruction: str, result: dict) -> None`: Parses the DeepAgent's execution messages (AIMessage, ToolMessage, HumanMessage) into a structured trajectory format (`ATIF-v1.2`), tracks token usage, and saves it as a `trajectory.json` file.
+  - `apply_template()`: Applies a Jinja2 template to a given string using a provided context dictionary. It also uses `textwrap.dedent` for consistent formatting.
+  - `process_message()`: Processes a single message dictionary, applying `apply_template` to its content based on the detected message format (OpenAI, Anthropic, Cohere, VertexAI, Gemini).
+  - `handle_templating()`: The main entry point for applying templating. It takes `kwargs` (typically intended for an LLM API call), a `Mode` enum, and a `context` dictionary. It identifies the message structure within `kwargs` and delegates to `process_message` for templating, returning the modified `kwargs`.
 
-#### `libs/harbor/deepagents_harbor/tracing.py`
-- **Purpose**: This file provides a utility function for generating deterministic UUIDs from instruction strings, primarily for use as `example_id` in LangSmith for consistent experiment tracking.
-- **Key Components**:
-  - `create_example_id_from_instruction(instruction: str, seed: int = 42) -> str`: Takes an instruction string, normalizes it, and generates a deterministic UUID using SHA-256 hashing. A seed is incorporated to prevent collisions.
+## 3. Architecture & Data Flow
 
-### 3. Architecture & Data Flow
-
+### `distil.py` Flow
 ```mermaid
 graph TD
-    A[Harbor Environment] --> B{DeepAgentsWrapper}
-    B -->|Provides Environment| C[HarborSandbox]
-    C -->|Executes Bash Commands| D[Underlying System/Shell]
-
-    B -->|Generates System Prompt| C
-    B -->|Creates DeepAgent (CLI/SDK)| E[DeepAgent Core]
-    E -->|Invokes with Instruction & Config| B
-    E -->|Calls Sandbox Methods| C
-
-    B -->|Saves Trajectory & Metrics| F[Logs Directory (trajectory.json)]
-    B -->|LangSmith Tracing| G[LangSmith Platform]
-
-    H[Instruction String] --> B
-    H -->|Generates Example ID| I[tracing.py::create_example_id_from_instruction]
-    I --> G
-
-    subgraph Harbor DeepAgents Internal Flow
-        E -- Tool Calls --> C
-        C -- Results --> E
-    end
+    A[User Function with @Instructions.distil] -->|Call| B{Instructions.distil Decorator}
+    B -- IF "distil" mode --> C[Original Function Execution]
+    C --> D[Instructions.track(fn, args, kwargs, resp)]
+    D --> E[Log Data (JSON) to Logger]
+    B -- IF "dispatch" mode --> F[Instructions.openai_kwargs]
+    F --> G[OpenAI Client Chat Completion API Call]
+    G --> H[LLM Response]
 ```
 
-**Data Flow Explanation:**
-1.  The `Harbor Environment` initializes the `DeepAgentsWrapper` and provides it with the execution environment.
-2.  `DeepAgentsWrapper` creates a `HarborSandbox` instance, which acts as the interface to the `Underlying System/Shell` for executing commands and file operations.
-3.  `DeepAgentsWrapper` generates a dynamic `system_prompt` by querying the `HarborSandbox` for current directory and file listings, providing crucial context to the agent.
-4.  Based on configuration, `DeepAgentsWrapper` instantiates either a CLI or SDK `DeepAgent Core`.
-5.  The `Instruction String` for the task is fed into `DeepAgentsWrapper`.
-6.  The `tracing.py` module uses the `Instruction String` to generate a deterministic `example_id` for LangSmith tracing.
-7.  `DeepAgentsWrapper` invokes the `DeepAgent Core` with the instruction and relevant configuration, wrapping the invocation with `LangSmith Tracing` if enabled, sending data to the `LangSmith Platform`.
-8.  During its operation, `DeepAgent Core` makes `Tool Calls` (e.g., `aread`, `awrite`, `aexecute`) to the `HarborSandbox`.
-9.  `HarborSandbox` executes these calls on the `Underlying System/Shell` and returns the `Results` to the `DeepAgent Core`.
-10. After the DeepAgent completes its task, `DeepAgentsWrapper` processes the execution `messages` to construct a detailed `trajectory.json` file, which is saved to the `Logs Directory`. This trajectory includes steps, observations, tool calls, and final metrics.
+### `templating.py` Flow
+```mermaid
+graph TD
+    A[Initial LLM API kwargs] --> B[handle_templating(kwargs, mode, context)]
+    B --> C{Identify Message Structure (OpenAI, Anthropic, etc.)}
+    C --> D[Loop through messages/parts]
+    D --> E[process_message(message_part, context, mode)]
+    E --> F[apply_template(text, context)]
+    F --> G[Jinja2 SandboxedEnvironment Render]
+    G --> H[Templated Message Part]
+    H --> I[Reconstruct Modified kwargs]
+    I --> J[Templated LLM API kwargs]
+```
 
-### 4. Code Deep Dive
+## 4. Code Deep Dive
 
-#### `HarborSandbox.aexecute` - Robust Command Execution
-This snippet demonstrates how `HarborSandbox` executes bash commands and intelligently filters out common, harmless bash errors that occur in non-interactive environments, ensuring cleaner output for the agent.
-
+### `instructor/distil.py` - `Instructions.distil` decorator
+This snippet shows the core logic for the `distil` decorator, which conditionally switches between tracking function calls and dispatching to an LLM.
 ```python
-    async def aexecute(
+    def distil(
         self,
-        command: str,
-    ) -> ExecuteResponse:
-        """Execute a bash command in the task environment."""
-        result = await self.environment.exec(command)
+        *args: Any,
+        name: Optional[str] = None,
+        mode: Literal['distil', 'dispatch'] = "distil",
+        model: str = "gpt-3.5-turbo",
+        fine_tune_format: Optional[FinetuneFormat] = None,
+    ) -> Union[
+        Callable[P, Union[T_Retval, ChatCompletion]],
+        Callable[[Callable[P, T_Retval]], Callable[P, Union[T_Retval, ChatCompletion]]],
+    ]:
+        # ... (mode and format validation)
 
-        # These errors appear in harbor environments when running bash commands
-        # in non-interactive/non-TTY contexts. They're harmless artifacts.
-        # Filter them from both stdout and stderr, then collect them to show in stderr.
-        error_messages = [
-            "bash: cannot set terminal process group (-1): Inappropriate ioctl for device",
-            "bash: no job control in this shell",
-            "bash: initialize_job_control: no job control in background: Bad file descriptor",
-        ]
+        def _wrap_distil(
+            fn: Callable[P, T_Retval],
+        ) -> Callable[P, Union[T_Retval, ChatCompletion]]:
+            # ... (return type validation)
+            return_base_model = inspect.signature(fn).return_annotation
 
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
+            @functools.wraps(fn)
+            def _dispatch(*args: P.args, **kwargs: P.kwargs) -> ChatCompletion:
+                openai_kwargs = self.openai_kwargs(
+                    name=name if name else fn.__name__,  # type: ignore
+                    fn=fn,
+                    args=args,
+                    kwargs=kwargs,
+                    base_model=return_base_model,
+                )
+                return self.client.chat.completions.create(
+                    **openai_kwargs,
+                    model=model,
+                    response_model=return_base_model,  # type: ignore
+                )
 
-        # Collect the bash messages if they appear (to move to stderr)
-        bash_messages = []
-        for error_msg in error_messages:
-            if error_msg in stdout:
-                bash_messages.append(error_msg)
-                stdout = stdout.replace(error_msg, "")
-            if error_msg in stderr:
-                stderr = stderr.replace(error_msg, "")
+            @functools.wraps(fn)
+            def _distil(*args: P.args, **kwargs: P.kwargs) -> T_Retval:
+                resp = fn(*args, **kwargs)
+                self.track(
+                    fn,
+                    args,
+                    kwargs,
+                    resp,
+                    name=name,
+                    finetune_format=fine_tune_format,
+                )
+                return resp
 
-        stdout = stdout.strip()
-        stderr = stderr.strip()
+            return _dispatch if mode == "dispatch" else _distil
 
-        # Add bash messages to stderr
-        if bash_messages:
-            bash_msg_text = "\n".join(bash_messages)
-            stderr = f"{bash_msg_text}\n{stderr}".strip() if stderr else bash_msg_text
+        if len(args) == 1 and callable(args[0]):
+            return _wrap_distil(args[0])  # type: ignore
 
-        # Only append stderr label if there's actual stderr content
-        if stderr:
-            output = stdout + "\n\n stderr: " + stderr if stdout else "\n stderr: " + stderr
-        else:
-            output = stdout
-        return ExecuteResponse(
-            output=output,
-            exit_code=result.return_code,
-        )
+        return _wrap_distil
 ```
 
-#### `DeepAgentsWrapper._save_trajectory` - Trajectory Reconstruction
-This method is crucial for converting the raw messages from the DeepAgent's execution into a structured `ATIF-v1.2` trajectory format, capturing agent steps, tool calls, observations, and metrics.
-
+### `instructor/templating.py` - `handle_templating` function
+This excerpt demonstrates how `handle_templating` intelligently processes different message formats for templating.
 ```python
-    def _save_trajectory(
-        self, environment: BaseEnvironment, instruction: str, result: dict
-    ) -> None:
-        """Save current trajectory to logs directory."""
-        # Track token usage and cost for this run
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
+def handle_templating(
+    kwargs: dict[str, Any], mode: Mode, context: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    # ... (context check and kwargs copy)
 
-        # Create trajectory
-        steps = [
-            Step(
-                step_id=1,
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                source="user",
-                message=instruction,
-            ),
+    # Handle Cohere's message field
+    if "message" in new_kwargs:
+        new_kwargs["message"] = apply_template(new_kwargs["message"], context)
+        new_kwargs["chat_history"] = [
+            process_message(message, context, mode)
+            for message in new_kwargs["chat_history"]
+        ]
+        return new_kwargs
+
+    # ... (message extraction logic)
+
+    if "messages" in new_kwargs:
+        new_kwargs["messages"] = [
+            process_message(message, context, mode) for message in messages
         ]
 
-        observations = []
-        pending_step: Step | None = None
+    elif "contents" in new_kwargs:
+        new_kwargs["contents"] = [
+            process_message(content, context, mode)
+            for content in new_kwargs["contents"]
+        ]
 
-        for msg in result["messages"]:
-            if isinstance(msg, AIMessage):
-                # Extract usage metadata from AIMessage
-                usage: UsageMetadata = msg.usage_metadata
-                if usage:
-                    total_prompt_tokens += usage["input_tokens"]
-                    total_completion_tokens += usage["output_tokens"]
-                # If there's a pending step with tool calls, add it now with observations
-                if pending_step is not None:
-                    if pending_step.tool_calls and observations:
-                        # Add observations to the pending step
-                        pending_step.observation = Observation(results=observations)
-                        observations = []
-                    steps.append(pending_step)
-                    pending_step = None
-
-                # Extract content and tool calls from current AIMessage
-                atf_tool_calls = []
-                message = ""
-                for cb in msg.content_blocks:
-                    if cb["type"] == "text":
-                        message += cb["text"]
-                    elif cb["type"] == "reasoning":
-                        message += cb["reasoning"]
-                    elif cb["type"] == "tool_call":
-                        atf_tool_calls.append(
-                            ToolCall(
-                                tool_call_id=cb["id"],
-                                function_name=cb["name"],
-                                arguments=cb["args"],
-                            )
-                        )
-                    else:
-                        # TODO: Add server side tool call results.
-                        continue
-
-                # Create new step
-                new_step = Step(
-                    step_id=steps[-1].step_id + 1 if steps else 0,
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                    source="agent",
-                    message=message,
-                    tool_calls=atf_tool_calls if atf_tool_calls else None,
-                )
-
-                # If this AIMessage has tool calls, make it pending (wait for observations)
-                # Otherwise, add it immediately
-                if atf_tool_calls:
-                    pending_step = new_step
-                else:
-                    steps.append(new_step)
-
-            elif isinstance(msg, ToolMessage):
-                # Collect observations for the pending step
-                observations.append(
-                    ObservationResult(
-                        source_call_id=msg.tool_call_id,
-                        content=str(msg.content),
-                    )
-                )
-            elif isinstance(msg, HumanMessage):
-                pass
-            else:
-                raise NotImplementedError(
-                    f"Message type {type(msg)} not supported for step conversion"
-                )
-
-        # Add any remaining pending step
-        if pending_step is not None:
-            if pending_step.tool_calls and observations:
-                pending_step.observation = Observation(results=observations)
-            steps.append(pending_step)
-
-        # Build and save trajectory
-        metrics = FinalMetrics(
-            total_prompt_tokens=total_prompt_tokens or None,
-            total_completion_tokens=total_completion_tokens or None,
-            total_steps=len(steps),
-        )
-        trajectory = Trajectory(
-            schema_version="ATIF-v1.2",
-            session_id=environment.session_id,
-            agent=Agent(
-                name=self.name(),
-                version=self.version() or "unknown",
-                model_name=self._model_name,
-                extra={
-                    "framework": "deepagents",
-                    "langchain_version": "1.0+",
-                },
-            ),
-            steps=steps,
-            final_metrics=metrics,
-        )
-        trajectory_path = self.logs_dir / "trajectory.json"
-        trajectory_path.write_text(json.dumps(trajectory.to_json_dict(), indent=2))
+    return new_kwargs
 ```
 
-### 5. Integration Points
-- **Dependencies**: The `harbor` DeepAgents modules depend on `deepagents`, `langchain`, `langsmith`, and `harbor.environments.base`. It uses `deepagents.backends.protocol` for defining sandbox interactions.
-- **Dependents**: These modules are primarily designed to be used within the `Harbor` framework to enable `DeepAgents` to operate within its sandboxed environments. The `DeepAgentsWrapper` acts as the main entry point for running DeepAgent tasks, consuming a `Harbor Environment` and producing execution `trajectories` and `metrics`.
+## 5. Integration Points
+- **Dependencies (`distil.py`)**:
+    - `openai`: For interacting with OpenAI's API, particularly for chat completions and function calling.
+    - `pydantic`: Used for defining structured return types (`BaseModel`), which are crucial for type enforcement and schema generation for LLMs.
+    - `logging`: For tracking and logging function calls and responses.
+    - `typing`, `typing_extensions`: For advanced type hinting.
+- **Dependencies (`templating.py`)**:
+    - `jinja2.sandbox.SandboxedEnvironment`: For safe Jinja2 template rendering.
+    - `textwrap.dedent`: For cleaning up multiline strings.
+    - `instructor.mode.Mode`: An internal enum likely defining different operational modes for the `instructor` library.
+    - `google.genai.types`, `vertexai.generative_models`: Conditional imports for handling specific message formats for Google's GenAI and VertexAI.
+- **Dependents**:
+    - Both modules are core to the `instructor` library, suggesting they are integrated into its primary function calling and response processing workflows. `distil.py` is likely used by developers to prepare data for fine-tuning custom LLMs or to route function calls through an LLM. `templating.py` would be used internally by the `instructor` library to prepare prompts and messages before sending them to various LLM providers, allowing for dynamic content generation based on context.

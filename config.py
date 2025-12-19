@@ -16,7 +16,7 @@ class Settings:
     
     # --- Codebase to Analyze ---
     # Change this to point to the codebase you want to analyze
-    CODEBASE_ROOT: Path = PROJECT_ROOT / "data" / "agent_workspace" / "deepagents" 
+    CODEBASE_ROOT: Path = PROJECT_ROOT / "data" / "agent_workspace" / "instructor" 
     
     # --- Deep Agent Output Structure ---
     # data/deep_agent/
@@ -25,8 +25,10 @@ class Settings:
     #   └── tutorials/
     DEEP_AGENT_ROOT: Path = PROJECT_ROOT / "data" / "deep_agent"
     DEEP_AGENT_KB: Path = DEEP_AGENT_ROOT / "knowledge_base"
-    DEEP_AGENT_SUB_AGENTS: Path = DEEP_AGENT_ROOT / "sub_agents_workspace"
+    DEEP_AGENT_KB_SUB_AGENTS: Path = DEEP_AGENT_ROOT / "sub_agents_kb"
+    DEEP_AGENT_SUB_AGENTS: Path = DEEP_AGENT_ROOT / "sub_agents_workspace" # Deprecated, keep for legacy
     DEEP_AGENT_TUTORIALS: Path = DEEP_AGENT_ROOT / "tutorials"
+    DEEP_AGENT_TUTORIAL_SUB_AGENTS: Path = DEEP_AGENT_ROOT / "sub_agents_tutorials"
     
     # --- Baseline Output Structure ---
     # data/baseline/
@@ -56,7 +58,7 @@ class Settings:
 
     # --- Rate Limiting ---
     RATE_LIMIT_WINDOW_SECONDS: float = 60.0
-    RATE_LIMIT_MAX_REQUESTS: int = 60
+    RATE_LIMIT_MAX_REQUESTS: int = 10
     RATE_LIMIT_MIN_INTERVAL: float = 2.0
 
 settings = Settings()

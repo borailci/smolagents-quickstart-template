@@ -4,7 +4,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Sequence
 from dotenv import load_dotenv
 from loguru import logger
 from smolagents import ToolCallingAgent
@@ -40,7 +40,7 @@ class KnowledgeBaseBuilder:
         logger.info("Starting knowledge base generation...")
         
         results = self.generate_with_supervisor(metrics=metrics)
-        if not results:
+        if not results and not self.dry_run:
             raise RuntimeError("Supervisor agent failed to generate any knowledge base files. Check the logs for details.")
         return results
 

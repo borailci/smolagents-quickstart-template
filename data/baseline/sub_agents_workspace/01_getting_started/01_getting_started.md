@@ -1,97 +1,91 @@
-# Getting Started with Deep Agents
+# Getting Started with Instructor
 
 ## 1. Goal
-In this tutorial, you will learn how to get started with `deepagents`, a simple yet powerful agent harness that provides capabilities like planning, filesystem access, and sub-agent delegation. By the end, you will have a working understanding of how to create and customize a deep agent, and how to utilize its built-in tools.
+In this tutorial, you will learn the basics of `instructor`, a library that simplifies getting reliable structured data from Large Language Models (LLMs). We will cover installation, basic usage with OpenAI, and a simple extraction example. By the end, you will be able to define a Pydantic model and use `instructor` to extract structured information from natural language.
 
 ## 2. Prerequisites
 - Python 3.9+
-- Basic understanding of large language models (LLMs) and agent concepts.
-- An API key for Tavily (for web search functionality) and optionally for Anthropic or OpenAI.
+- An OpenAI API key
+- Basic understanding of Pydantic and Python type hints.
 
 ## 3. Architecture
-Deep agents leverage LangGraph to create a `StateGraph` that orchestrates various components. The core idea is to provide an agent with a set of tools and the ability to plan and execute tasks, including delegating to specialized sub-agents. Middleware plays a crucial role in extending the agent's capabilities, such as managing a todo list or interacting with a filesystem.
-
+`instructor` acts as a wrapper around your LLM client, injecting the necessary logic to enforce structured outputs based on your Pydantic models. This diagram illustrates the flow:
 ```mermaid
-graph TD
-    User[User Input] --> A(Deep Agent)
-    A --> |Utilizes| B(LLM - e.g., Claude Sonnet)
-    A --> |Manages| C(StateGraph - LangGraph)
-    C --> |Orchestrates| D(Tools)
-    D --> D1[Built-in Tools: ls, read_file, write_file, execute, etc.]
-    D --> D2[Custom Tools: e.g., internet_search]
-    C --> |Extends via| E(Middleware)
-    E --> E1[TodoListMiddleware]
-    E --> E2[FilesystemMiddleware]
-    E --> E3[SubAgentMiddleware]
-    A --> |Delegates to| F(Sub-Agents)
-    F --> |With Isolated Context| G(Specialized Tasks)
+graph LR
+    A["User Prompt"] --> B("LLM Client (e.g., OpenAI)")
+    B --> C{"Instructor Patch"}
+    C --> D["Pydantic Model"]
+    D --> E{"Structured Output"}
+    E --> F["Your Application"]
 ```
 
-## 4. Step 1: Installation and Setup
-First, we need to install the `deepagents` library and any additional tools we plan to use, such as `tavily-python` for web search. We'll also set up our API keys.
-
+## 4. Step 1: Installation
+First, you need to install `instructor`. Open your terminal and run:
 ```bash
-pip install deepagents tavily-python
+pip install instructor openai pydantic
 ```
+We include `openai` and `pydantic` as they are common dependencies for using `instructor`.
 
-Next, set your API key for Tavily (and potentially Anthropic or OpenAI, depending on your chosen model) as environment variables. You can obtain a Tavily API key from [tavily.com](https://www.tavily.com/).
+## 5. Step 2: Basic Extraction
+Let's start by defining a simple Pydantic model to represent the data we want to extract. Then, we'll use `instructor` to get an instance of this model from a natural language input.
 
-```bash
-export TAVILY_API_KEY="your_tavily_api_key"
-# export ANTHROPIC_API_KEY="your_anthropic_api_key" # If using Anthropic models
-# export OPENAI_API_KEY="your_openai_api_key" # If using OpenAI models
-```
-
-## 5. Step 2: Creating Your First Deep Agent
-Now, let's create a basic deep agent. We will provide it with a custom tool for internet search and a system prompt that defines its role.
+First, create a file named `extraction_example.py` and add the following code:
 
 ```python
-import os
-from deepagents import create_deep_agent
-from tavily import TavilyClient # Ensure you have 'tavily-python' installed
+from pydantic import BaseModel
+import instructor
+import openai
 
-# Initialize Tavily client
-tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+# 1. Define your desired data structure using Pydantic
+class User(BaseModel):
+    name: str
+    age: int
 
-# Define a custom tool for internet search
-def internet_search(query: str, max_results: int = 5):
-    """Run a web search"""
-    return tavily_client.search(query, max_results=max_results)
+# 2. Patch the OpenAI client with instructor
+# This enables the `response_model` argument in `create` calls
+client = instructor.from_openai(openai.OpenAI())
 
-# Create the deep agent
-# The agent is configured with our custom internet_search tool.
-# The system_prompt guides the agent on its overall objective.
-agent = create_deep_agent(
-    tools=[internet_search],
-    system_prompt="Conduct research and write a polished report.",
+# 3. Use the patched client to extract structured data
+# We pass our Pydantic model to `response_model`
+user_data = client.chat.completions.create(
+    model="gpt-3.5-turbo",  # Or any other OpenAI model
+    response_model=User,
+    messages=[
+        {"role": "user", "content": "Extract the name and age of John Doe, who is 30 years old."}
+    ],
 )
 
-# Invoke the agent with a user query
-# The agent will use its tools and instructions to fulfill this request.
-result = agent.invoke({"messages": [{"role": "user", "content": "What is LangGraph?"}]})
-
-# Print the result
-print(result)
+# 4. Print the extracted data
+print(user_data)
+print(f"Name: {user_data.name}, Age: {user_data.age}")
 ```
 
-### Understanding `create_deep_agent`
+### Explanation:
+-   **`class User(BaseModel):`**: We define a Pydantic model `User` with `name` (string) and `age` (integer) fields. `instructor` uses this schema to guide the LLM's output.
+-   **`client = instructor.from_openai(openai.OpenAI())`**: This is the core step. `instructor.from_openai` takes an instance of `openai.OpenAI()` and "patches" it. This patch adds the `response_model` argument to the `chat.completions.create` method, allowing you to specify your Pydantic model.
+-   **`model="gpt-3.5-turbo"`**: We specify the LLM model to use. Ensure you have access to this model through your OpenAI API key.
+-   **`response_model=User`**: This is where `instructor` works its magic. It tells the LLM to generate output that conforms to the `User` Pydantic model. If the initial output doesn't conform, `instructor` will automatically retry, providing feedback to the LLM to correct its output until it matches the schema.
+-   The `messages` argument is standard for OpenAI chat completions, providing the context for the LLM to generate a response from.
 
-The `create_deep_agent` function is the entry point for configuring your agent. It takes several key parameters:
+## 6. Step 3: Run the Example
+Execute the `extraction_example.py` file from your terminal:
+```bash
+python extraction_example.py
+```
 
--   `model`: Specifies the underlying language model to use (defaults to Claude Sonnet 4). You can pass a `BaseChatModel` instance or a string identifier.
--   `tools`: A list of `BaseTool` instances or callables that the agent can use. In our example, we provided `internet_search`.
--   `system_prompt`: A string that provides high-level instructions and context to the agent. This prompt is *appended* to a set of default instructions that deep agents automatically inject, which include guidance on using built-in tools.
+You should see output similar to this:
+```
+name='John Doe' age=30
+Name: John Doe, Age: 30
+```
 
-Crucially, `create_deep_agent` returns a compiled `LangGraph StateGraph`. This means that deep agents are fully compatible with LangGraph's powerful features, such as streaming, human-in-the-loop workflows, memory management, and integration with LangChain's ecosystem.
+This demonstrates how `instructor` successfully extracted the `name` and `age` into a `User` object, with proper type casting and validation.
 
-### Built-in Tools
-Every deep agent comes with a standard set of powerful built-in tools, provided by default middleware. These tools significantly enhance the agent's capabilities right out of the box:
+## 7. Conclusion
+Congratulations! You've just built your first application using `instructor` to get structured output from an LLM. You learned how to:
+- Install `instructor` along with its dependencies.
+- Define a Pydantic model for structured data.
+- Patch the OpenAI client to enable `response_model`.
+- Extract data that adheres to your defined schema.
 
--   `write_todos`, `read_todos`: For managing structured task lists and tracking progress.
--   `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`: A comprehensive suite for filesystem operations, allowing the agent to read, write, and manipulate files. The `execute` tool allows running shell commands in a sandboxed environment.
--   `task`: This tool enables the agent to delegate complex parts of a task to specialized sub-agents with their own isolated contexts. This is key for breaking down large problems into manageable components.
-
-These tools are seamlessly integrated and explained to the agent through the default system prompts injected by the middleware.
-
-## 6. Conclusion
-You've successfully created your first deep agent, integrated a custom tool, and understood the core concepts behind `deepagents`. You've seen how `create_deep_agent` leverages LangGraph and provides a rich set of built-in tools to empower your agents. To further extend your agent's capabilities, explore customizing middleware, defining sub-agents for complex workflows, and configuring different backends for persistent storage or execution environments.
+`instructor` handles the complexities of schema enforcement, retries, and error handling, allowing you to focus on defining your data structures and application logic. From here, you can explore more advanced features like custom validation, streaming, and extracting nested objects, all of which are made simple with `instructor`.

@@ -1,389 +1,178 @@
-```mermaid
-graph TD
-    User[User Input] --> CLI_MAIN[main.py: cli_main()]
-    CLI_MAIN --> ParseArgs[main.py: parse_args()]
-
-    subgraph CLI Commands
-        ParseArgs -- "Special Commands" --> ListAgents[agent.py: list_agents()]
-        ParseArgs -- "Special Commands" --> ResetAgent[agent.py: reset_agent()]
-        ParseArgs -- "Special Commands" --> SkillsCmd[skills.py: execute_skills_command()]
-    end
-
-    ParseArgs -- "Interactive Mode" --> MainAsync[main.py: main()]
-    MainAsync -- "Create Model" --> CreateModel[config.py: create_model()]
-
-    subgraph Sandbox Management
-        MainAsync -- "Sandbox Type" --> CreateSandbox[sandbox_factory.py: create_sandbox()]
-        CreateSandbox -- "Sandbox Backend" --> RunAgentSession[main.py: _run_agent_session()]
-    end
-
-    MainAsync -- "No Sandbox" --> RunAgentSession
-    RunAgentSession -- "Create Agent" --> CreateCLIAgent[agent.py: create_cli_agent()]
-
-    subgraph Agent Creation (create_cli_agent)
-        CreateCLIAgent -- "Middleware Config" --> AgentMemoryMW[agent_memory.py: AgentMemoryMiddleware]
-        CreateCLIAgent -- "Middleware Config" --> SkillsMW[skills.py: SkillsMiddleware]
-        CreateCLIAgent -- "Middleware Config (Local Only)" --> ShellMW[shell.py: ShellMiddleware]
-        CreateCLIAgent -- "Backend Config" --> CompositeBackend[deepagents.backends: CompositeBackend]
-        CreateCLIAgent -- "Interrupt Config" --> InterruptOn[agent.py: _add_interrupt_on()]
-    end
-
-    CreateCLIAgent --> SimpleCLI[main.py: simple_cli()]
-    SimpleCLI --> PromptSession[input.py: create_prompt_session()]
-    PromptSession --> UserInput[User Input Field]
-    UserInput -- "Text" --> HandleCmd[commands.py: handle_command()]
-    UserInput -- "Text (!bash)" --> ExecuteBash[commands.py: execute_bash_command()]
-    HandleCmd -- "Agent Input" --> ExecuteTask[execution.py: execute_task()]
-    ExecuteBash -- "Agent Input" --> ExecuteTask
-
-    subgraph Task Execution (execute_task)
-        ExecuteTask -- "Stream Agent Response" --> AgentStream[Agent.astream()]
-        AgentStream -- "Tool Call Chunks/Messages" --> DisplayTool[execution.py]
-        AgentStream -- "Interrupt" --> PromptApproval[execution.py: prompt_for_tool_approval()]
-        PromptApproval -- "User Decision" --> AgentStream[Resume Agent]
-        AgentStream -- "Text/Markdown" --> ConsoleOutput[Console Output]
-        AgentStream -- "Todos" --> RenderTodoList[ui.py]
-        AgentStream -- "File Operations" --> RenderFileOp[ui.py]
-    end
-
-    DisplayTool --> ConsoleOutput
-    RenderTodoList --> ConsoleOutput
-    RenderFileOp --> ConsoleOutput
-
-    AgentStream -- "Final Response" --> ConsoleOutput
-```
-
-# deepagents_cli_core Analysis
+```markdown
+# Batch Processing Analysis
 
 ## 1. Overview
-This module provides the core command-line interface (CLI) for DeepAgents, an AI coding assistant. It handles agent creation, lifecycle management, user interaction, command parsing, and task execution, including support for remote sandbox environments. The CLI allows users to interact with AI agents, manage their memory and skills, and execute code either locally or in a remote sandbox with human-in-the-loop approval for sensitive operations.
+This document details the batch processing capabilities within the `instructor` library, focusing on how it provides a unified interface for interacting with different Large Language Model (LLM) providers like OpenAI and Anthropic. The system abstracts away provider-specific details, allowing users to define batch requests and process results consistently. It covers batch request creation, submission, status monitoring, result retrieval, and error handling.
 
 ## 2. File-by-File Analysis
 
-### `libs/deepagents-cli/deepagents_cli/main.py`
-- **Purpose**: This file serves as the primary entry point for the `deepagents-cli` application. It sets up the argument parser, handles CLI commands like `list`, `reset`, and `skills`, and orchestrates the main interactive CLI loop (`simple_cli`). It also manages sandbox creation and dependency checks.
+### `instructor/batch/processor.py`
+- **Purpose**: This module contains the `BatchProcessor` class, which serves as the central component for managing batch operations across various LLM providers. It handles the lifecycle of a batch job from creation to result retrieval.
 - **Key Components**:
-  - `check_cli_dependencies()`: Verifies that all necessary optional Python packages for the CLI are installed.
-  - `parse_args()`: Configures and parses command-line arguments, including subcommands for agent management and options for sandbox and auto-approval.
-  - `simple_cli()`: The main asynchronous CLI loop that handles user input, processes slash commands, executes bash commands, and delegates tasks to the AI agent. It also manages the display of agent output, token tracking, and sandbox information.
-  - `_run_agent_session()`: A helper function that creates the AI agent with appropriate tools and middleware, calculates baseline tokens, and then invokes `simple_cli`.
-  - `main()`: The asynchronous main function that initializes the LLM model, handles conditional sandbox creation (Modal, Daytona, Runloop), and calls `_run_agent_session`.
-  - `cli_main()`: The synchronous entry point that calls `parse_args` and then `asyncio.run(main())` to start the asynchronous CLI.
+  - `BatchProcessor(Generic[T])`:
+    - `__init__(self, model: str, response_model: type[T])`: Initializes the processor with a model string (e.g., "openai/gpt-4") and a Pydantic `response_model` for structured output. It parses the provider name and model name from the input string and retrieves the appropriate provider-specific handler.
+    - `create_batch_from_messages(...)`: Generates a batch request file or an in-memory buffer from a list of message conversations. It serializes each conversation into a provider-specific format.
+    - `submit_batch(...)`: Submits the prepared batch file or buffer to the respective LLM provider, returning a job ID.
+    - `get_batch_status(self, batch_id: str)`: Retrieves the current status of a batch job.
+    - `retrieve_results(self, batch_id: str)`: Fetches raw batch results from the provider and initiates parsing.
+    - `list_batches(self, limit: int = 10)`: Lists active or recent batch jobs.
+    - `get_results(self, batch_id: str, file_path: str | None = None)`: Retrieves parsed batch results, with an option to save raw results to a file.
+    - `cancel_batch(self, batch_id: str)`: Cancels a running batch job.
+    - `delete_batch(self, batch_id: str)`: Deletes a completed batch job.
+    - `parse_results(self, results_content: str) -> list[BatchResult]`: Parses the raw results content (line-delimited JSON) into a list of `BatchResult` objects, which can be either `BatchSuccess[T]` or `BatchError`.
+    - `_extract_from_response(self, data: dict[str, Any]) -> dict[str, Any] | None`: Internal helper method to extract structured data from provider-specific response formats (OpenAI and Anthropic).
 
-### `libs/deepagents-cli/deepagents_cli/agent.py`
-- **Purpose**: This module is responsible for the creation, listing, and resetting of DeepAgents. It integrates with the `deepagents` library to construct the agent graph and configure its various middleware components, such as memory, skills, and shell execution, adapting to local or remote sandbox environments.
+### `instructor/batch/models.py`
+- **Purpose**: Defines the data models (Pydantic classes, enums, and type aliases) used throughout the batch processing system to ensure consistent data structures and type safety.
 - **Key Components**:
-  - `list_agents()`: Displays a list of all configured agents by iterating through the user's DeepAgents directory.
-  - `reset_agent()`: Deletes an agent's directory and re-initializes its `agent.md` with either default instructions or content copied from another agent.
-  - `get_system_prompt()`: Generates the base system prompt for the agent, dynamically including information about the current working directory, skills directory, and guidelines for human-in-the-loop approval, web search, and todo list management. This prompt adapts based on whether a remote sandbox is being used.
-  - `_format_*_description()` functions: These private helper functions are used to format descriptions of various tool calls (e.g., `write_file`, `shell`, `web_search`) for human-in-the-loop approval prompts, providing clear summaries of the actions to be taken.
-  - `_add_interrupt_on()`: Configures the `InterruptOnConfig` settings for `langchain.agents.middleware`, defining which tools require human approval and how their descriptions should be formatted.
-  - `create_cli_agent()`: The core function for instantiating an AI agent. It sets up the `CompositeBackend` (for local filesystem or remote sandbox), adds various middleware (AgentMemoryMiddleware, SkillsMiddleware, ShellMiddleware), and constructs a `langgraph.pregel.Pregel` agent graph with a `InMemorySaver` for checkpointing.
+  - `T = TypeVar("T", bound=BaseModel)`: Generic type variable for response models.
+  - `BatchSuccess(BaseModel, Generic[T])`: Represents a successful batch result, holding the `custom_id` and the parsed `result` of type `T`.
+  - `BatchError(BaseModel)`: Encapsulates error information for failed batch requests, including `custom_id`, `error_type`, `error_message`, and `raw_data`.
+  - `BatchStatus(str, Enum)`: Standardized enum for batch job statuses (e.g., PENDING, COMPLETED, FAILED).
+  - `BatchTimestamps(BaseModel)`: Comprehensive model for tracking various timestamps of a batch job (creation, start, completion, etc.).
+  - `BatchRequestCounts(BaseModel)`: Unifies request count metrics across different providers, including total, completed, failed, processing, succeeded, and errored counts.
+  - `BatchErrorInfo(BaseModel)`: Provides structured error details at the batch job level.
+  - `BatchFiles(BaseModel)`: Stores references to input, output, and error files associated with a batch job.
+  - `BatchJobInfo(BaseModel)`: A comprehensive model that normalizes batch job information retrieved from various providers. It includes methods (`from_openai`, `from_anthropic`) to construct instances from provider-specific raw data.
+  - `BatchResult: TypeAlias = Union[BatchSuccess[T], BatchError]`: A type alias representing the possible outcomes of a single batch request.
 
-### `libs/deepagents-cli/deepagents_cli/agent_memory.py`
-- **Purpose**: This module defines the `AgentMemoryMiddleware`, which is responsible for loading and injecting agent-specific long-term memory into the system prompt. It supports both user-specific and project-specific memory, enabling the agent to retain context across sessions and projects.
+### `instructor/batch/request.py`
+- **Purpose**: Defines the `BatchRequest` model and utilities for converting batch requests into provider-specific formats, specifically generating JSON schemas for structured outputs.
 - **Key Components**:
-  - `AgentMemoryState` (TypedDict): Defines the structure for the agent's memory state, including `user_memory` and `project_memory`.
-  - `AgentMemoryStateUpdate` (TypedDict): Defines the structure for updating the agent's memory state.
-  - `LONGTERM_MEMORY_SYSTEM_PROMPT`: A multi-line string constant that provides detailed instructions to the agent on how to manage, read, and update its long-term memory, distinguishing between user and project-level memory files (`agent.md`). It also guides the agent on when to check memories and how to decide where to store different types of information.
-  - `DEFAULT_MEMORY_SNIPPET`: A format string used to embed the user and project memory content into the system prompt.
-  - `AgentMemoryMiddleware` (class):
-    - `__init__()`: Initializes the middleware with settings, agent ID, and an optional system prompt template. It also sets up paths for user and project memory directories.
-    - `before_agent()`: This method is called before agent execution. It loads `user_memory` and `project_memory` from `agent.md` files (if they exist and are not already in the state) and returns an `AgentMemoryStateUpdate`.
-    - `_build_system_prompt()`: Constructs the complete system prompt by combining the base system prompt with the loaded user and project memories, and the `LONGTERM_MEMORY_SYSTEM_PROMPT` documentation.
-    - `wrap_model_call()` and `awrap_model_call()`: These methods intercept model calls to inject the augmented system prompt (containing memory information) before the request is sent to the LLM.
-
-### `libs/deepagents-cli/deepagents_cli/commands.py`
-- **Purpose**: This module provides handlers for various slash commands (e.g., `/clear`, `/help`, `/tokens`, `/quit`) and allows for the execution of arbitrary bash commands prefixed with `!`. It directly manipulates the agent's state (e.g., clearing conversation history) or interacts with the operating system.
-- **Key Components**:
-  - `handle_command()`: Processes slash commands entered by the user. It can reset the agent's conversation state (`/clear`), display help (`/help`), show token usage (`/tokens`), or exit the CLI (`/quit`).
-  - `execute_bash_command()`: Executes a given bash command using `subprocess.run` and displays its stdout, stderr, and return code to the console.
-
-### `libs/deepagents-cli/deepagents_cli/execution.py`
-- **Purpose**: This module is central to the interactive operation of the CLI, handling the streaming of agent responses, human-in-the-loop (HITL) tool approval, and dynamic UI updates (like todo lists and file operations). It manages the complex interplay between the AI agent and the user interface during task execution.
-- **Key Components**:
-  - `prompt_for_tool_approval()`: Presents a rich, interactive prompt to the user for approving or rejecting tool actions. It displays a formatted description of the action, including diffs for file operations, and allows navigation via arrow keys.
-  - `execute_task()`: The core asynchronous function for executing a user's task. It handles:
-    - Parsing file mentions in the user input to inject file content as context.
-    - Streaming agent responses and updates from `agent.astream` (messages, tool calls, reasoning blocks, todo list updates).
-    - Managing the display of a spinning status indicator (`console.status`).
-    - Buffering and flushing text content to render markdown.
-    - Tracking and displaying file operations (`FileOpTracker`).
-    - Handling `__interrupt__` events from the agent, which trigger HITL approval prompts via `prompt_for_tool_approval()`.
-    - Managing `auto_approve` functionality, where tool calls are automatically approved without user interaction.
-    - Gracefully handling `KeyboardInterrupt` and `asyncio.CancelledError` for user-initiated interruptions.
+  - `Function(BaseModel)`: Defines the structure for a function in the context of tool calls, including `name`, `description`, and `parameters`.
+  - `Tool(BaseModel)`: Represents a tool used in a batch request, typically containing a `function`.
+  - `RequestBody(BaseModel)`: The core request body for an LLM call, including `model`, `messages`, `max_tokens`, `temperature`, `tools`, and `tool_choice`.
+  - `BatchModel(BaseModel)`: A high-level representation of a batch item, combining `custom_id`, `body` (RequestBody), `url`, and `method`.
+  - `BatchRequest(BaseModel, Generic[T])`:
+    - `__init__(...)`: Initializes a batch request with `custom_id`, `messages`, a Pydantic `response_model`, `model`, `max_tokens`, and `temperature`.
+    - `get_json_schema(self) -> dict[str, Any]`: Generates the JSON schema from the `response_model`.
+    - `to_openai_format(self) -> dict[str, Any]`: Converts the `BatchRequest` into the specific format required by OpenAI's batch API, including a strict JSON schema for the response format.
+    - `to_anthropic_format(self) -> dict[str, Any]`: Converts the `BatchRequest` into the format for Anthropic's batch API, handling system messages and generating a tool call for structured extraction.
+    - `save_to_file(self, file_path_or_buffer: str | io.BytesIO, provider: str)`: Saves the batch request to a file or BytesIO buffer in the appropriate provider-specific JSONL format.
 
 ## 3. Architecture & Data Flow
+The batch processing system is designed to provide a unified abstraction over different LLM providers. The `BatchProcessor` acts as an orchestrator, utilizing `BatchRequest` to format requests and `BatchJobInfo`, `BatchSuccess`, and `BatchError` from `models.py` to handle and normalize responses.
 
 ```mermaid
 graph TD
-    User[User Input] --> CLI_MAIN[main.py: cli_main()]
-    CLI_MAIN --> ParseArgs[main.py: parse_args()]
-
-    subgraph CLI Commands
-        ParseArgs -- "Special Commands" --> ListAgents[agent.py: list_agents()]
-        ParseArgs -- "Special Commands" --> ResetAgent[agent.py: reset_agent()]
-        ParseArgs -- "Special Commands" --> SkillsCmd[skills.py: execute_skills_command()]
-    end
-
-    ParseArgs -- "Interactive Mode" --> MainAsync[main.py: main()]
-    MainAsync -- "Create Model" --> CreateModel[config.py: create_model()]
-
-    subgraph Sandbox Management
-        MainAsync -- "Sandbox Type" --> CreateSandbox[sandbox_factory.py: create_sandbox()]
-        CreateSandbox -- "Sandbox Backend" --> RunAgentSession[main.py: _run_agent_session()]
-    end
-
-    MainAsync -- "No Sandbox" --> RunAgentSession
-    RunAgentSession -- "Create Agent" --> CreateCLIAgent[agent.py: create_cli_agent()]
-
-    subgraph Agent Creation (create_cli_agent)
-        CreateCLIAgent -- "Middleware Config" --> AgentMemoryMW[agent_memory.py: AgentMemoryMiddleware]
-        CreateCLIAgent -- "Middleware Config" --> SkillsMW[skills.py: SkillsMiddleware]
-        CreateCLIAgent -- "Middleware Config (Local Only)" --> ShellMW[shell.py: ShellMiddleware]
-        CreateCLIAgent -- "Backend Config" --> CompositeBackend[deepagents.backends: CompositeBackend]
-        CreateCLIAgent -- "Interrupt Config" --> InterruptOn[agent.py: _add_interrupt_on()]
-    end
-
-    CreateCLIAgent --> SimpleCLI[main.py: simple_cli()]
-    SimpleCLI --> PromptSession[input.py: create_prompt_session()]
-    PromptSession --> UserInput[User Input Field]
-    UserInput -- "Text" --> HandleCmd[commands.py: handle_command()]
-    UserInput -- "Text (!bash)" --> ExecuteBash[commands.py: execute_bash_command()]
-    HandleCmd -- "Agent Input" --> ExecuteTask[execution.py: execute_task()]
-    ExecuteBash -- "Agent Input" --> ExecuteTask
-
-    subgraph Task Execution (execute_task)
-        ExecuteTask -- "Stream Agent Response" --> AgentStream[Agent.astream()]
-        AgentStream -- "Tool Call Chunks/Messages" --> DisplayTool[execution.py]
-        AgentStream -- "Interrupt" --> PromptApproval[execution.py: prompt_for_tool_approval()]
-        PromptApproval -- "User Decision" --> AgentStream[Resume Agent]
-        AgentStream -- "Text/Markdown" --> ConsoleOutput[Console Output]
-        AgentStream -- "Todos" --> RenderTodoList[ui.py]
-        AgentStream -- "File Operations" --> RenderFileOp[ui.py]
-    end
-
-    DisplayTool --> ConsoleOutput
-    RenderTodoList --> ConsoleOutput
-    RenderFileOp --> ConsoleOutput
-
-    AgentStream -- "Final Response" --> ConsoleOutput
+    A[User/Application] -- Creates BatchProcessor --> B(BatchProcessor)
+    B -- Defines response_model, messages --> C{BatchRequest}
+    C -- get_json_schema() --> D[JSON Schema]
+    C -- to_openai_format() OR to_anthropic_format() --> E[Provider-specific JSONL]
+    B -- create_batch_from_messages() --> E
+    E -- submit_batch() --> F(LLM Provider API)
+    F -- Returns Batch Job ID --> B
+    B -- get_batch_status(batch_id) --> F
+    F -- Returns Raw Status/Results --> B
+    B -- parse_results() --> G{BatchResult: BatchSuccess[T] or BatchError}
+    B -- retrieve_results(batch_id) --> G
+    G -- Consumed by --> A
 ```
+
+**Data Flow Explanation:**
+1.  The **User/Application** initializes `BatchProcessor` with a specific LLM model (e.g., "openai/gpt-4") and a Pydantic `response_model` that defines the desired output structure.
+2.  `BatchProcessor` then uses `BatchRequest` internally to construct individual requests. `BatchRequest` is responsible for generating the appropriate JSON schema from the `response_model`.
+3.  `BatchRequest` converts these into provider-specific JSONL formats (e.g., `to_openai_format`, `to_anthropic_format`).
+4.  The `create_batch_from_messages` method in `BatchProcessor` generates a file (or `BytesIO` buffer) containing these formatted requests.
+5.  `submit_batch` sends this file/buffer to the respective **LLM Provider API**.
+6.  The **LLM Provider API** returns a `Batch Job ID`.
+7.  The `BatchProcessor` can then query the job status using `get_batch_status` and eventually retrieve the raw results via `retrieve_results`.
+8.  The raw results, typically in a line-delimited JSON format, are then parsed by `BatchProcessor`'s `parse_results` method into a list of `BatchResult` objects (`BatchSuccess[T]` for successful extractions or `BatchError` for failures).
+9.  Finally, these structured `BatchResult` objects are consumed by the **User/Application**.
 
 ## 4. Code Deep Dive
 
-### `libs/deepagents-cli/deepagents_cli/main.py` - `simple_cli` loop (excerpt)
-This snippet illustrates the core interactive loop, handling user input, command dispatch, and task execution.
+### `BatchProcessor._extract_from_response` Method
+This method is crucial for abstracting provider-specific response structures into a unified format. It demonstrates how to handle variations in LLM API outputs.
+
 ```python
-async def simple_cli(
-    agent,
-    assistant_id: str | None,
-    session_state,
-    baseline_tokens: int = 0,
-    backend=None,
-    sandbox_type: str | None = None,
-    setup_script_path: str | None = None,
-    no_splash: bool = False,
-) -> None:
-    # ... (initialization and splash screen)
-
-    while True:
+    def _extract_from_response(self, data: dict[str, Any]) -> dict[str, Any] | None:
         try:
-            user_input = await session.prompt_async()
-            # ... (exit hint handling)
-            user_input = user_input.strip()
-        except EOFError:
-            break
-        except KeyboardInterrupt:
-            console.print(
-                "\nGoodbye!", style=COLORS["primary"]
-            )
-            break
+            if self.provider_name == "openai":
+                content = data["response"]["body"]["choices"][0]["message"]["content"]
+                return json.loads(content)
 
-        if not user_input:
-            continue
+            elif self.provider_name == "anthropic":
+                if "result" not in data:
+                    return None
+                result = data["result"]
+                if result.get("type") == "error":
+                    return None
+                if result.get("type") == "succeeded" and "message" in result:
+                    content = result["message"]["content"]
+                    if isinstance(content, list) and len(content) > 0:
+                        for item in content:
+                            if item.get("type") == "tool_use":
+                                return item.get("input", {})
+                        for item in content:
+                            if item.get("type") == "text":
+                                text = item.get("text", "")
+                                try:
+                                    return json.loads(text)
+                                except json.JSONDecodeError:
+                                    continue
+                return None
 
-        # Check for slash commands first
-        if user_input.startswith("/ commenced "):
-            result = handle_command(user_input, agent, token_tracker)
-            if result == "exit":
-                console.print(
-                    "\nGoodbye!", style=COLORS["primary"]
-                )
-                break
-            if result:
-                # Command was handled, continue to next input
-                continue
-
-        # Check for bash commands (!)
-        if user_input.startswith("!"):
-            execute_bash_command(user_input)
-            continue
-
-        # Handle regular quit keywords
-        if user_input.lower() in ["quit", "exit", "q"]:
-            console.print(
-                "\nGoodbye!", style=COLORS["primary"]
-            )
-            break
-
-        await execute_task(
-            user_input, agent, assistant_id, session_state, token_tracker, backend=backend
-        )
+        except Exception:
+            return None
+        return None
 ```
 
-### `libs/deepagents-cli/deepagents_cli/agent_memory.py` - `AgentMemoryMiddleware` `wrap_model_call` (excerpt)
-This shows how the `AgentMemoryMiddleware` dynamically modifies the system prompt to include long-term memory before the LLM call.
+### `BatchRequest.to_openai_format` Method
+This method exemplifies how the system converts a generic batch request into an OpenAI-specific format, including the generation of a strict JSON schema for the response.
+
 ```python
-class AgentMemoryMiddleware(AgentMiddleware):
-    # ... (other methods)
+    def to_openai_format(self) -> dict[str, Any]:
+        schema = self.get_json_schema()
 
-    def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
-        system_prompt = self._build_system_prompt(request)
-        return handler(request.override(system_prompt=system_prompt))
+        def make_strict_schema(schema_dict):
+            if isinstance(schema_dict, dict):
+                if "type" in schema_dict:
+                    if schema_dict["type"] == "object":
+                        schema_dict["additionalProperties"] = False
+                    elif schema_dict["type"] == "array" and "items" in schema_dict:
+                        schema_dict["items"] = make_strict_schema(schema_dict["items"])
 
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-        system_prompt = self._build_system_prompt(request)
-        return await handler(request.override(system_prompt=system_prompt))
-```
+                if "properties" in schema_dict:
+                    for prop_name, prop_schema in schema_dict["properties"].items():
+                        schema_dict["properties"][prop_name] = make_strict_schema(
+                            prop_schema
+                        )
 
-### `libs/deepagents-cli/deepagents_cli/execution.py` - `prompt_for_tool_approval` (excerpt)
-This is a critical section for human-in-the-loop interaction, displaying a rich prompt and capturing user decisions for tool execution.
-```python
-def prompt_for_tool_approval(
-    action_request: ActionRequest,
-    assistant_id: str | None,
-) -> Decision | dict:
-    description = action_request.get("description", "No description available")
-    name = action_request["name"]
-    args = action_request["args"]
-    preview = build_approval_preview(name, args, assistant_id) if name else None
+                for key in ["definitions", "$defs"]:
+                    if key in schema_dict:
+                        for def_name, def_schema in schema_dict[key].items():
+                            schema_dict[key][def_name] = make_strict_schema(def_schema)
 
-    body_lines = []
-    if preview:
-        body_lines.append(f"[bold]{preview.title}[/bold]")
-        body_lines.extend(preview.details)
-        if preview.error:
-            body_lines.append(f"[red]{preview.error}[/red]")
-    else:
-        body_lines.append(description)
+            return schema_dict
 
-    console.print(
-        Panel(
-            "[bold yellow]⚠️  Tool Action Requires Approval[/bold yellow]\n\n"
-            + "\n".join(body_lines),
-            border_style="yellow",
-            box=box.ROUNDED,
-            padding=(0, 1),
-        )
-    )
-    if preview and preview.diff and not preview.error:
-        console.print()
-        render_diff_block(preview.diff, preview.diff_title or preview.title)
+        strict_schema = make_strict_schema(schema.copy())
 
-    options = ["approve", "reject", "auto-accept all going forward"]
-    selected = 0  # Start with approve selected
-
-    try:
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-
-        try:
-            tty.setraw(fd)
-            sys.stdout.write("\033[?25l")  # Hide cursor
-            sys.stdout.flush()
-
-            first_render = True
-
-            while True:
-                if not first_render:
-                    sys.stdout.write("\033[3A\r")  # Move cursor up
-
-                first_render = False
-
-                for i, option in enumerate(options):
-                    sys.stdout.write("\r\033[K")  # Clear line
-
-                    if i == selected:
-                        sys.stdout.write(f"[bold green]> {option} [/bold green]")
-                    else:
-                        sys.stdout.write(f"  {option}")
-
-                sys.stdout.flush()
-
-                char = sys.stdin.read(1)
-
-                if char == "\x1b":  # ESC sequence (arrow keys)
-                    next1 = sys.stdin.read(1)
-                    next2 = sys.stdin.read(1)
-                    if next1 == "[":
-                        if next2 == "B":  # Down arrow
-                            selected = (selected + 1) % len(options)
-                        elif next2 == "A":  # Up arrow
-                            selected = (selected - 1) % len(options)
-                elif char in {"\r", "\n"}:  # Enter
-                    sys.stdout.write("\r\n")
-                    break
-                elif char == "\x03":  # Ctrl+C
-                    sys.stdout.write("\r\n")
-                    raise KeyboardInterrupt
-                elif char.lower() == "a":
-                    selected = 0
-                    sys.stdout.write("\r\n")
-                    break
-                elif char.lower() == "r":
-                    selected = 1
-                    sys.stdout.write("\r\n")
-                    break
-
-        finally:
-            sys.stdout.write("\033[?25h")  # Show cursor
-            sys.stdout.flush()
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-
-    except (termios.error, AttributeError):
-        # Fallback for non-Unix systems
-        console.print(
-            "\n[bold yellow]⚠️  Tool Action Requires Approval[/bold yellow]"
-        )
-        choice = console.input("[bold]Approve? (y/n/a - yes/no/auto-approve all): [/bold]").lower()
-        if choice == "y":
-            selected = 0
-        elif choice == "n":
-            selected = 1
-        elif choice == "a":
-            selected = 2
-        else:
-            console.print("[red]Invalid choice. Rejecting by default.[/red]")
-            selected = 1
-
-    # Return decision based on selection
-    if selected == 0:
-        return ApproveDecision(type="approve")
-    if selected == 1:
-        return RejectDecision(type="reject", message="User rejected the command")
-    return {"type": "auto_approve_all"}
-
+        return {
+            "custom_id": self.custom_id,
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": {
+                "model": self.model,
+                "messages": self.messages,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": self.response_model.__name__,
+                        "strict": True,
+                        "schema": strict_schema,
+                    },
+                },
+            },
+        }
 ```
 
 ## 5. Integration Points
 - **Dependencies**:
-  - `main.py` depends on `deepagents.backends.protocol`, `deepagents_cli.agent`, `deepagents_cli.commands`, `deepagents_cli.config`, `deepagents_cli.execution`, `deepagents_cli.input`, `deepagents_cli.integrations.sandbox_factory`, `deepagents_cli.skills`, `deepagents_cli.tools`, and `deepagents_cli.ui`.
-  - `agent.py` depends on `deepagents`, `deepagents.backends`, `langchain.agents.middleware`, `langchain_core.language_models`, `langgraph.checkpoint.memory`, `langgraph.pregel`, `langgraph.runtime`, `deepagents_cli.agent_memory`, `deepagents_cli.config`, `deepagents_cli.integrations.sandbox_factory`, `deepagents_cli.shell`, and `deepagents_cli.skills`.
-  - `agent_memory.py` depends on `langchain.agents.middleware`, `langgraph.runtime`, and `deepagents_cli.config`.
-  - `commands.py` depends on `langgraph.checkpoint.memory`, `deepagents_cli.config`, and `deepagents_cli.ui`.
-  - `execution.py` depends on `langchain.agents.middleware.human_in_the_loop`, `langchain_core.messages`, `langgraph.types`, `pydantic`, `rich`, `rich.markdown`, `rich.panel`, `deepagents_cli.config`, `deepagents_cli.file_ops`, `deepagents_cli.input`, and `deepagents_cli.ui`.
-- **Dependents**:
-  - `main.py` is the entry point for the entire CLI application.
-  - `agent.py`'s `create_cli_agent` is a core function called by `main.py` to set up the agent.
-  - `agent_memory.py`'s `AgentMemoryMiddleware` is used by `agent.py` when constructing the agent.
-  - `commands.py`'s `handle_command` and `execute_bash_command` are called by `main.py` during the interactive loop.
-  - `execution.py`'s `execute_task` is called by `main.py` to run agent tasks, and `prompt_for_tool_approval` is used by `execute_task` for HITL.
+    - `instructor/batch/processor.py` depends on `instructor.batch.models` and `instructor.batch.request` for data structures and request formatting, and `instructor.batch.providers` (implicitly via `get_provider`) for provider-specific API interactions.
+    - `instructor/batch/models.py` depends on `pydantic` for data modeling, `datetime` for timestamp handling, and `enum` for status enums.
+    - `instructor/batch/request.py` depends on `instructor.batch.models` for the generic type `T` and `pydantic` for request body modeling.
+- **Dependents**: The `BatchProcessor` class is designed to be used by any application or service that needs to perform structured batch processing with LLMs, abstracting the underlying provider APIs. Components wishing to define structured outputs would create Pydantic models that are then passed as `response_model` to the `BatchProcessor`.
+```

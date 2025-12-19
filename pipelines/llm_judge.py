@@ -52,8 +52,8 @@ JUDGE_MODELS = [
 CRITERIA = ["accuracy", "completeness", "clarity", "structure", "diagrams"]
 
 # Truncation limits
-MAX_TUTORIAL_CHARS = 15000
-MAX_CODEBASE_CONTEXT_CHARS = 8000
+MAX_TUTORIAL_CHARS = 50000
+MAX_CODEBASE_CONTEXT_CHARS = 50000
 
 
 EVALUATION_PROMPT = """You are an expert technical documentation reviewer. Evaluate this tutorial for a software codebase.
@@ -212,79 +212,88 @@ def evaluate_series(model_id: str, codebase_context: str, baseline_paths: List[P
     
     model = create_model(model_id=model_id)
     
+    # Step callback to add delay between steps
+    import time as time_module
+    def step_delay_callback(step_log):
+        time_module.sleep(2)  # 2 second delay between steps
+    
     agent = CodeAgent(
         tools=tools,
         model=model,
         add_base_tools=True, # Allow python helpers
-        max_steps=12 # Allow 12 steps of exploration
+        max_steps=12, # Allow 12 steps of exploration
+        step_callbacks=[step_delay_callback],
     )
 
-    try:
-        response = agent.run(prompt)
-        
-        # Cleanup
-        if eval_root.exists(): shutil.rmtree(eval_root)
-        
-        # If agent uses final_answer(dict), response is the dict!
-        if isinstance(response, dict):
-            response["file_name"] = "Comparison (Agentic)"
-            response["model"] = model_id
-            return response
-            
-        content = str(response)
-        
-        # Parse JSON from Agent Answer
-        content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE).strip()
-        content = re.sub(r"\s*```$", "", content).strip()
-        
-        # Simple cleanup
-        content = re.sub(r",\s*\}", "}", content)
-        content = re.sub(r",\s*\]", "]", content)
-
+    max_retries = 10
+    retry_delay = 5  # Start with 5 seconds
+    
+    for attempt in range(max_retries):
         try:
-            data = json.loads(content)
-            data["file_name"] = "Comparison (Agentic)"
-            data["model"] = model_id
-            return data
-        except json.JSONDecodeError:
-             # Try regex for brace block
-             match = re.search(r"(\{.*\})", content, flags=re.DOTALL)
-             if match:
-                 block = match.group(1)
-                 # Try fixing trailing commas
-                 fixed = re.sub(r",\s*\}", "}", block)
-                 fixed = re.sub(r",\s*\]", "]", fixed)
-                 try:
-                    data = json.loads(fixed)
+            response = agent.run(prompt)
+            
+            # Cleanup
+            if eval_root.exists(): shutil.rmtree(eval_root)
+            
+            # If agent uses final_answer(dict), response is the dict!
+            if isinstance(response, dict):
+                response["file_name"] = "Comparison (Agentic)"
+                response["model"] = model_id
+                return response
+            
+            # Try to parse result from agent content
+            content = str(response)
+            
+            # Try JSON parse
+            import json
+            try:
+                data = json.loads(content)
+                if isinstance(data, dict):
                     data["file_name"] = "Comparison (Agentic)"
                     data["model"] = model_id
                     return data
-                 except: 
-                    # Try AST for single quoted dicts
-                    try:
-                        import ast
-                        data = ast.literal_eval(block)
-                        if isinstance(data, dict):
-                             data["file_name"] = "Comparison (Agentic)"
-                             data["model"] = model_id
-                             return data
-                    except: pass
+            except: pass
+            
+            # Try to find JSON in the content
+            json_pattern = r'\{[^{}]*"winner"[^{}]*\}'
+            import re
+            match = re.search(json_pattern, content, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group(0))
+                    if isinstance(data, dict):
+                        data["file_name"] = "Comparison (Agentic)"
+                        data["model"] = model_id
+                        return data
+                except: pass
 
-             # Try AST on raw content?
-             try:
+            # Try AST on raw content?
+            try:
                 import ast
                 data = ast.literal_eval(content)
                 if isinstance(data, dict):
-                     data["file_name"] = "Comparison (Agentic)"
-                     data["model"] = model_id
-                     return data
-             except: pass
-             
-             return {"file_name": "Comparison", "model": model_id, "winner": "Error", "rationale": f"JSON parse error: {content[:200]}"}
+                    data["file_name"] = "Comparison (Agentic)"
+                    data["model"] = model_id
+                    return data
+            except: pass
             
-    except Exception as e:
-        logger.error(f"Agentic comparison failed: {e}")
-        return {"file_name": "Comparison", "model": model_id, "winner": "Error", "rationale": str(e)}
+            return {"file_name": "Comparison", "model": model_id, "winner": "Error", "rationale": f"JSON parse error: {content[:200]}"}
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            is_rate_limit = "429" in error_str or "rate" in error_str or "resource_exhausted" in error_str
+            
+            if is_rate_limit and attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(f"Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})...")
+                import time
+                time.sleep(wait_time)
+                continue
+            
+            logger.error(f"Agentic comparison failed: {e}")
+            # Cleanup on error
+            if eval_root.exists(): shutil.rmtree(eval_root)
+            return {"file_name": "Comparison", "model": model_id, "winner": "Error", "rationale": str(e)}
 
 
 def evaluate_pair(model_id: str, file_name: str, codebase_context: str, path_a: Path, path_b: Path) -> dict | None:

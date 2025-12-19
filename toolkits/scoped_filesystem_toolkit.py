@@ -12,6 +12,7 @@ from smolagents import Tool
 
 
 # Inlined from utils.path_utils and utils.constants
+import ast
 IGNORED_DIRS = {
     "__pycache__", ".git", ".idea", ".vscode", "node_modules", "venv", ".venv",
     "site-packages", "dist", "build", ".DS_Store", "docs", "tests", "examples",
@@ -50,12 +51,25 @@ def resolve_within_root(root: Path, path: str | Path) -> Path:
 
 from config import settings
 
-__all__ = ["build_scoped_tools", "ensure_directory", "resolve_within_root", "IGNORED_DIRS"]
+__all__ = [
+    "build_scoped_tools",
+    "ensure_directory",
+    "resolve_within_root",
+    "IGNORED_DIRS",
+    # Tool classes (used by supervisor_toolkit.py)
+    "ReadCodebaseFileTool",
+    "ListCodebaseDirectoryTool",
+    "WriteWorkspaceFileTool",
+    "GetCodebaseTreeTool",
+    "GetDirectoryMermaidTool",
+    "ReadPythonStructureTool",
+]
 
 # Use centralized config for limits
 MAX_READ_LINES = settings.MAX_READ_LINES
 MAX_TREE_DEPTH = settings.MAX_TREE_DEPTH
 MAX_TREE_ITEMS = settings.MAX_TREE_ITEMS
+MIN_WRITE_CHARS = settings.MIN_WRITE_CHARS
 
 
 def _read_text_file_truncated(path: Path, start_line: int = 1, max_lines: int = MAX_READ_LINES) -> str:
@@ -101,7 +115,7 @@ class ReadCodebaseFileTool(Tool):
     """Read file from codebase with pagination support."""
     
     name = "read_codebase_file"
-    description = """Read file from codebase (max 350 lines per call).
+    description = f"""Read file from codebase (max {MAX_READ_LINES} lines per call).
 If file is truncated, call again with start_line=N to continue reading."""
     
     inputs = {
@@ -158,6 +172,72 @@ If file is truncated, call again with start_line=N to continue reading."""
         if self.usage_callback:
             self.usage_callback("read_codebase_file")
         return result
+
+class ReadPythonStructureTool(Tool):
+    """Read Python file structure (classes, functions matches) using AST."""
+    
+    name = "read_python_structure"
+    description = "Get the skeletal structure of a Python file (classes, methods, functions, docstrings) without reading the full body body. Use this for large files to save tokens."
+    
+    inputs = {
+        "file_path": {"type": "string", "description": "Relative path to the python file."},
+    }
+    output_type = "string"
+    
+    def __init__(self, codebase_root: Path, usage_callback: Optional[Callable] = None):
+        super().__init__()
+        self.codebase_root = codebase_root
+        self.usage_callback = usage_callback
+    
+    def forward(self, file_path: str) -> str:
+        resolved = resolve_within_root(self.codebase_root, file_path)
+        if not resolved.exists():
+            return f"File '{file_path}' not found."
+        
+        if resolved.suffix != ".py":
+            return f"File '{file_path}' is not a Python file. Use read_codebase_file instead."
+            
+        try:
+            content = resolved.read_text(encoding="utf-8")
+            tree = ast.parse(content)
+        except Exception as e:
+            return f"Failed to parse python file: {e}"
+            
+        structure = []
+        
+        def get_args(args: ast.arguments) -> str:
+            arg_list = [a.arg for a in args.args]
+            if args.vararg: arg_list.append(f"*{args.vararg.arg}")
+            if args.kwarg: arg_list.append(f"**{args.kwarg.arg}")
+            return ", ".join(arg_list)
+
+        def visit_node(node, depth=0):
+            indent = "    " * depth
+            if isinstance(node, ast.ClassDef):
+                structure.append(f"{indent}class {node.name}:")
+                doc = ast.get_docstring(node)
+                if doc:
+                    short_doc = doc.split('\n')[0][:100]
+                    structure.append(f"{indent}    \"\"\"{short_doc}...\"\"\"")
+                for child in node.body:
+                    visit_node(child, depth + 1)
+            elif isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
+                prefix = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
+                args = get_args(node.args)
+                structure.append(f"{indent}{prefix}def {node.name}({args}):")
+                doc = ast.get_docstring(node)
+                if doc:
+                    short_doc = doc.split('\n')[0][:100]
+                    structure.append(f"{indent}    \"\"\"{short_doc}...\"\"\"")
+                    
+        for node in tree.body:
+            visit_node(node)
+            
+        if self.usage_callback:
+            self.usage_callback("read_python_structure")
+            
+        return "\n".join(structure) if structure else "(File is empty or contains no classes/functions)"
+
 
 
 class ListCodebaseDirectoryTool(Tool):
@@ -224,6 +304,14 @@ class WriteWorkspaceFileTool(Tool):
                 "Content cannot be empty or only whitespace. "
                 "You must generate the file content (the plan or the summary) "
                 "in your thought process FIRST, and then call this tool with the complete text."
+            )
+        
+        # Validate minimum content length (SKIP if appending - allows small updates)
+        if not append and len(content.strip()) < MIN_WRITE_CHARS:
+            raise ValueError(
+                f"Content too short ({len(content.strip())} chars). "
+                f"Minimum required: {MIN_WRITE_CHARS} characters. "
+                "Please provide more comprehensive content."
             )
             
         if self.usage_callback:
@@ -349,9 +437,6 @@ class GetDirectoryMermaidTool(Tool):
         return "```mermaid\n" + "\n".join(lines) + "\n```"
 
 
-# ListKnowledgeBaseTool and ReadKnowledgeBaseFileTool removed - use ReadCodebaseFileTool with KB path instead
-
-
 
 
 # ============================================================================
@@ -374,7 +459,8 @@ def build_scoped_tools(
     workspace_root_path = ensure_directory(workspace_root)
 
     tools: List[Tool] = [
-        ReadCodebaseFileTool(codebase_root_path, workspace_root_path, usage_callback)
+        ReadCodebaseFileTool(codebase_root_path, workspace_root_path, usage_callback),
+        ReadPythonStructureTool(codebase_root_path, usage_callback),
     ]
     
     if allow_directory_listing:

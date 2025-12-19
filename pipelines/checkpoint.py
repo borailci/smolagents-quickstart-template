@@ -1,9 +1,16 @@
 
+import re
 import time
 from typing import Callable, TypeVar, Any
 from loguru import logger
 
 T = TypeVar("T")
+
+# Rate limit error detection pattern (consistent with llm_factory.py)
+RATE_LIMIT_PATTERN = re.compile(
+    r'(429|rate.?limit|quota|resource.?exhaust|too.?many.?requests)',
+    re.IGNORECASE
+)
 
 def run_with_rate_limit_retry(
     func: Callable[..., T],
@@ -19,15 +26,9 @@ def run_with_rate_limit_retry(
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            error_str = str(e).lower()
-            # Broad rate limit detection
-            is_rate_limit = (
-                "rate" in error_str 
-                or "429" in error_str 
-                or "exhausted" in error_str
-                or "quota" in error_str
-                or "too many requests" in error_str
-            )
+            error_str = str(e)
+            # Robust rate limit detection using regex
+            is_rate_limit = bool(RATE_LIMIT_PATTERN.search(error_str))
             
             if is_rate_limit and attempt < max_retries:
                 logger.warning(

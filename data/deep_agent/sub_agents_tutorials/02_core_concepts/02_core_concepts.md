@@ -1,143 +1,109 @@
-> # 02. RAG-Anything: Core Concepts and Architecture
+# Core Concepts of AgentLightning
 
 ## 1. Goal
 
-In modern data environments, information isn't just plain text. It's locked away in complex documents as charts, tables, images, and equations. How do you build an AI that can understand *all* of it? 
-
-This tutorial dives into the architecture of `RAG-Anything`, a framework designed to solve this exact problem. You will learn how it deconstructs, analyzes, and creates a queryable, multimodal knowledge base from sophisticated documents.
+In this tutorial, you will learn about the fundamental components of the AgentLightning framework. We will explore the core concepts of `LitAgent`, `LitAgentRunner`, and the `LightningStore`, and how they work together to create a powerful and flexible platform for building and running agents.
 
 ## 2. Prerequisites
 
-- Python 3.9+.
-- A conceptual understanding of Retrieval-Augmented Generation (RAG).
-- Project dependencies installed (e.g., `pip install -r requirements.txt`).
+- Python 3.9+
+- A basic understanding of agent-based systems and asynchronous programming.
 
-## 3. Architecture: The Document Processing Pipeline
+## 3. Architecture
 
-RAG-Anything operates as a multi-stage pipeline. It takes a folder of documents, processes them in parallel, analyzes multimodal content (like images and tables), builds a knowledge graph, and prepares to answer questions.
+The AgentLightning framework is designed to be modular and extensible. The three main components are:
+
+- **`LitAgent`**: This is where you define the logic of your agent. It's the "brain" of your operation.
+- **`LitAgentRunner`**: This is the "engine" that runs your agent. It handles the details of execution, such as fetching tasks, managing resources, and reporting results.
+- **`LightningStore`**: This is the central "hub" where tasks, resources, and results are stored. It acts as a message broker between the different components of the system.
+
+Here's a diagram illustrating how these components interact:
 
 ```mermaid
 graph TD
-    A["Input: Folder of Documents"] --> B{BatchParser};
-    B --> C["MineruParser (in parallel)"];
-    C --> D["Structured Content (Text, Images, Tables)"];
-    D --> E["separate_content()"];
-    E --> F["Text Blocks"];
-    E --> G["Multimodal Blocks (Image, Table)"];
-    F --> H{LightRAG Knowledge Graph};
-    G --> I{Modal Processors};
-    I -- "1. Get Context" --> F;
-    I -- "2. Analyze with VLM" --> J["Vision LLM"];
-    J -- "3. Get Rich Description" --> I;
-    I -- "4. Insert into KG" --> H;
-    K["User Query"] --> L{QueryMixin};
-    L -- "Retrieve Context" --> H;
-    L -- "Generate Answer" --> M["Final Answer"];
+    A["LitAgentRunner"] -->|Dequeues Task| B("LightningStore");
+    B -->|Provides Task & Resources| A;
+    A -->|Executes Task| C{"LitAgent"};
+    C -->|Returns Result| A;
+    A -->|Stores Result| B;
 ```
 
-### Key Components
+## 4. Implementation Steps
 
-- **`RAGAnything`**: The central orchestrator you will interact with. It coordinates the entire workflow, from parsing to querying.
-- **`BatchParser` & `MineruParser`**: These components work together to efficiently process large numbers of documents. `MineruParser` is the heavy lifter, using advanced tools to extract structured content (like text, tables, and images) from PDFs and other file types.
-- **`ModalProcessors`**: This is where the magic happens for multimodal data. Specialized processors like `ImageModalProcessor` and `TableModalProcessor` take non-text content, use Vision-Language Models (VLMs) to generate rich text descriptions, and integrate this new knowledge into the system.
-- **`QueryMixin`**: This provides the user-facing methods like `aquery()` to ask questions against the knowledge base.
-- **`LightRAG`**: The underlying engine that powers everything. It builds and manages the knowledge graph, handles embeddings, and performs the core retrieval logic.
+### Step 1: Define Your `LitAgent`
 
-## 4. Implementation: A Quick Example
+The first step is to create a class that inherits from `LitAgent` and implements the `rollout` method. This method contains the core logic of your agent.
 
-Let's see the architecture in action. The following example demonstrates initializing the system, processing a simple text file, and asking a question. We'll use dummy functions for the AI models to make it runnable and focus on the workflow.
+```python
+from agentlightning.litagent import LitAgent
+from agentlightning.types import NamedResources, Rollout, RolloutRawResult, Task
+
+class MyAgent(LitAgent[str]):
+    def rollout(self, task: str, resources: NamedResources, rollout: Rollout) -> RolloutRawResult:
+        print(f"Processing task: {task}")
+        # Your agent logic goes here
+        return f"Completed task: {task}"
+```
+
+### Step 2: Set Up the `LightningStore`
+
+For this example, we'll use an in-memory `LightningStore` for simplicity.
+
+```python
+from agentlightning.store.memory import MemoryStore
+
+store = MemoryStore()
+```
+
+### Step 3: Create a `LitAgentRunner`
+
+Now, we'll create a `LitAgentRunner` to execute our agent. We need to provide it with the agent and the store.
+
+```python
+from agentlightning.runner.agent import LitAgentRunner
+
+agent = MyAgent()
+runner = LitAgentRunner(agent=agent, store=store)
+```
+
+### Step 4: Add a Task to the Store and Run the Agent
+
+Finally, we'll add a task to the `LightningStore` and run the agent.
 
 ```python
 import asyncio
-import os
-from raganything import RAGAnything
-
-# --- Step 1: Define Dummy AI Model Functions ---
-# In a real application, these would be calls to actual LLM/VLM/Embedding APIs.
-async def dummy_llm(prompt: str, **kwargs) -> str:
-    """Simulates a Large Language Model."""
-    print(f"\n--- LLM received prompt snippet: ---\n{prompt[:100]}...\n------------------------------------")
-    return "Based on the context, the secret to multimodal RAG is handling diverse content."
-
-async def dummy_vision_llm(prompt: str, images: list, **kwargs) -> str:
-    """Simulates a Vision-Language Model."""
-    print(f"\n--- VLM received prompt: {prompt} and {len(images)} image(s) ---
-")
-    return "This image appears to be a simple diagram."
-
-def dummy_embedding_func(texts: list[str], **kwargs) -> list[list[float]]:
-    """Simulates an embedding model."""
-    print(f"\n--- Embedding function received {len(texts)} text chunk(s) ---
-")
-    # Return a list of dummy vectors, one for each text
-    return [[0.1 * i] * 10 for i in range(len(texts))]
 
 async def main():
-    # --- Step 2: Create a Dummy Document ---
-    doc_path = "my_report.txt"
-    with open(doc_path, "w") as f:
-        f.write("This document states that the secret to multimodal RAG is handling diverse content.")
+    # Add a task to the store
+    await store.enqueue_rollout(Task(id="task-1", input="Hello, AgentLightning!"))
 
-    # --- Step 3: Initialize RAGAnything ---
-    # This class orchestrates the entire pipeline.
-    # We provide it with the necessary AI model functions.
-    rag_system = RAGAnything(
-        llm_model_func=dummy_llm, 
-        vision_model_func=dummy_vision_llm, 
-        embedding_func=dummy_embedding_func
-    )
-
-    # --- Step 4: Process the Document ---
-    # This is an end-to-end function that handles parsing, content separation,
-    # embedding, and insertion into the knowledge graph.
-    print(f"Processing {doc_path}...")
-    await rag_system.process_document_complete(doc_path)
-    print("\nDocument processing complete.")
-
-    # --- Step 5: Ask a Question ---
-    # Use the aquery method to ask a question against the ingested knowledge.
-    print("\nQuerying the system...")
-    question = "What is the secret to multimodal RAG?"
-    answer = await rag_system.aquery(question)
-    
-    print(f"\nQuestion: {question}")
-    print(f"Answer: {answer.answer_text}")
-
-    # --- Step 6: Cleanup ---
-    # Finalize storages to ensure all data is saved correctly
-    await rag_system.finalize_storages()
-    os.remove(doc_path)
+    # Run the agent to process the task
+    await runner.step("task-1")
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 ```
 
-### *Verification*
+## 5. Verification
 
-When you run this script, you will see output from the dummy functions, indicating that the system is calling them at the right stages. The final output should look like this:
+When you run the above code, you should see the following output:
 
 ```
-Question: What is the secret to multimodal RAG?
-Answer: Based on the context, the secret to multimodal RAG is handling diverse content.
+Processing task: Hello, AgentLightning!
 ```
 
-## 5. Common Pitfalls
+This confirms that the `LitAgentRunner` successfully fetched the task from the `LightningStore` and executed the `rollout` method of your `MyAgent`.
 
-- **Parser Not Installed**: `RAGAnything` defaults to using `MineruParser`, which must be installed separately (`pip install mineru`). If the parser is missing, initialization will fail. You can check if it's installed with `rag_system.check_parser_installation()`.
-- **Forgetting `await`**: Many methods in `RAG-Anything` are asynchronous (`async`). Forgetting to use the `await` keyword on calls like `process_document_complete()` and `aquery()` is a common mistake that will prevent the code from running correctly.
+## 6. Common Pitfalls
 
-## 6. Challenge Yourself
+- **Forgetting to `await` asynchronous methods**: Many of the methods in AgentLightning are asynchronous, so make sure to use the `await` keyword where necessary.
+- **Misconfiguring the `LightningStore`**: Ensure that your `LitAgentRunner` and any other components that need to access the store are configured with the same store instance.
 
-Modify the example script to process a document with a table. 
+## 7. Challenge Yourself
 
-1. Change the dummy document to a Markdown file (`my_report.md`).
-2. Add a Markdown table to the file, for example:
+Modify the `MyAgent` class to use an external resource, such as an LLM. You'll need to:
 
-   | Quarter | Revenue |
-   |---|---|
-   | Q1 | $1M |
-   | Q2 | $1.5M |
+1.  Add the resource to the `LightningStore`.
+2.  Update the `rollout` method to access the resource from the `resources` dictionary.
 
-3. Run the script again and observe the logs. Notice how the `TableModalProcessor` (if enabled in the config) would be invoked to describe the table. 
-4. Ask a question about the data in the table, like: "What was the revenue in Q2?".
+This will give you a better understanding of how to manage resources in AgentLightning.

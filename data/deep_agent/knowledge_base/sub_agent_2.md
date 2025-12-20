@@ -1,149 +1,169 @@
 
-# Batch and Query Processing Analysis
+# Technical Analysis of AgentLightning: Algorithm and Training
 
 ## 1. Overview
 
-This set of modules provides the core functionality for batch document processing and multimodal querying within the `RAGAnything` framework. `batch_parser.py` is a standalone, parallel document parser, which is then integrated into the main application via the `BatchMixin` in `batch.py`. The `QueryMixin` in `query.py` provides sophisticated query capabilities, including handling text, multimodal inputs (images, tables), and a VLM-enhanced mode that dynamically uses a vision model on images found in retrieved text. All modules rely on a centralized collection of prompt templates defined in `prompt.py` to guide the language models in their analysis tasks.
+The analyzed modules form the core of the AgentLightning training and optimization framework. They establish a clear separation of concerns between the high-level orchestration (`Trainer`), the strategic logic for improvement (`Algorithm`), and the execution of agent tasks (`Runner`, not included in this analysis). The system is designed to be extensible, allowing developers to implement custom algorithms or use provided ones like Automatic Prompt Optimization (APO) and a simple `Baseline` for testing.
+
+- **`trainer.py`**: The central conductor, responsible for setting up, wiring, and running the entire training process.
+- **`algorithm/base.py`**: Defines the abstract `Algorithm` class, establishing the contract for all training strategies.
+- **`algorithm/decorator.py`**: Provides a convenient `@algo` decorator to simplify algorithm creation from a single function.
+- **`algorithm/fast.py`**: Contains lightweight algorithms (`Baseline`) intended for rapid development and debugging (`dev` mode).
+- **`algorithm/apo/apo.py`**: A sophisticated algorithm for Automatic Prompt Optimization, which iteratively refines prompts using LLM-generated critiques.
 
 ## 2. File-by-File Analysis
 
-### `raganything/batch_parser.py`
+### `agentlightning/trainer/trainer.py`
 
-*   **Purpose**: Provides a robust, parallel batch document parsing engine. It can be used as a library or directly as a command-line tool.
-*   **Key Components**:
-    *   `BatchProcessingResult`: A dataclass that encapsulates the outcome of a batch operation, including lists of successful/failed files, total processing time, and any errors.
-    *   `BatchParser`: The primary class that orchestrates the parsing. It uses a `ThreadPoolExecutor` to process multiple files concurrently. It supports different underlying parsers (`MineruParser` or `DoclingParser`) and displays progress with `tqdm`. It handles file discovery (including recursive directory searching) and filters for supported file types.
+- **Purpose**: The `Trainer` class is the primary user-facing entry point for running a training or development session. It initializes and coordinates all major components: `Algorithm`, `Runner`, `LightningStore`, `Tracer`, and `ExecutionStrategy`.
+- **Key Components**:
+  - `Trainer`: The main class that orchestrates the training loop. It uses a flexible component-based initialization system (e.g., `_make_store`, `_make_algorithm`) that can instantiate components from classes, instances, or configuration dictionaries.
+  - `fit()`: The main method to start a full training run. It prepares the algorithm and runner "bundles" and hands them off to the configured `ExecutionStrategy`.
+  - `dev()`: A convenience method for rapid development and testing. It ensures that a `FastAlgorithm` is used, providing a quicker feedback loop. If no algorithm is specified, it defaults to `Baseline`.
+  - `ExecutionStrategy`: The `Trainer` delegates process and communication management (e.g., `ClientServerExecutionStrategy`) to a strategy object, decoupling the training logic from the execution environment.
 
-### `raganything/batch.py`
+### `agentlightning/algorithm/base.py`
 
-*   **Purpose**: Acts as a bridge, integrating the `BatchParser` into the main `RAGAnything` class structure through a mixin.
-*   **Key Components**:
-    *   `BatchMixin`: A class that provides high-level, user-facing methods for batch processing.
-        *   `process_documents_batch` & `process_documents_batch_async`: The primary synchronous and asynchronous methods that instantiate `BatchParser` to process a list of files or directories.
-        *   `process_documents_with_rag_batch`: A crucial two-stage pipeline method. It first uses `BatchParser` to parse a batch of documents and then iterates through the successfully parsed files to ingest them into the LightRAG system using `process_document_complete`.
-        *   `process_folder_complete`: An older, seemingly more manual implementation for batch processing that is preserved alongside the newer `BatchParser`-based methods.
+- **Purpose**: This file defines the fundamental interface for all algorithms in the system.
+- **Key Components**:
+  - `Algorithm`: An abstract base class that all specific algorithms must inherit from. It defines the core API that the `Trainer` uses to interact with an algorithm.
+    - `run()`: The main method where the algorithm's logic is implemented. It receives the training and validation datasets.
+    - `set_trainer()`, `set_store()`, `set_adapter()`, `set_llm_proxy()`: Methods used by the `Trainer` to inject necessary dependencies into the algorithm instance. It uses weak references (`weakref.ref`) for components like the `Trainer` to prevent circular dependencies.
 
-### `raganything/query.py`
+### `agentlightning/algorithm/decorator.py`
 
-*   **Purpose**: Provides a comprehensive query interface for the `RAGAnything` system, supporting text-only, multimodal, and VLM-enhanced queries.
-*   **Key Components**:
-    *   `QueryMixin`: A mixin class containing all query logic.
-        *   `aquery`: The base method for pure-text queries, which calls the underlying `lightrag.aquery` method.
-        *   `aquery_with_multimodal`: Handles queries that include non-text content like images or tables. It processes this content by calling an LLM to generate descriptive text, which is then appended to the user's query to create an "enhanced query".
-        *   `aquery_vlm_enhanced`: A sophisticated query mode. It first performs a standard retrieval. It then scans the retrieved text for image file paths, encodes those images to base64, and sends the text and images together to a Vision Language Model (VLM) for a more context-aware answer.
-        *   `_generate_multimodal_cache_key`: Creates a stable cache key for multimodal queries to avoid re-processing identical requests.
+- **Purpose**: To provide a simpler, functional way to define an algorithm without the boilerplate of creating a new class.
+- **Key Components**:
+  - `@algo` decorator: A decorator that wraps a function, turning it into a `FunctionalAlgorithm` instance.
+  - `FunctionalAlgorithm`: A subclass of `Algorithm` that wraps a user-provided function. It inspects the function's signature to automatically inject dependencies like `store`, `train_dataset`, `llm_proxy`, etc., at runtime. This allows developers to write concise algorithms that only declare the arguments they need.
 
-### `raganything/prompt.py`
+### `agentlightning/algorithm/fast.py`
 
-*   **Purpose**: Centralizes all prompt templates used throughout the application, ensuring consistency and ease of maintenance.
-*   **Key Components**:
-    *   `PROMPTS`: A dictionary holding all prompt strings.
-    *   **Analysis Prompts**: Templates for analyzing specific content types (e.g., `vision_prompt`, `table_prompt`). They instruct the LLM to return a JSON object containing a detailed description and a summary.
-    *   **Query Prompts**: Templates used during the query phase (e.g., `QUERY_IMAGE_DESCRIPTION`, `QUERY_TABLE_ANALYSIS`). These are generally simpler, asking for a brief summary or analysis of a piece of content to augment a user's query.
-    *   **System Prompts**: Defines the persona for the LLM during analysis (e.g., "You are an expert image analyst.").
+- **Purpose**: To provide simple, lightweight algorithms suitable for developer workflows and testing.
+- **Key Components**:
+  - `FastAlgorithm`: A marker base class that inherits from `Algorithm`. The `Trainer.dev()` method requires algorithms to be instances of `FastAlgorithm` to ensure a responsive development experience.
+  - `Baseline`: A concrete implementation of `FastAlgorithm`. Its primary role is to iterate through a dataset, enqueue rollouts for each data point, wait for completion, and log the results. It serves as a useful "smoke test" to verify that the entire platform (store, runners, tracing) is functioning correctly.
 
-## 3. Integration & Data Flow
+### `agentlightning/algorithm/apo/apo.py`
 
-The modules are designed to work in a pipeline:
+- **Purpose**: Implements Automatic Prompt Optimization (APO), a sophisticated algorithm for iteratively improving prompt templates based on performance.
+- **Key Components**:
+  - `APO`: A powerful algorithm that uses a beam search strategy to find the optimal prompt. The core loop involves:
+    1.  **Evaluation**: Running the current set of candidate prompts against a validation dataset.
+    2.  **Critique (Textual Gradient)**: Using an LLM to generate a "textual gradient" or critique based on the performance (rollout results) of a prompt.
+    3.  **Edit**: Using another LLM to apply the critique to the prompt, generating a new, potentially improved version.
+    4.  **Selection**: Keeping the best-performing prompts for the next round of the beam search.
+  - `VersionedPromptTemplate`: A dataclass to track a prompt template, its unique version identifier, and its performance score.
+  - `compute_textual_gradient()`: The method responsible for generating the critique from an LLM.
+  - `textual_gradient_and_apply_edit()`: The method that orchestrates the critique and edit steps to produce a new prompt candidate.
 
-1.  **Ingestion**: A user calls a method from `BatchMixin` (e.g., `process_documents_with_rag_batch`) with a list of file paths.
-2.  **Parsing**: The `BatchMixin` method instantiates `BatchParser` from `batch_parser.py`.
-3.  **Parallel Processing**: `BatchParser` filters for supported files and uses a `ThreadPoolExecutor` to run `process_single_file` on many files at once. The underlying parsers (`MineruParser`/`DoclingParser`) extract text and identify multimodal content like images and tables, using prompts from `prompt.py` to generate analyses.
-4.  **RAG Ingestion**: After parsing is complete, the `process_documents_with_rag_batch` method loops through the successfully parsed files and calls `process_document_complete` to add them to the LightRAG vector database.
-5.  **Querying**: A user calls a query method from `QueryMixin` (e.g., `aquery_with_multimodal`).
-6.  **Query Enhancement**: If multimodal content is provided, `QueryMixin` uses prompts from `prompt.py` to generate textual descriptions of the content, creating an enhanced query.
-7.  **Retrieval & Generation**: The final query is sent to the LightRAG engine, which retrieves relevant context from the database and generates an answer.
+## 3. Architecture and Data Flow
+
+The general data flow is orchestrated by the `Trainer`:
+
+1.  **Initialization**: A user configures a `Trainer` with an `Algorithm`, a `LitAgent`, datasets, and other components.
+2.  **Execution Start**: The user calls `trainer.fit()` or `trainer.dev()`.
+3.  **Strategy Execution**: The `Trainer` delegates to an `ExecutionStrategy` (e.g., `ClientServerExecutionStrategy`), which spawns processes/threads for the algorithm and multiple runners.
+4.  **Algorithm Run**: The `Algorithm.run()` method is invoked. The algorithm typically iterates over a dataset.
+5.  **Enqueue Rollout**: The algorithm uses the `LightningStore` to `enqueue_rollout()` for each task. This places a work item in a queue that runners can pull from.
+6.  **Runner Execution**: `Runner` processes poll the store, claim rollouts, execute the `LitAgent` with the given input, and record detailed telemetry (`Spans`) back to the store.
+7.  **Algorithm Monitoring**: The algorithm can monitor the status of rollouts via the store to get feedback. For example, `APO` waits for rollout completion to gather performance data for its optimization loop.
+8.  **Termination**: The process ends when the algorithm completes, runners reach their `max_rollouts`, or an error occurs.
 
 ## 4. Code Deep Dive
 
-### `batch_parser.py`: Parallel Processing Logic
+### `Trainer` Component Initialization
 
-The core of the batch processing engine uses a `ThreadPoolExecutor` to manage concurrent operations. It submits all file processing tasks at once and collects the results as they complete, allowing for efficient parallelization and progress tracking.
+The `Trainer` uses a robust pattern for component initialization, providing flexibility for the user. The `build_component` utility (defined in `init_utils`) is used to resolve a component from various specifications.
 
 ```python
-# From raganything/batch_parser.py in BatchParser.process_batch
+# From agentlightning/trainer/trainer.py
 
-with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-    # Submit all tasks
-    future_to_file = {
-        executor.submit(
-            self.process_single_file,
-            file_path,
-            output_dir,
-            parse_method,
-            **kwargs,
-        ): file_path
-        for file_path in supported_files
-    }
-
-    # Process completed tasks
-    for future in as_completed(
-        future_to_file, timeout=self.timeout_per_file
+class Trainer(TrainerLegacy):
+    def __init__(
+        self,
+        *,
+        # ... other components
+        store: ComponentSpec[LightningStore] = None,
+        strategy: ComponentSpec[ExecutionStrategy] = None,
+        # ...
     ):
-        success, file_path, error_msg = future.result()
+        # ...
+        self.strategy = self._make_strategy(
+            strategy,
+            n_runners=self.n_runners,
+            port=port,
+        )
+        self.store = self._make_store(store, self.strategy)
+        # ...
 
-        if success:
-            successful_files.append(file_path)
-        else:
-            failed_files.append(file_path)
-            errors[file_path] = error_msg
-
-        if pbar:
-            pbar.update(1)
+    def _make_store(self, store: ComponentSpec[LightningStore], strategy: ExecutionStrategy) -> LightningStore:
+        is_client_server = isinstance(strategy, ClientServerExecutionStrategy)
+        default_store_factory = lambda: InMemoryLightningStore(thread_safe=is_client_server)
+        return build_component(
+            store,
+            expected_type=LightningStore,
+            spec_name="store",
+            default_factory=default_store_factory,
+            # ...
+        )
 ```
+This design allows a user to pass a concrete instance, a class, or a dictionary configuration for the `store`, and the `Trainer` will correctly instantiate it with appropriate defaults (e.g., ensuring the `InMemoryLightningStore` is thread-safe if using a client-server strategy).
 
-### `query.py`: VLM-Enhanced Query Logic
+### `APO` Textual Gradient Logic
 
-This snippet shows the logic for the VLM-enhanced query. It retrieves text context, finds image paths within it using regex, and then replaces them with special markers while storing the base64-encoded images. This prepares a multimodal payload for the vision model.
+The core innovation of `APO` is generating and applying critiques. This is a multi-LLM-call process.
 
 ```python
-# From raganything/query.py in QueryMixin._process_image_paths_for_vlm
+# From agentlightning/algorithm/apo/apo.py
 
-# ... (inside a replacement function for re.sub)
-try:
-    # Encode image to base64 using utility function
-    self.logger.debug(f"Attempting to encode image: {image_path}")
-    image_base64 = encode_image_to_base64(image_path)
-    if image_base64:
-        images_processed += 1
-        # Save base64 to instance variable for later use
-        self._current_images_base64.append(image_base64)
+async def textual_gradient_and_apply_edit(
+    self,
+    current_prompt: VersionedPromptTemplate,
+    rollout: List[RolloutResultForAPO],
+    *,
+    prefix: Optional[str] = None,
+) -> Optional[str]:
+    # 1) Critique
+    critique_text = await self.compute_textual_gradient(
+        current_prompt,
+        rollout,
+        prefix=prefix,
+    )
+    if not critique_text:
+        # ... handle error
+        return current_prompt.prompt_template.template
 
-        # Keep original path info and add VLM marker
-        result = f"Image Path: {image_path}\n[VLM_IMAGE_{images_processed}]"
-        self.logger.debug(
-            f"Successfully processed image {images_processed}: {image_path}"
-        )
-        return result
-    else:
-        self.logger.error(f"Failed to encode image: {image_path}")
-        return match.group(0)  # Keep original if encoding failed
+    # 2) Apply edit
+    ae_template = random.choice(APPLY_EDIT_PROMPT_FILES)
+    ae_msg = poml.poml(
+        ae_template,
+        context={
+            "prompt_template": current_prompt.prompt_template.template,
+            "critique": critique_text,
+        },
+        format="openai_chat",
+    )
 
-except Exception as e:
-    self.logger.error(f"Failed to process image {image_path}: {e}")
-    return match.group(0)  # Keep original
+    ae_response = await self.async_openai_client.chat.completions.create(
+        model=self.apply_edit_model,
+        messages=ae_msg["messages"],
+        temperature=self.diversity_temperature,
+    )
+    new_prompt = ae_response.choices[0].message.content
+    return new_prompt
 ```
+This snippet clearly shows the two-step "gradient" and "apply" process. It relies on pre-defined `poml` templates to structure the LLM calls for generating the critique and then applying it to revise the prompt.
 
 ## 5. API Reference
 
-### Public Interface
-
-The main entry points for a user of the `RAGAnything` library are the methods within the `BatchMixin` and `QueryMixin`.
-
-| Class         | Method                                | Signature                                                                                                     |
-|---------------|---------------------------------------|---------------------------------------------------------------------------------------------------------------|
-| `BatchMixin`    | `process_documents_batch`             | `(self, file_paths: List[str], output_dir: Optional[str] = None, ..., **kwargs) -> BatchProcessingResult`      |
-| `BatchMixin`    | `process_documents_batch_async`       | `async (self, file_paths: List[str], ..., **kwargs) -> BatchProcessingResult`                                  |
-| `BatchMixin`    | `process_documents_with_rag_batch`    | `async (self, file_paths: List[str], ..., **kwargs) -> Dict[str, Any]`                                         |
-| `QueryMixin`    | `query` / `aquery`                    | `(self, query: str, mode: str = "mix", ..., **kwargs) -> str`                                                   |
-| `QueryMixin`    | `query_with_multimodal` / `aquery_with_multimodal` | `(self, query: str, multimodal_content: List[Dict[str, Any]] = None, ..., **kwargs) -> str`                 |
-
-### Internal Components
-
-`BatchParser` is a key internal component but is also usable as a standalone tool.
-
-| Class         | Method            | Signature                                                                                           |
-|---------------|-------------------|-----------------------------------------------------------------------------------------------------|
-| `BatchParser` | `process_batch`   | `(self, file_paths: List[str], output_dir: str, ..., **kwargs) -> BatchProcessingResult`             |
-| `BatchParser` | `filter_supported_files` | `(self, file_paths: List[str], recursive: bool = True) -> List[str]`                                |
+| Class / Decorator | Method / Function | Signature |
+|---|---|---|
+| `Trainer` | `fit` | `(self, agent: LitAgent[T_co], train_dataset: Optional[Dataset[T_co]] = None, *, val_dataset: Optional[Dataset[T_co]] = None) -> None` |
+| `Trainer` | `dev` | `(self, agent: LitAgent[T_co], train_dataset: Optional[Dataset[T_co]] = None, *, val_dataset: Optional[Dataset[T_co]] = None) -> None` |
+| `Algorithm` | `run` | `(self, train_dataset: Optional[Dataset[Any]] = None, val_dataset: Optional[Dataset[Any]] = None) -> Union[None, Awaitable[None]]` |
+| `@algo` | - | `algo(func: AlgorithmFunc) -> FunctionalAlgorithm` |
+| `Baseline` | `__init__` | `(self, *, n_epochs: int = 1, polling_interval: float = 5.0, max_queue_length: int = 4, ...)` |
+| `APO` | `__init__` | `(self, async_openai_client: AsyncOpenAI, *, gradient_model: str = "gpt-5-mini", apply_edit_model: str = "gpt-4.1-mini", beam_width: int = 4, beam_rounds: int = 3, ...)` |
+| `APO` | `run` | `(self, train_dataset: Optional[Dataset[T_task]] = None, val_dataset: Dataset[T_task]) -> None` |
 

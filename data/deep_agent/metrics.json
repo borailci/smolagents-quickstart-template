@@ -1,23 +1,23 @@
 {
-  "codebase_name": "instructor",
+  "codebase_name": "RAG-Anything",
   "model_id": "vertex_ai/gemini-2.5-pro",
-  "timestamp": "2025-12-19T16:34:11.793660",
-  "duration_seconds": 650.43,
+  "timestamp": "2025-12-20T16:43:39.204452",
+  "duration_seconds": 790.0,
   "total_tokens": 0,
-  "total_tool_calls": 39,
+  "total_tool_calls": 32,
   "total_context_overflows": 0,
   "phases": {
     "knowledge_base": {
       "name": "knowledge_base",
-      "duration_seconds": 449.12,
+      "duration_seconds": 391.89,
       "input_tokens": 0,
       "output_tokens": 0,
       "total_tokens": 0,
-      "tool_calls": 39,
+      "tool_calls": 32,
       "tool_calls_by_name": {
         "get_codebase_tree": 1,
-        "read_codebase_file": 30,
-        "write_workspace_file": 8
+        "write_workspace_file": 5,
+        "read_codebase_file": 26
       },
       "context_overflow_events": 0,
       "model_errors": [],
@@ -25,7 +25,7 @@
     },
     "tutorial": {
       "name": "tutorial",
-      "duration_seconds": 201.31,
+      "duration_seconds": 398.11,
       "input_tokens": 0,
       "output_tokens": 0,
       "total_tokens": 0,

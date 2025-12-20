@@ -9,10 +9,9 @@ class Settings:
     # --- LLM Model Configuration ---
     # Vertex AI model IDs (used by LiteLLM)
     # NOTE: gemini-2.5-pro thinking mode causes empty content in tool calls
-    # Using 2.0-flash for reliable tool calling
     MODEL_ID: str = "vertex_ai/gemini-2.5-pro"
     SUPERVISOR_MODEL_ID: str = "vertex_ai/gemini-2.5-pro"
-    SUB_AGENT_MODEL_ID: str = "vertex_ai/gemini-2.5-flash"
+    SUB_AGENT_MODEL_ID: str = "vertex_ai/gemini-2.5-pro"
     
     # --- Codebase to Analyze ---
     # Change this to point to the codebase you want to analyze

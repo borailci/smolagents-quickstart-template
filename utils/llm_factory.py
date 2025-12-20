@@ -88,10 +88,10 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                 # Detect context overflow errors for metrics
                 if self._metrics:
                     is_overflow = (
-                        "context length" in error_msg or 
-                        "maximum context" in error_msg or 
-                        "token limit" in error_msg or
-                        "too long" in error_msg
+                        "context length" in error_str or 
+                        "maximum context" in error_str or 
+                        "token limit" in error_str or
+                        "too long" in error_str
                     )
                     self._metrics.record_error(str(e), is_overflow=is_overflow)
                 

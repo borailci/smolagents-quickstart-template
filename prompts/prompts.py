@@ -323,12 +323,15 @@ You must strictly follow this **Execution Workflow** step-by-step. Do not skip s
 
 ### PHASE 1: DISCOVERY & PLANNING
 1.  **Survey Knowledge Base**: Call `list_knowledge_base()` to see what analysis is available.
-2.  **Read Context**: Read `executive_summary.md` and 1-2 key `summary.md` files (e.g. for main modules) to understand the system.
-3.  **Plan Curriculum**: Design a coherent series of tutorials (max 6).
+2. **Knowledge Base Information**: Call `read_knowledge_base_file(file_path="...")` to read specific files. It will help you understand the system.
+3.  **Read Context**: Read `executive_summary.md` and 1-2 key `summary.md` files (e.g. for main modules) to understand the system.
+4.  **Read Code**: Call `list_codebase_directory(dir_path=".")` to see the codebase structure.
+5.  **Read Code**: You can call `read_codebase_file(file_path="...")` to read specific files for verification and extra information.
+6.  **Plan Curriculum**: Design a coherent series of tutorials (max 6).
     *   **Beginner**: "Getting Started", "Installation", "Basic Usage".
     *   **Intermediate**: "Creating X", "Using Feature Y".
     *   **Advanced**: "Architecture Deep Dive", "Extending Z".
-4.  **Draft Plan**: Create `tutorial_plan.md` using `write_workspace_file`.
+7.  **Draft Plan**: Create `tutorial_plan.md` using `write_workspace_file`.
     *   Format:
         ```markdown
         # Tutorial Series Plan
@@ -340,7 +343,7 @@ You must strictly follow this **Execution Workflow** step-by-step. Do not skip s
 5.  **Spawn Authors**: Call `spawn_sub_agents(tasks=[...])`.
     *   **Rule**: One sub-agent per tutorial file.
     *   **Rule**: Pass RELEVANT KB files and Codebase files to `focus_list`.
-    *   **Rule**: **Max 4 Files per Task**. Do not overwhelm the sub-agent.
+    *   **Rule**: **Max 5 Files per Task**. Do not overwhelm the sub-agent.
     *   **Rule**: Use `tutorial` agent role.
 
 ### PHASE 3: REVIEW & REFINE
@@ -437,7 +440,7 @@ SUMMARIZER_SPAWN_TASK_TEMPLATE = """
 
 **Execution Workflow**:
 1.  **SCAN**: Use `list_codebase_directory` to verify contents.
-2.  **SAMPLE**: Read 1-3 key files (e.g., `utils.py`, `common.py`) using `read_codebase_file`.
+2.  **SAMPLE**: Read key files (e.g., `utils.py`, `common.py`) using `read_codebase_file`.
 3.  **WRITE**: Create a `summary.md` focusing on Developer Experience (DX):
     *   **When to use**: Scenarios.
     *   **Key Functions**: Brief signatures.
@@ -513,7 +516,8 @@ TUTORIAL_SPAWN_TASK_TEMPLATE = """
 *   **No Hallucinations**: Verify all function parameters. Do not invent arguments (e.g. 'asset_id') that don't exist in the code.
 *   **Ground Truth**: Trust the actual code file content over your internal knowledge or the KB.
 *   **Density**: Provide deep, complex examples. Don't be superficial.
-*   **Resource Limit**: You may read as many Knowledge Base files as needed. However, do NOT read more than **4 actual codebase files** (`read_codebase_file`). Use the KB for understanding, check code only for verification.
+*   **Resource Access**: You have UNLIMITED access to `read_codebase_file`. Use it freely to verify every single function signature, class attribute, and import path.
+*   **KB Role**: Treat the Knowledge Base (`sub_agent_*.md`) as a **Lookup Table** or Index. It tells you *where* to look and *what* exists, but the Codebase is the only source of truth for *details*.
 *   **Sequential**: One tool call per turn. Do not parallelize.
 *   **Atomic Writes**: NEVER create an empty file. Generate the content first.
 *   Explain the *Why* behind every step.

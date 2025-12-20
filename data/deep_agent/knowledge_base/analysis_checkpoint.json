@@ -1,12 +1,18 @@
 {
   "processed_tasks": [
-    "Core Components",
-    "Batch and Query Processing",
-    "Utilities and Data Processors"
+    "Core Agent Logic and Runner",
+    "Algorithm and Training",
+    "Data Storage and Management",
+    "Execution and Instrumentation",
+    "Adapters and Emitters",
+    "Dashboard Components"
   ],
   "results": {
-    "Core Components": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_1\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
-    "Batch and Query Processing": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_2\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
-    "Utilities and Data Processors": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_3\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}"
+    "Core Agent Logic and Runner": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_1\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
+    "Algorithm and Training": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_2\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
+    "Data Storage and Management": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_3\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
+    "Execution and Instrumentation": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_4\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
+    "Adapters and Emitters": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_5\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
+    "Dashboard Components": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/sub_agent_6\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}"
   }
 }

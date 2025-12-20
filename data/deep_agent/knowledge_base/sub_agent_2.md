@@ -1,168 +1,149 @@
-# DSL and Validation Analysis
+
+# Batch and Query Processing Analysis
 
 ## 1. Overview
-This document provides a technical analysis of the Domain Specific Language (DSL) and validation features within the `instructor/dsl` module. This module offers utilities to enhance Pydantic models for various use cases, including citation extraction, iterable model generation, optional value handling, and parallel model processing. These DSL components abstract common patterns in AI interaction, making it easier to define structured outputs and handle streaming responses.
+
+This set of modules provides the core functionality for batch document processing and multimodal querying within the `RAGAnything` framework. `batch_parser.py` is a standalone, parallel document parser, which is then integrated into the main application via the `BatchMixin` in `batch.py`. The `QueryMixin` in `query.py` provides sophisticated query capabilities, including handling text, multimodal inputs (images, tables), and a VLM-enhanced mode that dynamically uses a vision model on images found in retrieved text. All modules rely on a centralized collection of prompt templates defined in `prompt.py` to guide the language models in their analysis tasks.
 
 ## 2. File-by-File Analysis
 
-### `instructor/dsl/citation.py`
-- **Purpose**: Provides a `CitationMixin` that enhances Pydantic models with the ability to extract and validate `substring_quotes` from a given context. It automatically verifies if the extracted quotes are present in the provided text, making it useful for verifiable AI responses.
-- **Key Components**:
-  - `CitationMixin(BaseModel)`: A Pydantic BaseModel mixin that adds a `substring_quotes` field. It includes a `model_validator` to ensure that the extracted quotes exist within a provided `context`.
-  - `validate_sources(self, info: ValidationInfo)`: A `model_validator` that uses fuzzy matching (`regex`) to find the spans of `substring_quotes` within the `context` provided in `validation_context`. It updates `substring_quotes` with the actual substrings found.
-  - `_get_span(self, quote: str, context: str, errs: int = 5)`: A helper method that uses `regex.search` with an error tolerance (`e<={errs_}`) to find the starting and ending indices of a `quote` within the `context`.
-  - `get_spans(self, context: str)`: Iterates through `substring_quotes` and yields the spans for each quote found in the `context`.
+### `raganything/batch_parser.py`
 
-### `instructor/dsl/iterable.py`
-- **Purpose**: Enables the creation of Pydantic models that can process streaming responses containing multiple structured objects. It handles different streaming modes from various AI providers and extracts individual objects from the stream.
-- **Key Components**:
-  - `IterableBase`: A base class for iterable models, providing methods to handle streaming responses from different AI providers.
-  - `from_streaming_response(cls, completion: Iterable[Any], mode: Mode, **kwargs: Any)`: Class method to process synchronous streaming responses, extracting and validating models.
-  - `from_streaming_response_async(cls, completion: AsyncGenerator[Any, None], mode: Mode, **kwargs: Any)`: Asynchronous counterpart for processing asynchronous streaming responses.
-  - `tasks_from_chunks(cls, json_chunks: Iterable[str], **kwargs: Any)`: Processes chunks of JSON from the stream to reconstruct complete JSON objects and validate them against the `task_type`.
-  - `extract_cls_task_type(cls, task_json: str, **kwargs: Any)`: Validates a JSON string against the `task_type` (which can be a Union of models).
-  - `extract_json(completion: Iterable[Any], mode: Mode)`: Static method to extract JSON parts from various AI provider streaming formats.
-  - `extract_json_async(completion: AsyncGenerator[Any, None], mode: Mode)`: Asynchronous version of `extract_json`.
-  - `get_object(s: str, stack: int)`: Static method to extract a complete JSON object from a string, handling nested curly braces.
-  - `IterableModel(subtask_class: type[BaseModel], name: Optional[str] = None, description: Optional[str] = None)`: A factory function that dynamically creates a new Pydantic model. This new model (`Iterable[subtask_class]`) can then be used to parse a stream of objects of `subtask_class`.
+*   **Purpose**: Provides a robust, parallel batch document parsing engine. It can be used as a library or directly as a command-line tool.
+*   **Key Components**:
+    *   `BatchProcessingResult`: A dataclass that encapsulates the outcome of a batch operation, including lists of successful/failed files, total processing time, and any errors.
+    *   `BatchParser`: The primary class that orchestrates the parsing. It uses a `ThreadPoolExecutor` to process multiple files concurrently. It supports different underlying parsers (`MineruParser` or `DoclingParser`) and displays progress with `tqdm`. It handles file discovery (including recursive directory searching) and filters for supported file types.
 
-### `instructor/dsl/maybe.py`
-- **Purpose**: Provides a `Maybe` DSL component that wraps an existing Pydantic model, allowing it to represent an optional result along with an `error` flag and a `message`. This is useful for scenarios where a model might or might not be extracted from a response, preventing errors from stopping the process.
-- **Key Components**:
-  - `MaybeBase(BaseModel, Generic[T])`: A generic Pydantic base model that includes `result` (Optional[T]), `error` (boolean), and `message` (Optional[str]) fields.
-  - `__bool__(self)`: Overrides the boolean representation of the `MaybeBase` instance, returning `True` if `result` is not None, indicating a successful extraction.
-  - `Maybe(model: type[T])`: A factory function that dynamically creates a new Pydantic model named `Maybe{model.__name__}`. This new model incorporates the `MaybeBase` structure around the provided `model`, making the original model's content optional and adding error handling fields.
+### `raganything/batch.py`
 
-### `instructor/dsl/parallel.py`
-- **Purpose**: Facilitates the parallel extraction of multiple, potentially different, Pydantic models from a single AI tool call response. It supports various AI providers like OpenAI, VertexAI, and Anthropic.
-- **Key Components**:
-  - `ParallelBase`: A base class that takes multiple Pydantic models (`*models`) in its constructor. It provides a `from_response` method to process a tool call response and yield validated instances of the registered models.
-  - `from_response(self, response: Any, mode: Mode, validation_context: Optional[Any] = None, strict: Optional[bool] = None)`: Processes the response from the AI, identifies the tool calls by name, and validates the arguments against the corresponding registered Pydantic model.
-  - `VertexAIParallelBase(ParallelBase)`: A subclass of `ParallelBase` specifically designed to handle tool call responses from VertexAI.
-  - `AnthropicParallelBase(ParallelBase)`: A subclass of `ParallelBase` tailored for handling tool call responses from Anthropic.
-  - `is_union_type(typehint: type[Iterable[T]])`: Helper function to check if a type hint represents a `Union` type within an `Iterable`.
-  - `get_types_array(typehint: type[Iterable[T]])`: Extracts the Pydantic model types from an `Iterable` type hint, supporting both single types and `Union` types.
-  - `handle_parallel_model(typehint: type[Iterable[T]])`: Generates the OpenAI function schema for each model in the provided type hint.
-  - `handle_anthropic_parallel_model(typehint: type[Iterable[T]])`: Generates the Anthropic tool schema for each model in the provided type hint.
-  - `ParallelModel(typehint: type[Iterable[T]])`: A factory function that returns an instance of `ParallelBase` (or its provider-specific subclasses) configured with the models extracted from the `typehint`. This allows a single `ParallelModel` to represent an `Iterable` of different Pydantic models.
-  - `VertexAIParallelModel(typehint: type[Iterable[T]])`: Factory for `VertexAIParallelBase`.
-  - `AnthropicParallelModel(typehint: type[Iterable[T]])`: Factory for `AnthropicParallelBase`.
+*   **Purpose**: Acts as a bridge, integrating the `BatchParser` into the main `RAGAnything` class structure through a mixin.
+*   **Key Components**:
+    *   `BatchMixin`: A class that provides high-level, user-facing methods for batch processing.
+        *   `process_documents_batch` & `process_documents_batch_async`: The primary synchronous and asynchronous methods that instantiate `BatchParser` to process a list of files or directories.
+        *   `process_documents_with_rag_batch`: A crucial two-stage pipeline method. It first uses `BatchParser` to parse a batch of documents and then iterates through the successfully parsed files to ingest them into the LightRAG system using `process_document_complete`.
+        *   `process_folder_complete`: An older, seemingly more manual implementation for batch processing that is preserved alongside the newer `BatchParser`-based methods.
 
-## 3. Architecture & Data Flow
+### `raganything/query.py`
 
-```mermaid
-graph TD
-    A[AI Model Response Stream] -->|Chunked Data| B{IterableBase.extract_json}
-    B -->|JSON Chunks| C{IterableBase.tasks_from_chunks}
-    C -->|Individual JSON Objects| D[Pydantic Model Validation (task_type)]
-    D --> E[Validated Pydantic Objects (IterableModel)]
+*   **Purpose**: Provides a comprehensive query interface for the `RAGAnything` system, supporting text-only, multimodal, and VLM-enhanced queries.
+*   **Key Components**:
+    *   `QueryMixin`: A mixin class containing all query logic.
+        *   `aquery`: The base method for pure-text queries, which calls the underlying `lightrag.aquery` method.
+        *   `aquery_with_multimodal`: Handles queries that include non-text content like images or tables. It processes this content by calling an LLM to generate descriptive text, which is then appended to the user's query to create an "enhanced query".
+        *   `aquery_vlm_enhanced`: A sophisticated query mode. It first performs a standard retrieval. It then scans the retrieved text for image file paths, encodes those images to base64, and sends the text and images together to a Vision Language Model (VLM) for a more context-aware answer.
+        *   `_generate_multimodal_cache_key`: Creates a stable cache key for multimodal queries to avoid re-processing identical requests.
 
-    F[User Defined Pydantic Model] --> G{Maybe(Model)}
-    G --> H[Maybe{Model} (Optional Result with Error Handling)]
+### `raganything/prompt.py`
 
-    I[AI Model Tool Calls] --> J{ParallelBase.from_response}
-    J -->|Tool Call Name & Arguments| K[Pydantic Model Registry Lookup]
-    K --> L[Pydantic Model Validation (registered model)]
-    L --> M[Validated Pydantic Objects (ParallelModel)]
+*   **Purpose**: Centralizes all prompt templates used throughout the application, ensuring consistency and ease of maintenance.
+*   **Key Components**:
+    *   `PROMPTS`: A dictionary holding all prompt strings.
+    *   **Analysis Prompts**: Templates for analyzing specific content types (e.g., `vision_prompt`, `table_prompt`). They instruct the LLM to return a JSON object containing a detailed description and a summary.
+    *   **Query Prompts**: Templates used during the query phase (e.g., `QUERY_IMAGE_DESCRIPTION`, `QUERY_TABLE_ANALYSIS`). These are generally simpler, asking for a brief summary or analysis of a piece of content to augment a user's query.
+    *   **System Prompts**: Defines the persona for the LLM during analysis (e.g., "You are an expert image analyst.").
 
-    N[Pydantic Model with substring_quotes] --> O{CitationMixin}
-    O -->|validation_context with "context"| P[CitationMixin.validate_sources]
-    P --> Q{Regex Matching for Spans}
-    Q --> R[Validated substring_quotes (found in context)]
+## 3. Integration & Data Flow
 
-    subgraph DSL Components
-        G
-        H
-        O
-        P
-        Q
-        R
-        C
-        D
-        E
-        J
-        K
-        L
-        M
-    end
-```
+The modules are designed to work in a pipeline:
+
+1.  **Ingestion**: A user calls a method from `BatchMixin` (e.g., `process_documents_with_rag_batch`) with a list of file paths.
+2.  **Parsing**: The `BatchMixin` method instantiates `BatchParser` from `batch_parser.py`.
+3.  **Parallel Processing**: `BatchParser` filters for supported files and uses a `ThreadPoolExecutor` to run `process_single_file` on many files at once. The underlying parsers (`MineruParser`/`DoclingParser`) extract text and identify multimodal content like images and tables, using prompts from `prompt.py` to generate analyses.
+4.  **RAG Ingestion**: After parsing is complete, the `process_documents_with_rag_batch` method loops through the successfully parsed files and calls `process_document_complete` to add them to the LightRAG vector database.
+5.  **Querying**: A user calls a query method from `QueryMixin` (e.g., `aquery_with_multimodal`).
+6.  **Query Enhancement**: If multimodal content is provided, `QueryMixin` uses prompts from `prompt.py` to generate textual descriptions of the content, creating an enhanced query.
+7.  **Retrieval & Generation**: The final query is sent to the LightRAG engine, which retrieves relevant context from the database and generates an answer.
 
 ## 4. Code Deep Dive
 
-### `instructor/dsl/citation.py` - `_get_span` for Fuzzy Matching
+### `batch_parser.py`: Parallel Processing Logic
+
+The core of the batch processing engine uses a `ThreadPoolExecutor` to manage concurrent operations. It submits all file processing tasks at once and collects the results as they complete, allowing for efficient parallelization and progress tracking.
+
 ```python
-    def _get_span(
-        self, quote: str, context: str, errs: int = 5
-    ) -> Generator[tuple[int, int], None, None]:
-        import regex
+# From raganything/batch_parser.py in BatchParser.process_batch
 
-        minor = quote
-        major = context
+with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+    # Submit all tasks
+    future_to_file = {
+        executor.submit(
+            self.process_single_file,
+            file_path,
+            output_dir,
+            parse_method,
+            **kwargs,
+        ): file_path
+        for file_path in supported_files
+    }
 
-        errs_ = 0
-        s = regex.search(f"({minor}){{e<={errs_}}}", major)
-        while s is None and errs_ <= errs:
-            errs_ += 1
-            s = regex.search(f"({minor}){{e<={errs_}}}", major)
+    # Process completed tasks
+    for future in as_completed(
+        future_to_file, timeout=self.timeout_per_file
+    ):
+        success, file_path, error_msg = future.result()
 
-        if s is not None:
-            yield from s.spans()
+        if success:
+            successful_files.append(file_path)
+        else:
+            failed_files.append(file_path)
+            errors[file_path] = error_msg
+
+        if pbar:
+            pbar.update(1)
 ```
-This snippet from `CitationMixin` demonstrates the fuzzy matching logic used to locate `substring_quotes` within a larger `context`. It iteratively increases the error tolerance (`errs_`) in the `regex.search` until a match is found or the maximum error tolerance is reached. This robust approach helps in handling slight variations between the extracted quote and the original context.
 
-### `instructor/dsl/iterable.py` - `IterableModel` Factory
+### `query.py`: VLM-Enhanced Query Logic
+
+This snippet shows the logic for the VLM-enhanced query. It retrieves text context, finds image paths within it using regex, and then replaces them with special markers while storing the base64-encoded images. This prepares a multimodal payload for the vision model.
+
 ```python
-def IterableModel(
-    subtask_class: type[BaseModel],
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-) -> type[BaseModel]:
-    # Import at runtime to avoid circular import
-    from ..processing.function_calls import OpenAISchema
+# From raganything/query.py in QueryMixin._process_image_paths_for_vlm
 
-    task_name = subtask_class.__name__ if name is None else name
+# ... (inside a replacement function for re.sub)
+try:
+    # Encode image to base64 using utility function
+    self.logger.debug(f"Attempting to encode image: {image_path}")
+    image_base64 = encode_image_to_base64(image_path)
+    if image_base64:
+        images_processed += 1
+        # Save base64 to instance variable for later use
+        self._current_images_base64.append(image_base64)
 
-    name = f"Iterable{task_name}"
+        # Keep original path info and add VLM marker
+        result = f"Image Path: {image_path}\n[VLM_IMAGE_{images_processed}]"
+        self.logger.debug(
+            f"Successfully processed image {images_processed}: {image_path}"
+        )
+        return result
+    else:
+        self.logger.error(f"Failed to encode image: {image_path}")
+        return match.group(0)  # Keep original if encoding failed
 
-    list_tasks = (
-        list[subtask_class],  # type: ignore
-        Field(
-            default_factory=list,
-            repr=False,
-            description=f"Correctly segmented list of `{task_name}` tasks",
-        ),
-    )
-
-    base_models = cast(tuple[type[BaseModel], ...], (OpenAISchema, IterableBase))
-    new_cls = create_model(
-        name,
-        tasks=list_tasks,
-        __base__=base_models,
-    )
-    new_cls = cast(type[IterableBase], new_cls)
-
-    new_cls.task_type = subtask_class
-
-    new_cls.__doc__ = (
-        f"Correct segmentation of `{task_name}` tasks"
-        if description is None
-        else description
-    )
-    assert issubclass(new_cls, OpenAISchema),
-        "The new class should be a subclass of OpenAISchema"
-    return new_cls
+except Exception as e:
+    self.logger.error(f"Failed to process image {image_path}: {e}")
+    return match.group(0)  # Keep original
 ```
-`IterableModel` is a powerful factory function that dynamically generates a new Pydantic model. This new model, designed to be an `Iterable` of `subtask_class` objects, inherits from `OpenAISchema` and `IterableBase`. It sets the `task_type` attribute, which is crucial for `IterableBase` to know how to validate and parse individual items from a streaming response. This design allows for flexible and dynamic creation of models capable of handling lists of structured outputs from AI.
 
-### `instructor/dsl/parallel.py` - `ParallelModel` Creation
-```python
-def ParallelModel(typehint: type[Iterable[T]]) -> ParallelBase:
-    the_types = get_types_array(typehint)
-    return ParallelBase(*[model for model in the_types])
-```
-This function exemplifies how `ParallelModel` is constructed. It takes a `typehint` which is an `Iterable` of Pydantic models (or a `Union` of models). It then uses `get_types_array` to extract all individual model types and instantiates `ParallelBase` with these models. This setup enables the `ParallelBase` instance to register multiple Pydantic models and intelligently route incoming tool call arguments from an AI response to the correct model for validation.
+## 5. API Reference
 
-## 5. Integration Points
-- **Dependencies**: The DSL components heavily rely on `pydantic` for model definition and validation. They also interact with `collections.abc` for various iterable and generator types. The `instructor.mode` module is used to differentiate between various AI provider specific streaming and tool calling formats. `instructor.processing.function_calls` (specifically `OpenAISchema` and `openai_schema`) is a key dependency for integrating with OpenAI's function calling mechanism. The factory functions (`IterableModel`, `Maybe`, `ParallelModel`) are designed for public consumption, allowing users to create specialized Pydantic models for their specific use cases.
-- **Dependents**: These DSL features are designed to be integrated into `instructor`'s core functionality, particularly where structured data extraction and validation from language model responses are required. They would likely be used by `instructor.patch` or similar utilities that handle the direct interaction with AI APIs, allowing users to define complex output structures with ease.))
+### Public Interface
+
+The main entry points for a user of the `RAGAnything` library are the methods within the `BatchMixin` and `QueryMixin`.
+
+| Class         | Method                                | Signature                                                                                                     |
+|---------------|---------------------------------------|---------------------------------------------------------------------------------------------------------------|
+| `BatchMixin`    | `process_documents_batch`             | `(self, file_paths: List[str], output_dir: Optional[str] = None, ..., **kwargs) -> BatchProcessingResult`      |
+| `BatchMixin`    | `process_documents_batch_async`       | `async (self, file_paths: List[str], ..., **kwargs) -> BatchProcessingResult`                                  |
+| `BatchMixin`    | `process_documents_with_rag_batch`    | `async (self, file_paths: List[str], ..., **kwargs) -> Dict[str, Any]`                                         |
+| `QueryMixin`    | `query` / `aquery`                    | `(self, query: str, mode: str = "mix", ..., **kwargs) -> str`                                                   |
+| `QueryMixin`    | `query_with_multimodal` / `aquery_with_multimodal` | `(self, query: str, multimodal_content: List[Dict[str, Any]] = None, ..., **kwargs) -> str`                 |
+
+### Internal Components
+
+`BatchParser` is a key internal component but is also usable as a standalone tool.
+
+| Class         | Method            | Signature                                                                                           |
+|---------------|-------------------|-----------------------------------------------------------------------------------------------------|
+| `BatchParser` | `process_batch`   | `(self, file_paths: List[str], output_dir: str, ..., **kwargs) -> BatchProcessingResult`             |
+| `BatchParser` | `filter_supported_files` | `(self, file_paths: List[str], recursive: bool = True) -> List[str]`                                |
 

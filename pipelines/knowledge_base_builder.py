@@ -115,8 +115,9 @@ class KnowledgeBaseBuilder:
             if summary_path:
                 output_files.append(summary_path)
             
-            if not self.dry_run:
-                self._run_validator_agent(output_files)
+            # Validator removed (Step 1336)
+            # if not self.dry_run:
+            #     self._run_validator_agent(output_files)
                 
         return sorted(output_files, key=lambda p: p.name)
 
@@ -173,8 +174,9 @@ class KnowledgeBaseBuilder:
             if summary_path:
                 output_files.append(summary_path)
         
-        if not self.dry_run:
-            self._run_validator_agent(output_files)
+        # Validator removed per user request (Step Id 1336)
+        # if not self.dry_run:
+        #     self._run_validator_agent(output_files)
         
         logger.info("Knowledge base generated with {} files", len(output_files))
         return sorted(output_files, key=lambda p: p.name)

@@ -238,33 +238,19 @@ class SpawnSubAgentsTool(Tool):
                 target_path = meta["target_path"]
                 
                 if workspace and workspace.exists():
-                    # Validation Disabled by User Request
-                    is_valid = True 
-                    validation_info = "Validation Disabled (User Request)"
-                    llm_feedback = ""
-                    issues = []
-                    logger.info(f"Skipping LLM validation for {target_path} (User Request)")
-                    
-                    status = "completed" if is_valid else "needs_retry"
+                    status = "completed"
                     result_data = {
                         "workspace": str(workspace),
                         "status": status,
-                        "validation": validation_info,
-                        "llm_feedback": llm_feedback,
+                        "validation": "Disabled",
+                        "llm_feedback": "",
                     }
                     
                     self.ctx.spawned_agents[target_path] = result_data
                     
-                    # Update Checkpoint only if valid
-                    if is_valid:
-                        self.checkpoint.save_progress(target_path, json.dumps(result_data))
-                        results_summary.append(f"- {target_path}: ✅ Success ({workspace.name})")
-                    else:
-                        # Auto-retry if under retry limit
-                        retry_count = self.ctx.retry_counts.get(target_path, 0)
-                        if retry_count < self.ctx.max_retries:
-                            self.ctx.retry_counts[target_path] = retry_count + 1
-                            results_summary.append(f"- {target_path}: ⚠️ Needs retry ({llm_feedback})")
+                    # Always save progress
+                    self.checkpoint.save_progress(target_path, json.dumps(result_data))
+                    results_summary.append(f"- {target_path}: ✅ Success ({workspace.name})")
 
                 else:
                     results_summary.append(f"- {target_path}: Failed (No workspace)")

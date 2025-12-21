@@ -2,10 +2,11 @@
 __pycache__/
 *.py[codz]
 *$py.class
-
+docs/example-paper
 # C extensions
 *.so
 data/agent_workspace
+docs/IEEE_paper*
 # Distribution / packaging
 .Python
 build/

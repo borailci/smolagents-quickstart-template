@@ -284,12 +284,16 @@ def main() -> None:
                      print(f"Winner: {res.get('winner')}")
              
              # Save JSON
-             if args.output:
-                 out_file = args.output / "comparison_report.json"
-                 out_file.parent.mkdir(parents=True, exist_ok=True)
-                 import json
-                 out_file.write_text(json.dumps(all_results, indent=2), encoding="utf-8")
-                 logger.info(f"Saved comparison report to {out_file}")
+             output_dir = args.output or Path("evaluation")
+             
+             import datetime
+             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+             c_name = codebase_root.name
+             out_file = output_dir / f"{c_name}_{timestamp}_report.json"
+             out_file.parent.mkdir(parents=True, exist_ok=True)
+             import json
+             out_file.write_text(json.dumps(all_results, indent=2), encoding="utf-8")
+             logger.info(f"Saved comparison report to {out_file}")
              return
 
         # Single Eval Mode
@@ -344,6 +348,17 @@ def main() -> None:
         if args.mode == "baseline":
             logger.info("Running in BASELINE mode (No Knowledge Base Generation)")
             logger.info(f"Output directory: {output_root}")
+            
+            # Init Metrics for Baseline
+            from utils.metrics import RunMetrics
+            from utils.llm_factory import get_model_for_role
+            
+            metrics = RunMetrics(
+                codebase_name=codebase_path.name,
+                model_id=get_model_for_role("supervisor"),
+            )
+            tutorial_metrics = metrics.start_tutorial_phase()
+            
             generator = TutorialGenerator(
                 codebase_root=codebase_path,
                 knowledge_base_root=cfg.BASELINE_KB,
@@ -352,7 +367,18 @@ def main() -> None:
                 dry_run=args.dry_run,
                 step_delay_seconds=getattr(args, "step_delay", None),
             )
-            outputs = generator.generate_baseline_with_supervisor()
+            outputs = generator.generate_baseline_with_supervisor(metrics=tutorial_metrics)
+            
+            tutorial_metrics.finish()
+            metrics.finish()
+            
+            # Save Baseline Metrics
+            try:
+                metrics.save_json(output_root / "metrics.json")
+                metrics.save_markdown_summary(output_root / "metrics.md")
+                logger.info(f"📊 Baseline Metrics saved to {output_root / 'metrics.json'}")
+            except Exception as e:
+                logger.warning(f"Failed to save baseline metrics: {e}")
             logger.info("Baseline tutorials written to:\n{}", _format_paths(outputs))
             return
 

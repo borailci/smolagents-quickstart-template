@@ -145,7 +145,7 @@ class TutorialGenerator:
         try:
             run_with_rate_limit_retry(
                 supervisor.run,
-                "Plan and generate the tutorial series following your detailed Execution Workflow in your system prompt.",
+                prompts.TUTORIAL_SUPERVISOR_TASK_TEMPLATE.format(codebase_root=self.codebase_root),
                 max_steps=50
             )
         except Exception as e:

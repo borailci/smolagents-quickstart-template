@@ -126,7 +126,7 @@ class DeepAgent:
             logger.info("=== Phase 2: Tutorial Generation ===")
             tutorial_metrics = metrics.start_tutorial_phase()
 
-            tutorial_files = self.tutorial_generator.generate()
+            tutorial_files = self.tutorial_generator.generate(metrics=tutorial_metrics)
 
             tutorial_metrics.finish()
             logger.info(f"Tutorial Phase completed in {tutorial_metrics.duration_seconds:.1f}s")

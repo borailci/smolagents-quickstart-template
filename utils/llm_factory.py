@@ -42,8 +42,8 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         est_tokens = sum(len(str(m.get("content", ""))) for m in messages) // 4
         
         # Exponential backoff parameters
-        current_wait = 10.0
-        max_wait = 60.0
+        current_wait = 30.0
+        max_wait = 120.0
         
         while True:
             try:
@@ -76,9 +76,9 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
 
                 if is_rate_limit:
                     sleep_time = min(current_wait, max_wait) # Use current_wait as retry_delay
-                    logger.warning(f"⚠️ API Rate Limit (429). Blocking execution for {sleep_time}s... (Backoff: {sleep_time}/{max_wait})")
+                    logger.warning(f"⚠️ API Rate Limit (429). Blocking execution for {sleep_time}s... (Backoff: {sleep_time}/{max_wait}). Error: {str(e)[:100]}...")
                     time.sleep(sleep_time)
-                    current_wait *= 2  # Exponential backoff
+                    current_wait = min(current_wait * 1.5, max_wait)  # Slower exponential backoff
                     continue
                 
                 # For non-rate-limit errors, we might want to retry a few times too, 

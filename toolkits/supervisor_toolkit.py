@@ -142,6 +142,9 @@ class SpawnSubAgentsTool(Tool):
         self.checkpoint = TaskCheckpoint(checkpoint_path)
 
     def forward(self, tasks: List[Dict[str, Any]]) -> str:
+        if len(tasks) > 1:
+            return f"Error: You tried to spawn {len(tasks)} agents at once. You must spawn ONLY ONE Sub-Agent at a time. Wait for it to finish, verify its output, then spawn the next one. This is strictly required to manage API limits."
+
         results_summary = []
         specs_to_run = []
         task_metadata = [] # Keep track of metadata for the specs
@@ -212,10 +215,16 @@ class SpawnSubAgentsTool(Tool):
         # We assume order is preserved (it should be).
         
         try:
+            # FIX: Create a unique subdirectory for this specific task
+            # Since we enforced len(tasks)=1, we can safeuly use the first target_path
+            current_target = task_metadata[0]["target_path"]
+            safe_dirname = current_target.replace("/", "_").replace("\\", "_").replace(".", "_")
+            unique_sub_root = self.ctx.sub_agents_root / safe_dirname
+            
             workspaces = run_typed_sub_agent_tasks(
                 specs_to_run,
                 codebase_root=self.ctx.codebase_root,
-                sub_agents_root=self.ctx.sub_agents_root, # They will be specialized inside
+                sub_agents_root=unique_sub_root, # Pass unique root so it doesn't default to shared parent
                 min_interval_seconds=5.0,
                 max_tool_calls=None,
                 max_directory_calls=None,

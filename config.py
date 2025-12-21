@@ -51,13 +51,13 @@ class Settings:
 
     # --- File Reading Limits ---
     MAX_READ_LINES: int = 500
-    MAX_TREE_DEPTH: int = 5
+    MAX_TREE_DEPTH: int = 4
     MAX_TREE_ITEMS: int = 200
     MIN_WRITE_CHARS: int = 50
 
     # --- Rate Limiting ---
     RATE_LIMIT_WINDOW_SECONDS: float = 60.0
     RATE_LIMIT_MAX_REQUESTS: int = 10
-    RATE_LIMIT_MIN_INTERVAL: float = 2.0
+    RATE_LIMIT_MIN_INTERVAL: float = 5.0
 
 settings = Settings()

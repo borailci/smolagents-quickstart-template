@@ -156,19 +156,22 @@ Your goal is to synthesize these into a high-level navigation guide for develope
 | ... | ... | ... |
 
 ## 3. Key Architecture Modules
-(Summarize the *most critical* components found across the system. Do NOT just copy-paste. Synthesize.)
-*   **Module A**: ...
-*   **Module B**: ...
+(Summarize the *most critical* components found across the system. Do NOT just copy-paste. Synthesize. **MUST include source reference**.)
+*   **Module A** (Source: `sub_agent_1.md`): ...
+*   **Module B** (Source: `sub_agent_2.md`): ...
 
 ## 4. Common Use Cases
-*   **Scenario 1**: ...
-*   **Scenario 2**: ...
+(Cite the source that describes this use case.)
+*   **Scenario 1** (Source: `sub_agent_X.md`): ...
+*   **Scenario 2** (Source: `sub_agent_Y.md`): ...
 
 **Constraints & Rules**
 - **NO MERMAID**: Do NOT generate diagrams. Use text and tables only.
 - **Accuracy**: Do not invent modules. Only describe what you read in the sub-agent files.
 - **Completeness**: Ensure every read file is referenced in the Navigation Guide table.
 - **Brevity**: This is a summary. Direct users to the specific `sub_agent_*.md` files for details.
+- **NO PLACEHOLDERS**: NEVER write `_`, `...`, `TODO`, or empty sections. You must generate the **COMPLETE** final content in memory before calling `write_workspace_file`.
+- **ATOMICITY**: Calling `write_workspace_file` is the FINAL step. Do not call it for intermediate drafts.
 
 {MARKDOWN_RULES}
 """
@@ -261,14 +264,14 @@ You are the **Knowledge Base Orchestrator**, a precise and methodical project ma
 You must strictly follow this **Execution Workflow** step-by-step. Do not skip steps. Do not deviate.
 
 ### PHASE 1: DISCOVERY & PLANNING
-1.  **Analyze Structure**: Call `get_codebase_tree(max_depth=5)` to understand the project structure.
+1.  **Analyze Structure**: Call `get_codebase_tree(max_depth=4)` to understand the project structure.
 2.  **Identify Identity**: Search for `package.json`. If `README.md` exists, reading it can help you obtain valuable context about the project's purpose.
 3.  **Select Files**: Identify high-value source code files (`.py`, `.ts`, `.tsx`, `.js`).
     *   **STRICT EXCLUSIONS**: Ignore `__init__.py`, `tests/`, `docs/`, `migrations/`, config files (`.toml`, `.json`, `.yaml`), node_modules, dist, build, and hidden files `.*`.
 4.  **Group Tasks**: logical modules.
     *   **Rule**: Create maximum 6 sub-agent tasks.
     *   **Rule**: Assign EXACTLY 1 task per sub-agent.
-    *   **Rule**: Assign maximum 5 files per task.
+    *   **Rule**: Assign maximum 4 files per task.
     *   **Rule**: Ensure every critical file is identified.
     *   **Rule**: **Naming Rule**: Use descriptive Human-Readable identifiers for tasks (e.g., "API Layer"), NOT pseudo-paths (e.g., "src/api"). Pseudo-paths confuse sub-agents.
 5.  **Draft Plan**: Create a markdown To-Do List using `write_workspace_file("compilation_plan.md", content=...)`.
@@ -284,7 +287,7 @@ You must strictly follow this **Execution Workflow** step-by-step. Do not skip s
 6.  **Spawn Agents**: Call `spawn_sub_agents(tasks=[...])` with the tasks from your plan.
     *   Use the `analyzer` role for code analysis.
     *   Pass the *exact* list of file paths to each task.
-    *   **Rule**: Do not give more than 5 files to a task.
+    *   **Rule**: Do not give more than 4 files to a task.
     *   **Rule**: Do not give more than 1 task to a sub-agent.
     *   **Tip**: You may include `README.md` in the file list if you think it will help the agent understand the context.
 
@@ -332,19 +335,26 @@ You must strictly follow this **Execution Workflow** step-by-step. Do not skip s
     *   **Intermediate**: "Creating X", "Using Feature Y".
     *   **Advanced**: "Architecture Deep Dive", "Extending Z".
 7.  **Draft Plan**: Create `tutorial_plan.md` using `write_workspace_file`.
+    *   **CONSTRAINT**: Keep it SHORT. 1-2 sentences per item.
+    *   **CONSTRAINT**: **NO MERMAID DIAGRAMS** in the plan.
+    *   **CONSTRAINT**: Use a simple list format. No extra headers.
     *   Format:
         ```markdown
         # Tutorial Series Plan
-        - [ ] 01_getting_started.md: How to install and run the basic example. (Inputs: README.md, package.json)
+        - [ ] 01_getting_started.md: How to install and run the basic example. (Inputs: README.md)
         - [ ] 02_core_concepts.md: Explaining the main architecture. (Inputs: summary_core.md)
         ```
 
-### PHASE 2: EXECUTION
-5.  **Spawn Authors**: Call `spawn_sub_agents(tasks=[...])`.
-    *   **Rule**: One sub-agent per tutorial file.
-    *   **Rule**: Pass RELEVANT KB files and Codebase files to `focus_list`.
-    *   **Rule**: **Max 5 Files per Task**. Do not overwhelm the sub-agent.
-    *   **Rule**: Use `tutorial` agent role.
+### PHASE 2: EXECUTION (STRICTLY SEQUENTIAL)
+5.  **Execution Loop**:
+    *   Pick ONE task from your plan.
+    *   Call `spawn_sub_agents(tasks=[single_task_spec])`.
+    *   **WAIT** for the result.
+    *   **Verify**: Check if the file was created.
+    *   **Update**: Mark `[x]` in `tutorial_plan.md`.
+    *   **Repeat** for the next task.
+    *   **CRITICAL**: NEVER spawn multiple agents in one tool call. One by one only.
+    *   **Rule**: **Max 4 Files per Task**.
 
 ### PHASE 3: REVIEW & REFINE
 6.  **Verify Outputs**: Check if `01_...md`, `02_...md` etc. exist in the workspace.
@@ -380,25 +390,54 @@ KB_SUPERVISOR_TASK_TEMPLATE = """
 **GOAL**: Orchestrate the creation of a comprehensive Knowledge Base for the codebase at `{codebase_root}`.
 
 **PHASE 1: DISCOVERY & PLANNING**
-1.  **Analyze**: Call `get_codebase_overview(max_depth=5)` to map the project structure.
+1.  **Analyze**: Call `get_codebase_overview(max_depth=4)` to map the project structure.
 2.  **Ground Truth**: Find the root `package.json`. If `README.md` exists, it is helpful to read it for context.
 3.  **Filter**: Strictly IGNORE `__init__.py`, tests, docs, `__pycache__`, and config files. Focus ONLY on functional source code.
 4.  **Group & Constraint Checklist & Confidence Score**:
     1. Max 6 tasks?
-    2. Max 5 files per task?
+    2. Max 4 files per task?
     3. 1 Task per Sub-Agent?
     4. Task Names are descriptive (not paths)?
     5. Excluded forbidden files?
-5.  **Plan**: Write a `compilation_plan.md` as a checklist (e.g., `- [ ] Analyze ...`).
+5.  **Plan**: Write a `compilation_plan.md` as a checklist. **CRITICAL**: For each task, you **MUST** list the specific filenames you will analyze in parentheses.
+    *   BAD: `- [ ] Analyze Core`
+    *   GOOD: `- [ ] Analyze Core (Files: client.py, utils.py)`
 
-**PHASE 2: EXECUTION**
-6.  **Delegate**: Call `spawn_sub_agents(tasks=[...])` with your plan.
-7.  **Verify**: Check that sub-agents produced valid `summary.md` files. If not, use `retry_agent`.
-8.  **Update**: Mark completed tasks in `compilation_plan.md` as `[x]` and save the file.
+**PHASE 2: EXECUTION (SEQUENTIAL LOOP)**
+6.  **Loop**:
+    *   Select ONE uncompleted task.
+    *   Call `spawn_sub_agents(tasks=[one_task])`.
+    *   **Verify**: Check for `summary.md`.
+    *   **Update**: Mark `[x]` in `compilation_plan.md`.
+    *   **Repeat** until all tasks are done.
+    *   **CRITICAL**: Do NOT batch tasks. You must run them one by one to respect API limits.
 
 **PHASE 3: COMPLETION**
-7.  **Finalize**: Call `finalize_knowledge_base` to aggregate results.
-8.  **Finish**: Call `final_answer` ONLY when the KB is fully assembled.
+"""
+
+TUTORIAL_SUPERVISOR_TASK_TEMPLATE = """
+**GOAL**: Plan and generate a comprehensive Tutorial Series (max 6 parts) for the codebase.
+
+**PHASE 1: DISCOVERY & PLANNING**
+1.  **Read KB**: Call `get_kb_tree()` to see available analysis files.
+2.  **Read KB Content**: Call `read_knowledge_base_file(filename)` for **ALL** key summary files (e.g. `executive_summary.md` and module summaries).
+    *   **CRITICAL**: You MUST read the KB to understand the architecture before planning.
+3.  **Read Code**: Use `list_codebase_directory` and `read_codebase_file` to verify specifics if needed.
+4.  **Plan**: Write `tutorial_plan.md` listing the 4-6 tutorials you will create.
+    *   Example: `- [ ] 01_Getting_Started.md (Focus: README.md, client.py)`
+
+**PHASE 2: EXECUTION (SEQUENTIAL LOOP)**
+5.  **Loop**:
+    *   Select ONE tutorial from `tutorial_plan.md`.
+    *   Call `spawn_sub_agents(tasks=[one_task])` with `role="tutorial"`.
+    *   **Wait** for it to finish.
+    *   **Verify**: Check if the file exists.
+    *   **Update**: Mark `[x]` in `tutorial_plan.md`.
+    *   **Repeat** for the next tutorial.
+    *   **CRITICAL**: Do NOT batch tasks. Run one by one.
+
+**PHASE 3: PUBLISH**
+6.  **Finalize**: Call `final_answer(answer="Tutorial series created.")`.
 """
 
 ANALYZER_SPAWN_TASK_TEMPLATE = """
@@ -423,9 +462,7 @@ ANALYZER_SPAWN_TASK_TEMPLATE = """
 **Constraints**:
 *   **NO MERMAID**: Do NOT generate diagrams in this file. Provide raw data for downstream agents to use.
 *   Do not hallucinate files not in the list.
-*   Do not hallucinate files not in the list.
 *   Your output must be technical and complete.
-*   **OUTPUT TOKEN LIMIT**: You have a strict output limit. **DO NOT** dump full file contents. Summarize logic, classes, and 3-4 key function signatures only. If the file is large, describe its purpose and list main components without implementation details.
 *   **OUTPUT TOKEN LIMIT**: You have a strict output limit. **DO NOT** dump full file contents. Summarize logic, classes, and 3-4 key function signatures only. If the file is large, describe its purpose and list main components without implementation details.
 *   **NEVER TRUNCATE**: If you find yourself writing too much, STOP and Summarize. A shorter, complete summary is better than a long, cut-off one.
 *   **Atomic Writes**: NEVER create an empty file. Content must be ready before writing.

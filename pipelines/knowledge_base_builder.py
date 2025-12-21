@@ -242,17 +242,17 @@ class KnowledgeBaseBuilder:
                 # We want to see what's inside sub_agents_root
                 # Structure: sub_agents_root / target_name / workspace / summary.md
                 # We can iterate and build a nice tree
-                if not self.sub_agents_root.exists():
-                    return "Sub-agents root directory not found."
+                if not self.output_root.exists():
+                    return "Knowledge Base output directory not found."
                 
-                for path in sorted(self.sub_agents_root.rglob("*.md")):
+                for path in sorted(self.output_root.glob("*.md")):
                     # Relativize path
                     try:
-                        rel = path.relative_to(self.sub_agents_root)
+                        rel = path.relative_to(self.output_root)
                         tree_str += f"- {rel}\n"
                     except ValueError:
                         pass
-                return tree_str if tree_str else "No markdown files found in sub-agents root."
+                return tree_str if tree_str else "No markdown files found in knowledge base."
 
         class ReadKBTool(Tool):
             name = "read_knowledge_base_file"
@@ -265,15 +265,15 @@ class KnowledgeBaseBuilder:
                 if ".." in filename or filename.startswith("/"):
                      return "Access denied for absolute or parent paths."
                 
-                # Check in sub_agents_root first (primary source now)
-                path = self.sub_agents_root / filename
-                if path.exists() and self.sub_agents_root in path.resolve().parents:
-                    return path.read_text(encoding="utf-8")
-                
-                # Fallback to output_root for older files
+                # Check in output_root first (primary source, finalized files)
                 path_out = self.output_root / filename
                 if path_out.exists() and self.output_root in path_out.resolve().parents:
                     return path_out.read_text(encoding="utf-8")
+
+                # Fallback to sub_agents_root (raw files)
+                path = self.sub_agents_root / filename
+                if path.exists() and self.sub_agents_root in path.resolve().parents:
+                    return path.read_text(encoding="utf-8")
 
                 return f"File '{filename}' not found."
 
@@ -289,6 +289,9 @@ class KnowledgeBaseBuilder:
             def forward(self2, file_path: str, content: str) -> str:
                 if file_path != "executive_summary.md":
                     return "Error: You can only write to 'executive_summary.md'."
+                
+                if not content.strip() or len(content.strip()) < 200:
+                    return f"Error: Content is too short ({len(content.strip())} chars). You MUST generate a FULL Executive Summary (min 200 chars) that includes the High-Level Purpose, Navigation Guide, and Key Modules."
                 
                 (self.output_root / file_path).write_text(content, encoding="utf-8")
                 return "Successfully wrote executive_summary.md"

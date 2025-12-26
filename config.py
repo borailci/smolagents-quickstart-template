@@ -60,4 +60,14 @@ class Settings:
     RATE_LIMIT_MAX_REQUESTS: int = 10
     RATE_LIMIT_MIN_INTERVAL: float = 5.0
 
+    # --- Pipeline Limits ---
+    # Supervisor agent limits
+    SUPERVISOR_MAX_STEPS: int = 50
+    SUB_AGENT_MAX_STEPS: int = 50
+    
+    # Task constraints (enforced by prompts)
+    MAX_TASKS_PER_RUN: int = 6
+    MAX_FILES_PER_TASK: int = 4
+    MAX_TUTORIALS: int = 6
+
 settings = Settings()

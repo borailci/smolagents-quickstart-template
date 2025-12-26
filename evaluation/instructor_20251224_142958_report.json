@@ -1,0 +1,14 @@
+[
+  {
+    "winner": "B",
+    "fidelity_A": 5,
+    "fidelity_B": 5,
+    "pedagogy_A": 4,
+    "pedagogy_B": 5,
+    "coverage_A": 3,
+    "coverage_B": 5,
+    "rationale": "Both tutorials have high fidelity to the codebase. Series A is a good introduction, but Series B has better pedagogy and much greater coverage of the library's features, including the CLI, which is a significant part of the codebase. Series B's tutorial plan is also more comprehensive. Series A only covers the basics, while Series B goes into more advanced topics like streaming, citations, and the CLI.",
+    "file_name": "Comparison (Agentic)",
+    "model": "vertex_ai/gemini-2.5-pro"
+  }
+]

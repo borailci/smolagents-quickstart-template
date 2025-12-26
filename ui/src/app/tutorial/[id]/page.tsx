@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { FileSidebar } from '@/components/FileSidebar';
 import { MarkdownViewer } from '@/components/MarkdownViewer';
 import { Toolbar } from '@/components/Toolbar';
+import { TutorialNavigation } from '@/components/TutorialNavigation';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2 } from 'lucide-react';
 
@@ -122,7 +123,7 @@ export default function TutorialPage() {
     const currentFileTitle = codebase.tutorials.find(t => t.filename === activeFile)?.title || activeFile;
 
     return (
-        <div className="flex h-[calc(100vh-7.5rem)] flex-col">
+        <div className="flex h-[calc(100vh-7.5rem)] flex-col max-w-full overflow-hidden">
             <Toolbar
                 codebaseName={codebase.name}
                 currentFile={currentFileTitle}
@@ -133,42 +134,47 @@ export default function TutorialPage() {
                 accentColor={accentColor}
             />
 
-            <div className="flex flex-1 min-h-0 overflow-hidden">
+            <div className="flex flex-1 min-h-0 max-w-full overflow-hidden">
                 <FileSidebar
                     files={codebase.tutorials.map(t => ({ path: t.filename, title: t.title }))}
                     activeFile={activeFile}
                     onFileSelect={setActiveFile}
                     accentColor={accentColor}
+                    codebaseId={id}
                 />
 
-                <motion.div
-                    className="flex-1 min-h-0 overflow-hidden"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                >
-                    <ScrollArea className="h-full">
-                        <div
-                            className="mx-auto max-w-4xl p-8 pb-16"
-                            style={{ fontSize: `${zoom}%` }}
-                        >
-                            {isLoading ? (
-                                <div className="flex items-center justify-center py-20">
-                                    <Loader2 className="h-8 w-8 animate-spin text-violet-400" />
-                                </div>
-                            ) : isEditMode ? (
-                                <div className="rounded-lg border border-white/10 bg-slate-900 p-4">
-                                    <textarea
-                                        value={content}
-                                        onChange={e => setContent(e.target.value)}
-                                        className="h-[60vh] w-full resize-none bg-transparent font-mono text-sm text-slate-300 focus:outline-none"
-                                    />
-                                </div>
-                            ) : (
+                <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="p-8 pb-16"
+                        style={{ fontSize: `${zoom}%` }}
+                    >
+                        {isLoading ? (
+                            <div className="flex items-center justify-center py-20">
+                                <Loader2 className="h-8 w-8 animate-spin text-violet-400" />
+                            </div>
+                        ) : isEditMode ? (
+                            <div className="rounded-lg border border-white/10 bg-slate-900 p-4">
+                                <textarea
+                                    value={content}
+                                    onChange={e => setContent(e.target.value)}
+                                    className="h-[60vh] w-full resize-none bg-transparent font-mono text-sm text-slate-300 focus:outline-none"
+                                />
+                            </div>
+                        ) : (
+                            <>
                                 <MarkdownViewer content={content} />
-                            )}
-                        </div>
-                    </ScrollArea>
-                </motion.div>
+                                <TutorialNavigation
+                                    files={codebase.tutorials.map(t => ({ path: t.filename, title: t.title }))}
+                                    activeFile={activeFile}
+                                    onFileSelect={setActiveFile}
+                                    accentColor={accentColor}
+                                />
+                            </>
+                        )}
+                    </motion.div>
+                </div>
             </div>
         </div>
     );

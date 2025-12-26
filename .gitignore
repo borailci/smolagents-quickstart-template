@@ -5,8 +5,6 @@ __pycache__/
 docs/example-paper
 # C extensions
 *.so
-data/agent_workspace
-docs/IEEE_paper*
 # Distribution / packaging
 .Python
 build/
@@ -27,7 +25,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+data/agent_workspace
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.

@@ -16,7 +16,7 @@ const messages = [
     'Preparing content...',
 ];
 
-const duration = parseInt(process.env.NEXT_PUBLIC_LOADING_DURATION_MS || '3500', 10);
+const duration = parseInt(process.env.NEXT_PUBLIC_LOADING_DURATION_MS || '1500', 10);
 
 export function LoadingProgress({ accentColor, onComplete }: LoadingProgressProps) {
     const [progress, setProgress] = useState(0);
@@ -35,7 +35,7 @@ export function LoadingProgress({ accentColor, onComplete }: LoadingProgressProp
 
             if (newProgress >= 100) {
                 clearInterval(interval);
-                setTimeout(onComplete, 300);
+                onComplete(); // Navigate immediately, no delay
             }
         }, 16);
 

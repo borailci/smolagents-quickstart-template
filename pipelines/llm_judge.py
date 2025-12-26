@@ -16,7 +16,8 @@ import glob
 from pathlib import Path
 from loguru import logger
 from utils.llm_factory import create_model
-from smolagents import LiteLLMModel, CodeAgent
+from smolagents import LiteLLMModel
+from smolagents.agents import ToolCallingAgent
 from toolkits.scoped_filesystem_toolkit import build_scoped_tools
 
 
@@ -129,6 +130,40 @@ You MUST use these tools to verify:
        "rationale": "Detailed explanation..."
    }})
    ```
+   ```
+"""
+
+COMPARE_PROMPT = """You are an expert technical documentation reviewer.
+Your task is to compare two versions of a tutorial for the same topic and decide which one is better.
+
+## Codebase Context
+{codebase_context}
+
+## Tutorial Version A
+{content_a}
+
+## Tutorial Version B
+{content_b}
+
+## Instructions
+1. Read the Codebase Context to understand the topic.
+2. Read both tutorials.
+3. Compare them based on:
+    - **Accuracy**: Does it match the code?
+    - **Clarity**: Is it easy to understand?
+    - **Completeness**: Does it solve the problem?
+    - **Code Quality**: Are examples robust?
+
+## Response Format
+Return ONLY valid JSON (no markdown fences):
+{{
+    "winner": "A" or "B" or "Tie",
+    "rationale": "Explanation...",
+    "scores": {{
+        "A": <1-5>,
+        "B": <1-5>
+    }}
+}}
 """
 
 def evaluate_series(model_id: str, codebase_context: str, baseline_paths: List[Path], deep_paths: List[Path]) -> dict | None:
@@ -215,13 +250,12 @@ def evaluate_series(model_id: str, codebase_context: str, baseline_paths: List[P
     # Step callback to add delay between steps
     import time as time_module
     def step_delay_callback(step_log):
-        time_module.sleep(2)  # 2 second delay between steps
+        time_module.sleep(0.5)  # 0.5 second delay between steps
     
-    agent = CodeAgent(
+    agent = ToolCallingAgent(
         tools=tools,
         model=model,
-        add_base_tools=True, # Allow python helpers
-        max_steps=12, # Allow 12 steps of exploration
+        max_steps=50, # Allow extensive exploration
         step_callbacks=[step_delay_callback],
     )
 

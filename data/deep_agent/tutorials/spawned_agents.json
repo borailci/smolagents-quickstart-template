@@ -1,0 +1,37 @@
+{
+  "tutorial_plan.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/tutorial_plan",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "01_getting_started.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/01_getting_started",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "02_advanced_validation.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/02_advanced_validation",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "03_other_providers.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/03_other_providers",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "04_streaming_lists.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/04_streaming_lists",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "05_batch_processing.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/05_batch_processing",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "06_building_a_cli.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/06_building_a_cli",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  }
+}

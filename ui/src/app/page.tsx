@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CodebaseCard } from '@/components/CodebaseCard';
 import { LoadingProgress } from '@/components/LoadingProgress';
+import { Search, X } from 'lucide-react';
 
 interface Tutorial {
   filename: string;
@@ -31,6 +32,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [selectedCodebase, setSelectedCodebase] = useState<Codebase | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     fetch('/api/codebases')
@@ -58,6 +60,17 @@ export default function Home() {
 
   const getStyle = (id: string) => codebaseStyles[id] || codebaseStyles.default;
 
+  // Filter codebases based on search query
+  const filteredCodebases = useMemo(() => {
+    if (!searchQuery.trim()) return codebases;
+    const query = searchQuery.toLowerCase();
+    return codebases.filter(cb =>
+      cb.name.toLowerCase().includes(query) ||
+      cb.description.toLowerCase().includes(query) ||
+      cb.tutorials.some(t => t.title.toLowerCase().includes(query))
+    );
+  }, [codebases, searchQuery]);
+
   return (
     <>
       <AnimatePresence>
@@ -74,7 +87,7 @@ export default function Home() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-12 text-center"
+          className="mb-8 text-center"
         >
           <h2 className="mb-4 text-4xl font-bold">
             <span className="bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
@@ -84,6 +97,38 @@ export default function Home() {
           <p className="mx-auto max-w-2xl text-lg text-slate-400">
             AI-generated tutorials from your codebases. Click a card to start learning.
           </p>
+        </motion.div>
+
+        {/* Search Bar */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mx-auto mb-8 max-w-md"
+        >
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search tutorials..."
+              className="w-full rounded-xl border border-white/10 bg-slate-800/50 py-3 pl-10 pr-10 text-white placeholder-slate-400 outline-none transition-all focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+          {searchQuery && (
+            <p className="mt-2 text-center text-sm text-slate-400">
+              {filteredCodebases.length} result{filteredCodebases.length !== 1 ? 's' : ''} found
+            </p>
+          )}
         </motion.div>
 
         {/* Error state */}
@@ -99,7 +144,7 @@ export default function Home() {
 
         {/* Cards Grid */}
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {codebases.map((codebase, index) => (
+          {filteredCodebases.map((codebase, index) => (
             <CodebaseCard
               key={codebase.id}
               codebase={{

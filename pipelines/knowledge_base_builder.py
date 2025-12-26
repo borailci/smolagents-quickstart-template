@@ -13,6 +13,7 @@ from config import settings
 
 __all__ = ["KnowledgeBaseBuilder"]
 
+
 load_dotenv()
 
 class KnowledgeBaseBuilder:
@@ -44,85 +45,16 @@ class KnowledgeBaseBuilder:
             raise RuntimeError("Supervisor agent failed to generate any knowledge base files. Check the logs for details.")
         return results
 
-    def generate_with_simple_heuristic(self, metrics: Any = None) -> List[Path]:
-        """
-        Fallback method: Deterministic generation.
-        Spawns one sub-agent for every first-level directory in src/ (or root).
-        """
-        logger.info("Running Simple Heuristic Generation...")
-        
-        if self.force_rebuild and not self.dry_run:
-            self._reset_directory(self.sub_agents_root)
-            self._reset_directory(self.output_root)
-        
-        # 1. Identify Targets
-        src_path = self.codebase_root / "src"
-        if not src_path.exists():
-            src_path = self.codebase_root
-            
-        targets = []
-        for item in src_path.iterdir():
-            if item.is_dir() and not item.name.startswith(".") and item.name not in ("__pycache__", "tests", "docs", "node_modules"):
-                targets.append(item)
-                
-        if not targets:
-            logger.warning("No directories found to analyze.")
-            return []
-            
-        logger.info(f"Identified {len(targets)} targets: {[t.name for t in targets]}")
-        
-        if self.dry_run:
-            return []
-
-        # 2. Spawn Sub-Agents
-        from toolkits.sub_agent_toolkit import run_typed_sub_agent_tasks, SubAgentTaskSpec, SubAgentRole
-        from prompts import prompts
-        
-        tasks = []
-        for target in targets:
-            # Create a task spec for each directory
-            # We use the generic analyzer template but adapted for direct use
-            
-            # Simple heuristic: Use the directory name as the target path
-            rel_path = target.relative_to(self.codebase_root)
-            
-            # Construct the task description
-            # We use the ANALYZER logical Prompt (SUB_AGENT_KB_PROMPT) + a specific instruction
-            task_desc = f"Analyze the directory '{rel_path}'. Document its purpose, key components, and data flow. Save as 'summary.md'."
-            
-            spec = SubAgentTaskSpec(
-                description=task_desc,
-                role=SubAgentRole.ANALYZER,
-                instructions=prompts.SUB_AGENT_KB_PROMPT
-            )
-            tasks.append(spec)
-            
-        # Run them
-        workspaces = run_typed_sub_agent_tasks(
-            tasks,
-            codebase_root=self.codebase_root,
-            sub_agents_root=self.sub_agents_root,
-            min_interval_seconds=2.0, # Slightly faster for heuristic
-            metrics=metrics,
-        )
-        
-        # 3. Collect & Finalize
-        self._collect_from_sub_agents()
-        
-        output_files = list(self.output_root.glob("*.md"))
-        if output_files:
-            summary_path = self._run_summary_agent(output_files)
-            if summary_path:
-                output_files.append(summary_path)
-            
-            # Validator removed (Step 1336)
-            # if not self.dry_run:
-            #     self._run_validator_agent(output_files)
-                
-        return sorted(output_files, key=lambda p: p.name)
+    # generate_with_simple_heuristic removed (refactoring)
 
     def generate_with_supervisor(self, metrics: Any = None) -> List[Path]:
         """Generate knowledge base using the Supervisor Agent."""
+        # FIX: Clear stale checkpoint from previous runs to prevent task skipping
+        checkpoint_file = self.output_root / "analysis_checkpoint.json"
+        if checkpoint_file.exists():
+            checkpoint_file.unlink()
+            logger.info("🔄 Cleared stale checkpoint from previous run")
+        
         if self.force_rebuild and not self.dry_run:
             self._reset_directory(self.sub_agents_root)
             self._reset_directory(self.output_root)
@@ -318,43 +250,7 @@ class KnowledgeBaseBuilder:
             
         return None
 
-    def _run_validator_agent(self, paths: List[Path]):
-        """Run the Validator Agent on generated files."""
-        if not paths:
-            return
-
-        from toolkits.validator_toolkit import build_validator_tools
-        from utils.llm_factory import create_model
-        
-        # Use Flash model for validation (cost-efficient)
-        model = create_model(role="sub_agent") 
-        
-        tools = build_validator_tools(target_root=self.output_root)
-        
-        validator = ToolCallingAgent(
-            name="markdown_validator",
-            description="Validates and fixes markdown formatting.",
-            tools=tools,
-            model=model,
-            instructions=prompts.VALIDATOR_AGENT_PROMPT,
-        )
-
-        for path in paths:
-            # Skip plan files as per user request
-            if "plan" in path.name.lower():
-                logger.debug(f"Skipping validation for plan file: {path.name}")
-                continue
-
-            try:
-                # Relative filename for the tool
-                filename = path.name
-                logger.info(f"🔍 Validating {filename}...")
-                
-                validator.run(f"Validate and fix formatting issues in '{filename}'.")
-                
-                logger.info(f"✅ Validation complete for {filename}")
-            except Exception as e:
-                logger.warning(f"Validator failed for {filename}: {e}")
+    # _run_validator_agent removed (refactoring)
 
     def _reset_directory(self, path: Path):
         if path.exists(): shutil.rmtree(path)

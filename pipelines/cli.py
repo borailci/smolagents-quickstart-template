@@ -75,11 +75,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Maximum number of directories to analyze.",
     )
-    kb_parser.add_argument(
-        "--supervisor",
-        action="store_true",
-        help="Use the Supervisor Agent instead of simple heuristic.",
-    )
+    # usage of --supervisor flag removed (default is now supervisor)
     tutorial_parser = subparsers.add_parser(
         "tutorials",
         aliases=["build-tutorials", "tutorial"],
@@ -185,7 +181,8 @@ def generate_knowledge_base(
     force_rebuild: bool = False,
     step_delay_seconds: float | None = None,
     max_targets: int | None = None,
-    use_supervisor: bool = False,
+
+    # use_supervisor unused, kept for signature compatibility or removed? Removing from signature.
 ) -> list[Path]:
     builder = KnowledgeBaseBuilder(
         codebase_root=codebase,
@@ -196,9 +193,7 @@ def generate_knowledge_base(
         step_delay_seconds=step_delay_seconds,
         max_targets=max_targets,
     )
-    if use_supervisor:
-        return builder.generate_with_supervisor()
-    return builder.generate()
+    return builder.generate_with_supervisor()
 
 
 def generate_tutorials(
@@ -240,7 +235,7 @@ def main() -> None:
             force_rebuild=args.force_rebuild,
             step_delay_seconds=args.step_delay,
             max_targets=args.max_targets,
-            use_supervisor=args.supervisor,
+
         )
         logger.info("Knowledge base written to:\n{}", _format_paths(outputs))
     elif args.command == "tutorials":
@@ -377,6 +372,10 @@ def main() -> None:
                 metrics.save_json(output_root / "metrics.json")
                 metrics.save_markdown_summary(output_root / "metrics.md")
                 logger.info(f"📊 Baseline Metrics saved to {output_root / 'metrics.json'}")
+                
+                # Also save to centralized metrics directory
+                centralized_path = metrics.save_to_metrics_dir(pipeline_type="baseline")
+                logger.info(f"📊 Baseline Metrics also saved to {centralized_path}")
             except Exception as e:
                 logger.warning(f"Failed to save baseline metrics: {e}")
             logger.info("Baseline tutorials written to:\n{}", _format_paths(outputs))

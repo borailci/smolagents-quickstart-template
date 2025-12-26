@@ -7,7 +7,7 @@ import pytest
 sys.path.insert(0, str(Path.cwd()))
 
 from pipelines.tutorial_generator import TutorialGenerator
-from pipelines.types import TutorialOutlineItem
+# pipelines.types import removed
 
 @pytest.fixture
 def mock_dirs(tmp_path):
@@ -63,7 +63,7 @@ def test_create_supervisor_tools_injection(mock_dirs):
         sub_agents_root=sub
     )
     
-    with patch("toolkits.tutorial_toolkit.build_tutorial_supervisor_tools") as mock_build_tools:
+    with patch("pipelines.tutorial_generator.build_tutorial_supervisor_tools") as mock_build_tools:
         with patch("utils.llm_factory.create_model"):
              with patch("smolagents.ToolCallingAgent"):
                 gen._create_supervisor_agent()
@@ -72,5 +72,6 @@ def test_create_supervisor_tools_injection(mock_dirs):
                     codebase_root=code,
                     sub_agents_root=sub,
                     output_root=out,
-                    knowledge_base_root=kb
+                    knowledge_base_root=kb,
+                    metrics=None
                 )

@@ -52,49 +52,42 @@ class SupervisorContext:
         self.max_retries = max_retries
         self.knowledge_base_root = knowledge_base_root
         self.metrics = metrics
-        self.spawned_agents: Dict[str, Dict[str, Any]] = {}
         self.retry_counts: Dict[str, int] = {}
-
-
-def _llm_validate_output(content: str, target_path: str) -> Dict[str, Any]:
-    """Use LLM to validate sub-agent output quality."""
-    try:
-        from utils.llm_factory import create_model
-        import re
         
-        model = create_model(role="sub_agent")  # Use fast model
-        prompt = f"""Evaluate this documentation output for completeness and quality.
+        # Spawned agents persistence
+        self._spawned_agents_path = output_root / "spawned_agents.json"
+        self.spawned_agents: Dict[str, Dict[str, Any]] = self._load_spawned_agents()
+    
+    def _load_spawned_agents(self) -> Dict[str, Dict[str, Any]]:
+        """Load spawned_agents mapping from JSON file (crash recovery)."""
+        import json
+        if self._spawned_agents_path.exists():
+            try:
+                with open(self._spawned_agents_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    logger.info(f"📂 Loaded {len(data)} spawned_agents from {self._spawned_agents_path.name}")
+                    return data
+            except Exception as e:
+                logger.warning(f"Failed to load spawned_agents: {e}")
+        return {}
+    
+    def save_spawned_agents(self) -> None:
+        """Persist spawned_agents mapping to JSON file."""
+        import json
+        try:
+            self.output_root.mkdir(parents=True, exist_ok=True)
+            with open(self._spawned_agents_path, "w", encoding="utf-8") as f:
+                json.dump(self.spawned_agents, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save spawned_agents: {e}")
+    
+    def register_agent(self, key: str, data: Dict[str, Any]) -> None:
+        """Register a spawned agent and persist immediately."""
+        self.spawned_agents[key] = data
+        self.save_spawned_agents()
 
-Content (first 3000 chars):
-```
-{content[:3000]}
-```
 
-Check:
-1. Does it have a clear Overview/Purpose section?
-2. Are code examples complete (not cut off mid-line)?
-3. Does it end properly (not mid-sentence or with incomplete code)?
-4. Are all code blocks properly closed (matching ``` pairs)?
-
-Respond ONLY with JSON:
-{{"is_valid": true/false, "issues": ["issue1", ...], "feedback": "brief feedback"}}
-"""
-        response = model(messages=[{"role": "user", "content": prompt}], max_tokens=300)
-        
-        # Parse response
-        resp_text = str(response.content) if hasattr(response, "content") else str(response)
-        resp_text = re.sub(r"```json?\s*", "", resp_text).strip()
-        resp_text = re.sub(r"```$", "", resp_text).strip()
-        
-        result = json.loads(resp_text)
-        return result
-        
-    except Exception as e:
-        logger.warning(f"LLM validation failed: {e}")
-        # Fallback: basic length check only
-        if len(content) >= 500:
-            return {"is_valid": True, "issues": [], "feedback": "LLM validation failed, length check passed"}
-        return {"is_valid": False, "issues": ["LLM validation failed and content too short"], "feedback": str(e)}
+# _llm_validate_output removed (unused)
 
 
 
@@ -118,16 +111,17 @@ class SpawnSubAgentsTool(Tool):
     inputs = {
         "tasks": {
             "type": "array",
-            "description": "List of task objects. Each object must have: 'target_path', 'focus_files' (list), 'agent_type' ('analyzer'|'summarizer'), and optional 'custom_instructions'.",
+            "description": "List of task objects. Each object must have: 'target_path', 'focus_files' (list), 'task_name' (conceptual 2-3 word name), 'agent_type' ('analyzer'|'summarizer'), and optional 'custom_instructions'.",
             "items": {
                 "type": "object",
                 "properties": {
                     "target_path": {"type": "string"},
+                    "task_name": {"type": "string", "description": "Conceptual 2-3 word name for the KB file, e.g. 'encoding_core', 'cli_tools'"},
                     "focus_files": {"type": "array", "items": {"type": "string"}},
                     "agent_type": {"type": "string", "enum": ["analyzer", "summarizer"]},
                     "custom_instructions": {"type": "string", "nullable": True}
                 },
-                "required": ["target_path", "focus_files"]
+                "required": ["target_path", "focus_files", "task_name"]
             }
         }
     }
@@ -152,18 +146,32 @@ class SpawnSubAgentsTool(Tool):
         # 1. Filter and Prepare Tasks
         for task in tasks:
             target_path = task.get("target_path")
+            task_name = task.get("task_name", "")  # NEW: Conceptual name
             focus_files = task.get("focus_files", [])
             agent_type = task.get("agent_type", "analyzer")
             custom_instructions = task.get("custom_instructions", "")
 
-            # CHECKPOINT CHECK
-            if self.checkpoint.is_processed(target_path):
-                result = self.checkpoint.get_result(target_path)
+            # CHECKPOINT CHECK - Use task_name as unique key (fallback to target_path)
+            checkpoint_key = task_name if task_name else target_path
+            if self.checkpoint.is_processed(checkpoint_key):
+                result = self.checkpoint.get_result(checkpoint_key)
                 if result:
-                    self.ctx.spawned_agents[target_path] = json.loads(result)
-                    logger.info(f"⏩ [SKIP] {target_path} already analyzed.")
-                    results_summary.append(f"- {target_path}: Skipped (Already Completed)")
+                    self.ctx.register_agent(checkpoint_key, json.loads(result))
+                    logger.info(f"⏩ [SKIP] {checkpoint_key} already analyzed.")
+                    results_summary.append(f"- {checkpoint_key}: Skipped (Already Completed)")
                     continue
+            
+            # VALIDATE FILE EXISTENCE
+            missing_files = []
+            for f in focus_files:
+                file_path = self.ctx.codebase_root / f
+                if not file_path.exists():
+                    missing_files.append(f)
+            
+            if missing_files:
+                return f"Error: The following files do not exist in the codebase:\n" + \
+                       "\n".join(f"  - {f}" for f in missing_files) + \
+                       f"\n\nUse `list_codebase_directory` to verify actual file names in '{target_path}'."
             
             # Prepare Spec
             focus_list = "\n".join(f"- `{f}`" for f in focus_files) if focus_files else "(none)"
@@ -187,6 +195,7 @@ class SpawnSubAgentsTool(Tool):
                 )
             else:
                  task_desc = prompts.ANALYZER_SPAWN_TASK_TEMPLATE.format(
+                    task_name=task_name or target_path,  # Use task_name from compilation plan, fallback to path
                     target_path=target_path,
                     focus_list=focus_list,
                     real_directory=real_directory,
@@ -201,6 +210,7 @@ class SpawnSubAgentsTool(Tool):
             specs_to_run.append(spec)
             task_metadata.append({
                 "target_path": target_path,
+                "task_name": task_name,  # NEW: Store conceptual name
                 "agent_type": agent_type
             })
 
@@ -215,10 +225,11 @@ class SpawnSubAgentsTool(Tool):
         # We assume order is preserved (it should be).
         
         try:
-            # FIX: Create a unique subdirectory for this specific task
-            # Since we enforced len(tasks)=1, we can safeuly use the first target_path
-            current_target = task_metadata[0]["target_path"]
-            safe_dirname = current_target.replace("/", "_").replace("\\", "_").replace(".", "_")
+            # FIX: Create a unique subdirectory for this specific task using TASK_NAME (not target_path!)
+            # Since we enforced len(tasks)=1, we can safely use the first task's metadata
+            # Using task_name ensures each task gets its own workspace (e.g., "Core_Logic", "Query_and_Batch")
+            current_task_name = task_metadata[0].get("task_name") or task_metadata[0]["target_path"]
+            safe_dirname = current_task_name.replace(" ", "_").replace("/", "_").replace("\\", "_").replace(".", "_")
             unique_sub_root = self.ctx.sub_agents_root / safe_dirname
             
             workspaces = run_typed_sub_agent_tasks(
@@ -241,16 +252,16 @@ class SpawnSubAgentsTool(Tool):
                     status = "completed"
                     result_data = {
                         "workspace": str(workspace),
+                        "task_name": meta.get("task_name", ""),  # NEW: Store for finalize
                         "status": status,
-                        "validation": "Disabled",
-                        "llm_feedback": "",
                     }
                     
-                    self.ctx.spawned_agents[target_path] = result_data
+                    self.ctx.register_agent(checkpoint_key, result_data)
                     
-                    # Always save progress
-                    self.checkpoint.save_progress(target_path, json.dumps(result_data))
-                    results_summary.append(f"- {target_path}: ✅ Success ({workspace.name})")
+                    # Always save progress using task_name as key
+                    checkpoint_key = meta.get("task_name") if meta.get("task_name") else target_path
+                    self.checkpoint.save_progress(checkpoint_key, json.dumps(result_data))
+                    results_summary.append(f"- {checkpoint_key}: ✅ Success ({workspace.name})")
 
                 else:
                     results_summary.append(f"- {target_path}: Failed (No workspace)")
@@ -275,22 +286,28 @@ class SpawnSubAgentsTool(Tool):
             content = plan_file.read_text(encoding="utf-8")
             lines = content.splitlines()
             updated_lines = []
-            targets = [m["target_path"] for m in metadata]
             marked_count = 0
             
+            # Build lookup: task_name -> target_path
+            task_names = {m.get("task_name", ""): m["target_path"] for m in metadata}
+            
             for line in lines:
-                original_line = line
-                # Check if this line contains any of our target paths
-                for t in targets:
-                    # Fuzzy match: check if target path (or last part) is in the line
-                    target_parts = t.replace("\\", "/").split("/")
-                    target_name = target_parts[-1] if target_parts else t
-                    
-                    if (t in line or target_name in line) and "[ ]" in line:
-                        line = line.replace("[ ]", "[x]")
-                        marked_count += 1
-                        logger.info(f"✅ Marked task as complete: {t}")
-                        break
+                # Check if this line contains any of our task names
+                if "[ ]" in line:
+                    for task_name, target_path in task_names.items():
+                        # UNIQUE MATCH: Use task_name which should be unique per task
+                        # Match patterns: "task_name:" or "(task_name)" in the line
+                        if task_name and (f"({task_name})" in line or f" {task_name} " in line or f":{task_name}" in line or line.strip().startswith(f"- [ ] {task_name}")):
+                            line = line.replace("[ ]", "[x]")
+                            marked_count += 1
+                            logger.info(f"✅ Marked task as complete: {task_name}")
+                            break
+                        # Fallback: exact target_path at end of line (for tasks without task_name)
+                        elif not task_name and line.strip().endswith(f"({target_path})"):
+                            line = line.replace("[ ]", "[x]")
+                            marked_count += 1
+                            logger.info(f"✅ Marked task as complete: {target_path}")
+                            break
                         
                 updated_lines.append(line)
             
@@ -494,10 +511,10 @@ class RetryAgentTool(Tool):
 
             workspace = workspaces[0] if workspaces else None
             if workspace and workspace.exists():
-                self.ctx.spawned_agents[target_path] = {
+                self.ctx.register_agent(target_path, {
                     "workspace": str(workspace),
                     "status": "retry_completed",
-                }
+                })
                 return json.dumps({"workspace": str(workspace), "status": "retry_completed"})
             else:
                 return json.dumps({"workspace": str(retry_workspace), "status": "retry_failed", "error": "No output"})
@@ -509,11 +526,15 @@ class RetryAgentTool(Tool):
 
 class FinalizeKnowledgeBaseTool(Tool):
     name = "finalize_knowledge_base"
-    description = "Collect all sub-agent outputs into final KB directory."
+    description = """Collect all sub-agent outputs into final KB directory.
+    
+IMPORTANT: You can pass an EMPTY list [] and this tool will AUTO-DISCOVER all workspaces from previously spawned agents. 
+If you pass workspace paths, they must be ACTUAL DIRECTORY PATHS (not plan content or task descriptions).
+Returns: 'Collected N files to [path]: [list of files]'. If N=0, investigate and retry failed tasks."""
     inputs = {
         "workspaces": {
             "type": "array",
-            "description": "List of workspace paths to collect from",
+            "description": "List of workspace paths to collect from. Pass EMPTY LIST [] for auto-discovery (recommended).",
         },
     }
     output_type = "string"
@@ -524,6 +545,30 @@ class FinalizeKnowledgeBaseTool(Tool):
 
     def forward(self, workspaces: List[str]) -> str:
         collected_files = []
+        
+        # AUTO-DISCOVER: If no workspaces provided, use all from spawned_agents context
+        if not workspaces:
+            logger.info("No workspaces provided, auto-discovering from spawned_agents context...")
+            workspaces = []
+            for key, data in self.ctx.spawned_agents.items():
+                if "workspace" in data:
+                    workspaces.append(data["workspace"])
+                    logger.info(f"  Found workspace: {data['workspace']} (task: {data.get('task_name', key)})")
+            
+            # Also scan sub_agents_root for any sub_agent_* directories
+            if not workspaces and self.ctx.sub_agents_root.exists():
+                logger.info(f"Scanning {self.ctx.sub_agents_root} for workspaces...")
+                for task_dir in self.ctx.sub_agents_root.iterdir():
+                    if task_dir.is_dir():
+                        for sub_agent_dir in task_dir.glob("sub_agent_*"):
+                            if sub_agent_dir.is_dir():
+                                workspaces.append(str(sub_agent_dir))
+                                logger.info(f"  Found workspace: {sub_agent_dir}")
+        
+        if not workspaces:
+            logger.warning("No workspaces found to collect from!")
+            return "Collected 0 files - no workspaces found. Check if spawn_sub_agents was called."
+        
         for ws_path in workspaces:
             workspace = Path(ws_path)
             # If path doesn't exist, try looking in sub_agents_root
@@ -568,8 +613,15 @@ class FinalizeKnowledgeBaseTool(Tool):
                     logger.warning(f"Skipping {main_file.name} - too short ({len(content.strip())} chars)")
                     continue
 
-                # Use target directory name for output file
-                out_name = f"{target_name}.md"
+                # NEW: Use task_name from spawned_agents if available
+                conceptual_name = None
+                for key, data in self.ctx.spawned_agents.items():
+                    if data.get("workspace") == str(workspace) or workspace.name in str(data.get("workspace", "")):
+                        conceptual_name = data.get("task_name")
+                        break
+                
+                # Use conceptual name if available, otherwise fall back to target_name
+                out_name = f"{conceptual_name}.md" if conceptual_name else f"{target_name}.md"
                 out_path = self.ctx.output_root / out_name
                 out_path.write_text(content, encoding="utf-8")
                 collected_files.append(out_name)
@@ -578,7 +630,12 @@ class FinalizeKnowledgeBaseTool(Tool):
             except Exception as e:
                 logger.warning(f"Failed to collect {main_file}: {e}")
 
-        return f"Collected {len(collected_files)} files to {self.ctx.output_root}: {collected_files}"
+        # Detailed return message to guide supervisor on next steps
+        if not collected_files:
+            expected_count = len(self.ctx.spawned_agents)
+            return f"WARNING: Collected 0 files to {self.ctx.output_root}. Expected {expected_count} based on spawned_agents. ACTION REQUIRED: Check if sub-agents completed successfully. Use retry_agent for any failed tasks before calling final_answer."
+        
+        return f"SUCCESS: Collected {len(collected_files)} files to {self.ctx.output_root}: {collected_files}"
 
 
 # SpawnTutorialAgentTool removed - tutorials are now a separate pipeline

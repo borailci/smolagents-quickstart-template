@@ -17,10 +17,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.className} min-h-screen bg-slate-950 text-white antialiased`}>
+    <html lang="en" className="overflow-x-hidden">
+      <body className={`${inter.className} min-h-screen max-w-[100vw] overflow-x-hidden bg-slate-950 text-white antialiased`}>
         <Header />
-        <main className="pt-16">{children}</main>
+        <main className="pt-16 max-w-[100vw] overflow-x-hidden">{children}</main>
         <Footer />
       </body>
     </html>

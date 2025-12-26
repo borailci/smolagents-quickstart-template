@@ -240,3 +240,40 @@ class RunMetrics:
             f.write("\n".join(lines))
         
         return output_path
+    
+    def save_to_metrics_dir(
+        self, 
+        pipeline_type: str = "deep-agent",
+        metrics_base_dir: Path | str = "metrics"
+    ) -> Path:
+        """
+        Save metrics to centralized metrics directory with organized structure.
+        
+        Structure: metrics/{pipeline_type}/{codebase_name}_{YYYY-MM-DD_HH-MM}.json
+        
+        Args:
+            pipeline_type: Type of pipeline (e.g., "deep-agent", "baseline")
+            metrics_base_dir: Base directory for metrics storage
+            
+        Returns:
+            Path to the saved JSON file
+        """
+        from datetime import datetime
+        
+        metrics_base = Path(metrics_base_dir)
+        pipeline_dir = metrics_base / pipeline_type
+        pipeline_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        safe_name = self.codebase_name.replace("/", "_").replace(" ", "_")
+        base_filename = f"{safe_name}_{timestamp}"
+        
+        # Save both JSON and Markdown
+        json_path = pipeline_dir / f"{base_filename}.json"
+        md_path = pipeline_dir / f"{base_filename}.md"
+        
+        self.save_json(json_path)
+        self.save_markdown_summary(md_path)
+        
+        return json_path

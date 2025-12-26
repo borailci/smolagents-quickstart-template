@@ -118,11 +118,11 @@ class SpawnTutorialAgentTool(Tool):
                 status = "completed"
                 validation_info = "Validation Disabled"
                 
-                self.ctx.spawned_agents[target_filename] = {
+                self.ctx.register_agent(target_filename, {
                     "workspace": str(workspace),
                     "status": status,
                     "validation": validation_info
-                }
+                })
                 return json.dumps({
                     "workspace": str(workspace), 
                     "status": status, 
@@ -139,11 +139,15 @@ class SpawnTutorialAgentTool(Tool):
 
 class FinalizeTutorialsTool(Tool):
     name = "finalize_tutorials"
-    description = "Collect all tutorial outputs into final directory."
+    description = """Collect all tutorial outputs into final directory.
+
+IMPORTANT: You can pass an EMPTY list [] and this tool will AUTO-DISCOVER all workspaces from previously spawned tutorial agents.
+If you pass workspace paths, they must be ACTUAL DIRECTORY PATHS (not plan content or task descriptions).
+Returns: 'Collected N tutorials to [path]: [list of files]'. If N=0, investigate and retry failed tutorials."""
     inputs = {
         "workspaces": {
             "type": "array",
-            "description": "List of workspace paths to collect from",
+            "description": "List of workspace paths to collect from. Pass EMPTY LIST [] for auto-discovery (recommended).",
         },
     }
     output_type = "string"
@@ -153,8 +157,45 @@ class FinalizeTutorialsTool(Tool):
         self.ctx = ctx
 
     def forward(self, workspaces: List[str]) -> str:
-        # Group workspaces and collect files
-        # Logic restored from supervisor_toolkit
+        # VALIDATION: Filter out invalid paths (plan content passed as paths)
+        valid_workspaces = []
+        for ws in workspaces:
+            # Skip if it looks like plan content instead of a path
+            if ws.startswith("- [") or "(" in ws or len(ws) > 200:
+                logger.warning(f"Skipping invalid workspace (looks like plan content): {ws[:50]}...")
+                continue
+            valid_workspaces.append(ws)
+        
+        workspaces = valid_workspaces
+        
+        # AUTO-DISCOVER: If no valid workspaces provided, use all from spawned_agents context
+        if not workspaces:
+            logger.info("No valid workspaces provided, auto-discovering from spawned_agents context...")
+            workspaces = []
+            for key, data in self.ctx.spawned_agents.items():
+                if "workspace" in data:
+                    workspaces.append(data["workspace"])
+                    logger.info(f"  Found workspace: {data['workspace']} (tutorial: {key})")
+            
+            # Also scan sub_agents_root for any tutorial directories
+            if not workspaces and self.ctx.sub_agents_root.exists():
+                logger.info(f"Scanning {self.ctx.sub_agents_root} for tutorial workspaces...")
+                for tutorial_dir in self.ctx.sub_agents_root.iterdir():
+                    if tutorial_dir.is_dir():
+                        # Check if it contains sub_agent_* or is itself a workspace
+                        sub_agents = list(tutorial_dir.glob("sub_agent_*"))
+                        if sub_agents:
+                            for sub_agent_dir in sub_agents:
+                                workspaces.append(str(sub_agent_dir))
+                                logger.info(f"  Found workspace: {sub_agent_dir}")
+                        elif list(tutorial_dir.glob("*.md")):
+                            # Directory itself contains markdown files
+                            workspaces.append(str(tutorial_dir))
+                            logger.info(f"  Found workspace: {tutorial_dir}")
+        
+        if not workspaces:
+            logger.warning("No workspaces found to collect from!")
+            return "Collected 0 tutorials - no workspaces found. Check if spawn_tutorial_agent was called."
         
         # Sort workspaces: non-retries first, then retries sorted by N to ensure overwrites work correctly
         def sort_key(p):

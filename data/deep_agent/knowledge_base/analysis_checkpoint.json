@@ -1,18 +1,18 @@
 {
   "processed_tasks": [
-    "Core Components",
-    "Domain Specific Language (DSL)",
+    "Core Functionality",
+    "DSL and Utilities",
     "Batch Processing",
-    "OpenAI and Anthropic Providers",
-    "Gemini and Other Providers",
-    "Command Line Interface"
+    "Providers Integration",
+    "Command Line Interface",
+    "Advanced Features"
   ],
   "results": {
-    "Core Components": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Core Components\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
-    "Domain Specific Language (DSL)": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Domain Specific Language (DSL)\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
-    "Batch Processing": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Batch Processing\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
-    "OpenAI and Anthropic Providers": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/OpenAI and Anthropic Providers\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
-    "Gemini and Other Providers": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Gemini and Other Providers\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}",
-    "Command Line Interface": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Command Line Interface\", \"status\": \"completed\", \"validation\": \"Validation Disabled (User Request)\", \"llm_feedback\": \"\"}"
+    "Core Functionality": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Core_Functionality\", \"task_name\": \"Core Functionality\", \"status\": \"completed\"}",
+    "DSL and Utilities": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/DSL_and_Utilities\", \"task_name\": \"DSL and Utilities\", \"status\": \"completed\"}",
+    "Batch Processing": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Batch_Processing\", \"task_name\": \"Batch Processing\", \"status\": \"completed\"}",
+    "Providers Integration": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Providers_Integration\", \"task_name\": \"Providers Integration\", \"status\": \"completed\"}",
+    "Command Line Interface": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Command_Line_Interface\", \"task_name\": \"Command Line Interface\", \"status\": \"completed\"}",
+    "Advanced Features": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Advanced_Features\", \"task_name\": \"Advanced Features\", \"status\": \"completed\"}"
   }
 }

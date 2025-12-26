@@ -1,0 +1,37 @@
+{
+  "plan.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/plan",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "01_getting_started.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/01_getting_started",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "02_providers.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/02_providers",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "03_retries_and_validation.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/03_retries_and_validation",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "04_streaming.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/04_streaming",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "05_nested_objects.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/05_nested_objects",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "06_cli_and_batch.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/06_cli_and_batch",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  }
+}

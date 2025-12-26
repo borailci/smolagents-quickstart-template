@@ -76,15 +76,15 @@ class TestScopedSecurity:
             workspace_root=str(workspace["agent_ws"]),
             codebase_root=str(workspace["codebase"])
         )
+
         write_tool = next(t for t in tools if t.name == "write_workspace_file")
-        
         # Valid write
-        write_tool("output.md", "# Valid")
+        write_tool("output.md", "# Valid content that is definitely longer than 50 characters to pass the check.")
         assert (workspace["agent_ws"] / "output.md").exists()
         
         # Write to codebase (should fail - only workspace is writable)
         try:
-            write_tool("../codebase/evil.py", "import os")
+            write_tool("../codebase/evil.py", "import os # strict length check requires this to be longer to test path isolation properly.")
             assert False, "Should have raised ValueError"
         except Exception as e:
             assert "Path traversal detected" in str(e) or "is outside" in str(e)

@@ -71,7 +71,7 @@ export function Toolbar({
                     variant="outline"
                     size="sm"
                     onClick={onToggleEdit}
-                    className="gap-2 border-white/10"
+                    className="gap-2 border-white/10 text-slate-300 hover:text-white"
                     style={{
                         backgroundColor: isEditMode ? `${accentColor}20` : undefined,
                         borderColor: isEditMode ? accentColor : undefined,

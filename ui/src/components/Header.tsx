@@ -1,17 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Moon, Sun, Sparkles } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { Button } from '@/components/ui/button';
 
 export function Header() {
-    const [isDark, setIsDark] = useState(true);
-
-    useEffect(() => {
-        document.documentElement.classList.toggle('dark', isDark);
-    }, [isDark]);
-
     return (
         <motion.header
             initial={{ y: -20, opacity: 0 }}
@@ -28,15 +20,6 @@ export function Header() {
                         Codebase Tutorial Generator
                     </h1>
                 </motion.div>
-
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setIsDark(!isDark)}
-                    className="text-slate-300 hover:text-white"
-                >
-                    {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-                </Button>
             </div>
         </motion.header>
     );

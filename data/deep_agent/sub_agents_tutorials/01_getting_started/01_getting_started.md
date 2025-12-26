@@ -1,140 +1,106 @@
 '''
-# Getting Started with Instructor
+# Getting Started with Instructor and OpenAI
 
 ## 1. Synopsis
 
-Large Language Models (LLMs) are incredibly powerful, but their default output is often unstructured text. This creates a challenge for developers: how do you reliably get structured data, like JSON, from a model's response? You might write complex prompts, create custom parsing logic, and build brittle systems to handle malformed outputs. 
+Large Language Models (LLMs) excel at generating human-like text, but many real-world applications require structured, predictable data, not just free-form strings. For example, you might need to extract user details from a query, classify a support ticket, or pull structured information from a document. Relying on regex or manual parsing of LLM output is often brittle and error-prone.
 
-`instructor` solves this problem by seamlessly connecting LLM outputs to Pydantic models. Instead of getting a string of text, you get a validated, typed Pydantic object directly from the function call. This makes your code cleaner, more reliable, and easier to maintain.
+This is where `instructor` comes in. It seamlessly bridges the gap between the unstructured text world of LLMs and the structured, validated world of Pydantic models. By patching your OpenAI client, `instructor` enables you to specify a Pydantic model as the desired output format, ensuring you get back clean, validated, and type-hinted data every time.
 
-In this tutorial, you will learn the basics of `instructor`: how to install it, patch an OpenAI client, and perform a structured data extraction with a single API call.
+This tutorial will guide you through the process of setting up `instructor` and performing your first structured data extraction with an OpenAI client.
 
 ## 2. Prerequisites
 
-- Python 3.9+
-- An OpenAI API key
-
-First, you need to install the necessary libraries. `instructor` works by "patching" an existing AI client, so we'll install both `openai` and `instructor`.
+To follow this tutorial, you'll need to have the following packages installed. `instructor` works by patching other libraries, so we need to install it alongside `openai` and `pydantic`.
 
 ```bash
-pip install openai instructor pydantic
+pip install instructor openai pydantic
 ```
+
+You will also need to have your OpenAI API key set up in your environment. You can do this by setting the `OPENAI_API_KEY` environment variable.
 
 ## 3. Architecture
 
-The magic of `instructor` lies in its `patch` function. It intercepts the standard API call (like `chat.completions.create`), injects the logic needed for structured data extraction, and then validates the model's response. 
-
-Here's a visual overview of the process:
+The core of `instructor` is a "patching" mechanism that enhances the functionality of an existing LLM client. When you call `instructor.patch(client)`, it wraps the client's `chat.completions.create` method with new logic. The process looks like this:
 
 ```mermaid
 graph TD
-    A["User defines a Pydantic Model"] --> B;
-    B["User patches OpenAI client w/ instructor"] --> C;
-    C["Call client.chat.completions.create(response_model=MyModel, ...)"] --> D{instructor};
-    D --> |1. Generates OpenAI Tool Schema| E[OpenAI API];
-    E --> |2. Returns JSON response| D;
-    D --> |3. Validates JSON against Pydantic Model| F["pydantic.ValidationError?"];
-    F -- "No" --> G["Return validated Pydantic object"];
-    F -- "Yes" --> H["Retry with re-ask prompt"];
-    H --> E;
-    G --> I["User's Application"];
+    A["User calls client.chat.completions.create() with response_model=User"] --> B{"instructor.patch intercepts call"};
+    B --> C["Instructor injects Pydantic model's JSON schema into the OpenAI request"];
+    C --> D["OpenAI API receives the request and generates a JSON response that matches the schema"];
+    D --> E{"Instructor receives the JSON response"};
+    E --> F["Instructor parses and validates the JSON into a Pydantic `User` object"];
+    F --> G["The validated `User` object is returned to the user"];
 ```
 
 ## 4. Implementation Steps
 
-Let's build a simple example to extract a user's information from a piece of text.
+### Step 1: Your First Structured Extraction
 
-### Step 1: Define your Pydantic Model
+Let's dive in with a complete, runnable example. Our goal is to extract a user's name and age from a simple sentence.
 
-First, define the data structure you want to extract. A Pydantic model is perfect for this. We'll create a simple `User` model.
-
-```python
-from pydantic import BaseModel
-
-class User(BaseModel):
-    name: str
-    age: int
-```
-
-*Why?*: This model serves as the schema for the data you want the LLM to return. `instructor` will use this to generate the necessary instructions for the model and to validate the final output.
-
-### Step 2: Patch the OpenAI Client
-
-Next, we set up the OpenAI client and apply the `instructor` patch. This is the key step that enables the `response_model` parameter.
+First, we define a Pydantic `BaseModel` called `UserDetail`. This class serves as our schema, telling `instructor` exactly what kind of data we expect to receive. Then, we patch an `openai.OpenAI` client and call `chat.completions.create` with our new `response_model` parameter.
 
 ```python
 import openai
-import instructor
-
-# 1. Instantiate the OpenAI client
-# Make sure your OPENAI_API_KEY environment variable is set.
-client = openai.OpenAI()
-
-# 2. Patch the client with instructor
-client = instructor.patch(client)
-```
-
-*Why?*: The `patch` function wraps the client's `chat.completions.create` method. The new, patched method understands how to handle the `response_model` argument, manage retries, and parse the response.
-
-### Step 3: Make the Structured API Call
-
-Now, you can call `create` as you normally would, but with one crucial addition: the `response_model` argument.
-
-```python
 from pydantic import BaseModel
-import openai
 import instructor
 
-# Define the model from Step 1
-class User(BaseModel):
+# 1. Define your desired data structure
+class UserDetail(BaseModel):
     name: str
     age: int
 
-# Patch the client from Step 2
+# 2. Patch the OpenAI client
+# By default, the patch will use the `openai.OpenAI()` client
+# but you can also pass in your own client
 client = instructor.patch(openai.OpenAI())
 
-# Make the call with the response_model parameter
-user = client.chat.completions.create(
-    model="gpt-3.5-turbo",
-    response_model=User,
-    messages=[
-        {"role": "user", "content": "Extract user details from the following text: Jason is 25 years old."},
-    ]
-)
+# 3. Call the API with the response_model parameter
+def extract_user() -> UserDetail:
+    return client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        response_model=UserDetail,
+        messages=[
+            {"role": "user", "content": "Extract user details from the following sentence: Jason is 25 years old."},
+        ]
+    )
 
-# Verification
-print(f"Name: {user.name}, Age: {user.age}")
-assert isinstance(user, User)
-assert user.name == "Jason"
-assert user.age == 25
+user = extract_user()
 
-print("Successfully extracted and validated user data.")
+assert isinstance(user, UserDetail)
+print(f"Successfully extracted user: {user.name}, Age: {user.age}")
+# Expected Output:
+# Successfully extracted user: Jason, Age: 25
 ```
 
 ### *Verification*
 
-When you run the script above, you will see the following output:
+When you run the code above, `instructor` works behind the scenes:
 
-```
-Name: Jason, Age: 25
-Successfully extracted and validated user data.
-```
+1.  It takes the `UserDetail` model and generates a JSON schema that OpenAI's function-calling API can understand.
+2.  It sends the request to OpenAI, along with the schema, asking the model to populate it.
+3.  It receives the JSON response from OpenAI.
+4.  It parses the JSON and uses it to instantiate a `UserDetail` object, automatically validating types (e.g., ensuring `age` is an `int`).
 
-Notice that the `user` variable is not a dictionary or a raw string; it is a true instance of your `User` Pydantic model. You can access its attributes with dot notation (`user.name`) and benefit from your IDE's type-ahead and static analysis features.
+The final `user` variable is not a dictionary or a raw string, but a fully-fledged Pydantic model instance. You can access its attributes using dot notation (e.g., `user.name`), and your IDE will provide autocompletion and type-checking.
 
 ## 5. Common Pitfalls
 
-- **Vague Prompts**: If your prompt is unclear, the LLM might struggle to generate a response that fits your `response_model`. Be specific. Instead of "Summarize the text," try "Extract the key person from the text and provide their name and age."
-- **Model Limitations**: Simpler models might not follow instructions as well as more advanced ones. If you are not getting valid Pydantic objects, consider trying a more capable model (e.g., `gpt-4o` instead of `gpt-3.5-turbo`).
-- **Forgetting to Patch**: If you forget to call `instructor.patch(client)`, the `response_model` parameter will be ignored (or raise an error), and you will get a standard, unstructured API response.
+*   **Forgetting `response_model`**: The most common mistake is forgetting to include the `response_model` parameter in your `create` call. If you don't provide it, the patched client will behave like a standard OpenAI client and return a regular `ChatCompletion` object, not your Pydantic model.
+*   **Model In-line with response_model**: For `instructor` to work correctly, the model being used must be compatible with the `response_model` being passed. Not all models support the function calling or tool use APIs that `instructor` leverages. When in doubt, use a recent model like `gpt-3.5-turbo`, `gpt-4`, or `gpt-4-turbo-preview`.
+*   **API Key Not Set**: Ensure your `OPENAI_API_KEY` environment variable is correctly set. If not, the `openai` client will raise an authentication error.
 
 ## 6. Challenge Yourself
 
-To solidify your understanding, try extending this example. 
+Now that you've mastered basic extraction, try something more complex. 
 
-1.  Create a more complex Pydantic model. For example, a `Transaction` model that includes a `description` (str), an `amount` (float), a `currency` (str), and a `date` (datetime.date).
-2.  Write a prompt to extract transaction information from a sentence like: "On June 5th, 2024, I spent $25.50 on a coffee and a croissant."
-3.  Make the `instructor` call and print the resulting `Transaction` object. 
+1.  Define a new Pydantic model called `Transaction` with the following fields:
+    *   `item`: a string
+    *   `quantity`: an integer
+    *   `price`: a float
+    *   `currency`: a string, which can only be "USD" or "EUR". (Hint: use `typing.Literal`)
 
-This will give you a better feel for how `instructor` can handle various data types and more complex extraction tasks.
+2.  Write a function that takes a sentence like `"Please order 3 bananas for me, they should be about $0.50 each."` and extracts a `Transaction` object from it.
+3.  Print the resulting object to verify its contents.
 '''

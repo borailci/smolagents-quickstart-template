@@ -50,16 +50,32 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                 # Call LiteLLM directly
                 print("Calling LLM...")
                 response = super().__call__(messages, *args, **kwargs)
-                # Report successful call metrics just in case
+                # Report successful call metrics
                 if self._metrics and response:
                     try:
+                        # Try object-style access first
                         usage = getattr(response, 'usage', None)
+                        # Fallback to dict-style access
+                        if usage is None and hasattr(response, 'get'):
+                            usage = response.get('usage', None)
+                        
                         if usage:
-                            input_tokens = getattr(usage, 'prompt_tokens', 0) or 0
-                            output_tokens = getattr(usage, 'completion_tokens', 0) or 0
-                            self._metrics.record_tokens(input_tokens, output_tokens)
-                    except Exception:
-                        pass
+                            # Handle both object and dict formats
+                            if hasattr(usage, 'prompt_tokens'):
+                                input_tokens = getattr(usage, 'prompt_tokens', 0) or 0
+                                output_tokens = getattr(usage, 'completion_tokens', 0) or 0
+                            elif isinstance(usage, dict):
+                                input_tokens = usage.get('prompt_tokens', 0) or 0
+                                output_tokens = usage.get('completion_tokens', 0) or 0
+                            else:
+                                input_tokens = 0
+                                output_tokens = 0
+                            
+                            if input_tokens > 0 or output_tokens > 0:
+                                self._metrics.record_tokens(input_tokens, output_tokens)
+                                logger.debug(f"📊 Recorded tokens: in={input_tokens}, out={output_tokens}")
+                    except Exception as e:
+                        logger.debug(f"Failed to extract token usage: {e}")
                 
                 return response
 
@@ -112,7 +128,7 @@ def get_model_for_role(role: ModelRole) -> str:
         "supervisor": settings.SUPERVISOR_MODEL_ID,
         "sub_agent": settings.SUB_AGENT_MODEL_ID,
         "tutorial": settings.MODEL_ID,
-        "judge": settings.MODEL_ID,
+        "judge": "openai/gpt-oss-20b-maas",
         "default": settings.MODEL_ID,
     }
     return role_map.get(role, settings.MODEL_ID)

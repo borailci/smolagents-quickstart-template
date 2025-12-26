@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from dotenv import load_dotenv
 from loguru import logger
 import shutil
 
@@ -149,6 +148,7 @@ class DeepAgent:
     def _save_metrics(self, metrics) -> None:
         """Save metrics to JSON and Markdown files."""
         try:
+            # Save to output directory (original behavior)
             json_path = self.config.output_root / "metrics.json"
             md_path = self.config.output_root / "metrics.md"
             
@@ -156,6 +156,11 @@ class DeepAgent:
             metrics.save_markdown_summary(md_path)
             
             logger.info(f"📊 Metrics saved to {json_path}")
+            
+            # Also save to centralized metrics directory
+            centralized_path = metrics.save_to_metrics_dir(pipeline_type="deep-agent")
+            logger.info(f"📊 Metrics also saved to {centralized_path}")
+            
         except Exception as e:
             logger.warning(f"Failed to save metrics: {e}")
 

@@ -27,8 +27,6 @@ __all__ = [
     "SubAgentTaskSpec",
     "SubAgentOutputError",
     "run_typed_sub_agent_tasks",
-    "ToolBudgetExceededError",
-    "validate_markdown_output",
 ]
 
 
@@ -50,35 +48,7 @@ DEFAULT_SUB_AGENT_MAX_RETRIES = settings.SUB_AGENT_MAX_RETRIES
 
 
 
-def validate_markdown_output(
-    content: str,
-    expected_title: str | None = None,
-    min_length: int = 200,
-) -> tuple[bool, list[str]]:
-    """
-    Validate sub-agent markdown output structural integrity.
-    
-    Returns (is_valid, list_of_errors).
-    This catches broken outputs from truncated generation, bad concatenation, etc.
-    
-    Note: Uses core validation from utils/validation.py.
-    """
-    """
-    Validate sub-agent markdown output structural integrity.
-    
-    Returns (is_valid, list_of_errors).
-    Simplified check since validation.py was removed.
-    """
-    issues = []
-    if not content:
-        issues.append("Content is empty")
-        return False, issues
-        
-    if len(content) < min_length:
-        issues.append(f"Content length {len(content)} < {min_length}")
-        return False, issues
-        
-    return True, []
+# validate_markdown_output removed (unused)
 
 
 # ToolUsageBudget removed - no budget enforcement
@@ -127,9 +97,9 @@ def _resolve_paths(
     return codebase_path, sub_agents_path
 
 
-def _build_model() -> LiteLLMModel:
+def _build_model(metrics=None) -> LiteLLMModel:
     # Sub-agents use Flash model for high volume (hybrid strategy)
-    return create_model(role="sub_agent")
+    return create_model(role="sub_agent", metrics=metrics)
 
 
 
@@ -172,7 +142,7 @@ def _execute_sub_agent_runs(
         return []
 
     codebase_path, sub_agents_path = _resolve_paths(codebase_root, sub_agents_root)
-    model = _build_model()
+    model = _build_model(metrics=metrics)  # Pass metrics for token tracking
     logger.info(f"Sub-agent model type: {type(model).__name__}")
     
     # Pre-calculate prompts
@@ -293,52 +263,7 @@ def _execute_sub_agent_runs(
     return workspaces
 
 
-def run_sub_agent_tasks(
-    task_descriptions: List[str],
-    *,
-    codebase_root: Optional[str | Path] = None,
-    sub_agents_root: Optional[str | Path] = None,
-    max_retries: int = DEFAULT_SUB_AGENT_MAX_RETRIES,
-    window_seconds: float = 90.0,
-    max_requests_per_window: int = 5,
-    min_interval_seconds: float = 5.0,
-    instruction_prompt: str = prompts.SUB_AGENT_KB_PROMPT,
-    max_tool_calls: int | None = None,
-    max_directory_calls: int | None = None,
-    knowledge_base_root: Optional[str | Path] = None,
-    minimal_tools: bool = True,  # Disable exploration by default
-) -> List[Path]:
-    """
-    Execute analyzer-style sub-agents and return their workspace paths.
-    
-    .. deprecated::
-        Use `run_typed_sub_agent_tasks` instead for explicit role-based execution.
-    """
 
-    if not isinstance(task_descriptions, list) or not task_descriptions:
-        return []
-
-    specs = [
-        SubAgentTaskSpec(
-            description=desc,
-            role=SubAgentRole.ANALYZER,
-            instructions=instruction_prompt
-        ) for desc in task_descriptions
-    ]
-
-    return _execute_sub_agent_runs(
-        specs,
-        codebase_root=codebase_root,
-        sub_agents_root=sub_agents_root,
-        max_retries=max_retries,
-        window_seconds=window_seconds,
-        max_requests_per_window=max_requests_per_window,
-        min_interval_seconds=min_interval_seconds,
-        max_tool_calls=max_tool_calls,
-        max_directory_calls=max_directory_calls,
-        knowledge_base_root=knowledge_base_root,
-        minimal_tools=minimal_tools,
-    )
 
 
 def run_typed_sub_agent_tasks(
@@ -378,32 +303,3 @@ def run_typed_sub_agent_tasks(
         metrics=metrics,
     )
 
-
-def get_sub_agent_tools() -> List[Tool]:
-    """
-    Return tools for managing sub-agent execution.
-    
-    .. deprecated::
-        This function is not actively used. Use direct calls to
-        `run_typed_sub_agent_tasks` instead for production code.
-    """
-
-    @tool
-    def spawn_sub_agents(task_descriptions: List[str]) -> str:
-        """Run a sequence of sub-agents using scoped file access."""
-
-        workspaces = run_sub_agent_tasks(task_descriptions)
-
-        if not workspaces:
-            return "No sub-agent tasks provided."
-
-        summary_lines = [
-            f"All {len(workspaces)} sub-agents finished.",
-            "Results saved in:",
-        ]
-        summary_lines.extend(f"- {path}" for path in workspaces)
-        return "\\n".join(summary_lines)
-
-    # spawn_sub_agents.run_sub_agent_tasks = run_sub_agent_tasks  # type: ignore[attr-defined] # Not needed with new structure
-
-    return [spawn_sub_agents]

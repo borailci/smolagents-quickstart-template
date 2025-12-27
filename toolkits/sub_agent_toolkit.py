@@ -232,6 +232,22 @@ def _execute_sub_agent_runs(
                     return f"File '{filename}' not found in Knowledge Base. This tool is ONLY for KB summary files. Available KB files: {available_files}. For codebase files like README.md or .py files, use `read_codebase_file` instead."
 
             scoped_tools.append(ReadKBTool())
+        
+        # P0 FIX: Tutorial writers MUST have codebase read access to verify code accuracy
+        # Only add explicitly when minimal_tools=True, otherwise build_scoped_tools already includes them
+        if spec.role == SubAgentRole.TUTORIAL_WRITER and minimal_tools:
+            from toolkits.scoped_filesystem_toolkit import ReadCodebaseFileTool, ListCodebaseDirectoryTool
+            # Add read tool (always needed for verification)
+            scoped_tools.append(ReadCodebaseFileTool(
+                codebase_path, 
+                workspace, 
+                usage_callback=usage_cb
+            ))
+            # Add directory listing for exploration
+            scoped_tools.append(ListCodebaseDirectoryTool(
+                codebase_path,
+                usage_callback=usage_cb
+            ))
 
         agent = ToolCallingAgent(
             name=f"sub_agent_{index}",

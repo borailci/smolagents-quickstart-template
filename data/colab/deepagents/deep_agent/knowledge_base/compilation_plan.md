@@ -1,0 +1,6 @@
+- [x] DeepAgents Core - Core graph logic (Files: libs/deepagents/deepagents/graph.py)
+- [x] CLI Main - Main entry point and core components (Files: libs/deepagents-cli/deepagents_cli/main.py, libs/deepagents-cli/deepagents_cli/config.py, libs/deepagents-cli/deepagents_cli/input.py, libs/deepagents-cli/deepagents_cli/ui.py)
+- [x] CLI Agent - Agent implementation and memory (Files: libs/deepagents-cli/deepagents_cli/agent.py, libs/deepagents-cli/deepagents_cli/agent_memory.py)
+- [x] CLI Commands & Execution - Command handling and execution logic (Files: libs/deepagents-cli/deepagents_cli/commands.py, libs/deepagents-cli/deepagents_cli/execution.py, libs/deepagents-cli/deepagents_cli/shell.py)
+- [x] CLI Integrations & Tools - Integrations, tools and skills (Files: libs/deepagents-cli/deepagents_cli/tools.py, libs/deepagents-cli/deepagents_cli/file_ops.py, libs/deepagents-cli/deepagents_cli/project_utils.py, libs/deepagents-cli/deepagents_cli/token_utils.py)
+- [x] Harbor Backend - Harbor backend implementation (Files: libs/harbor/deepagents_harbor/backend.py, libs/harbor/deepagents_harbor/deepagents_wrapper.py, libs/harbor/deepagents_harbor/tracing.py)

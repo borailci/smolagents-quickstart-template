@@ -1,0 +1,5 @@
+- [ ] CLI - Command-line interface files (packages/cli/src/cli-entry.ts, packages/cli/src/conversion.ts, packages/cli/src/index.ts, packages/cli/src/json-from-events.ts, packages/cli/src/json-stringify-stream.ts, packages/cli/src/types.ts, packages/cli/src/utils.ts)
+- [ ] Core - Main entry points and type definitions (packages/toon/src/index.ts, packages/toon/src/types.ts, packages/toon/src/constants.ts)
+- [ ] Encoding - Encoding-related files (packages/toon/src/encode/index.ts, packages/toon/src/encode/array.ts, packages/toon/src/encode/object.ts, packages/toon/src/encode/primitive.ts, packages/toon/src/encode/utils.ts, packages/toon/src/encode/special.ts)
+- [ ] Decoding - Decoding-related files (packages/toon/src/decode/index.ts, packages/toon/src/decode/array.ts, packages/toon/src/decode/object.ts, packages/toon/src/decode/primitive.ts, packages/toon/src/decode/utils.ts)
+- [ ] Shared - Shared utilities and constants (packages/toon/src/shared/index.ts, packages/toon/src/shared/constants.ts, packages/toon/src/shared/types.ts)

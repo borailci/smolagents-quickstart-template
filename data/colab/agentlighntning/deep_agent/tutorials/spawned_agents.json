@@ -1,0 +1,37 @@
+{
+  "tutorial_plan.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/tutorial_plan",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "01_getting_started.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/01_getting_started",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "02_litagent_deep_dive.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/02_litagent_deep_dive",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "03_automatic_prompt_optimization.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/03_automatic_prompt_optimization",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "04_distributed_execution.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/04_distributed_execution",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "05_data_handling_and_storage.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/05_data_handling_and_storage",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "06_monitoring_and_debugging.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/06_monitoring_and_debugging",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  }
+}

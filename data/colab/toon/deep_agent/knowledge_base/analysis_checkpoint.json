@@ -1,0 +1,18 @@
+{
+  "processed_tasks": [
+    "CLI Core",
+    "CLI Utils",
+    "Toon Core",
+    "Toon Encoding",
+    "Toon Decoding",
+    "Toon Shared"
+  ],
+  "results": {
+    "CLI Core": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/CLI_Core\", \"task_name\": \"CLI Core\", \"status\": \"completed\"}",
+    "CLI Utils": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/CLI_Utils\", \"task_name\": \"CLI Utils\", \"status\": \"completed\"}",
+    "Toon Core": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Toon_Core\", \"task_name\": \"Toon Core\", \"status\": \"completed\"}",
+    "Toon Encoding": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Toon_Encoding\", \"task_name\": \"Toon Encoding\", \"status\": \"completed\"}",
+    "Toon Decoding": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Toon_Decoding\", \"task_name\": \"Toon Decoding\", \"status\": \"completed\"}",
+    "Toon Shared": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Toon_Shared\", \"task_name\": \"Toon Shared\", \"status\": \"completed\"}"
+  }
+}

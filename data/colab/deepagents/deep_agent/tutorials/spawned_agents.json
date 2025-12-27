@@ -1,0 +1,37 @@
+{
+  "tutorial_plan.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/tutorial_plan",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "01_getting_started.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/01_getting_started",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "02_core_concepts.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/02_core_concepts",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "03_cli_agent_and_tools.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/03_cli_agent_and_tools",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "04_agent_memory.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/04_agent_memory",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "05_harbor_backend.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/05_harbor_backend",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "06_advanced_cli.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/06_advanced_cli",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  }
+}

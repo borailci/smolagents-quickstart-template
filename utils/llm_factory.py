@@ -20,6 +20,27 @@ RATE_LIMIT_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# ---------------------------------------------------------------------------
+# Global Token Tracking via litellm Callbacks
+# ---------------------------------------------------------------------------
+import threading
+
+# Thread-local storage for last API response usage
+_last_usage = threading.local()
+
+def _litellm_success_callback(kwargs, completion_response, start_time, end_time):
+    """Callback to capture token usage from litellm responses."""
+    try:
+        usage = completion_response.get("usage", {})
+        _last_usage.input_tokens = usage.get("prompt_tokens", 0) or 0
+        _last_usage.output_tokens = usage.get("completion_tokens", 0) or 0
+    except Exception:
+        _last_usage.input_tokens = 0
+        _last_usage.output_tokens = 0
+
+# Register the callback globally
+litellm.success_callback = [_litellm_success_callback]
+
 # throttled_api_call removed - using direct logic in RateLimitedLiteLLMModel
 
 class RateLimitedLiteLLMModel(LiteLLMModel):
@@ -50,32 +71,17 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                 # Call LiteLLM directly
                 print("Calling LLM...")
                 response = super().__call__(messages, *args, **kwargs)
-                # Report successful call metrics
-                if self._metrics and response:
+                
+                # Report successful call metrics using callback-captured usage
+                if self._metrics:
                     try:
-                        # Try object-style access first
-                        usage = getattr(response, 'usage', None)
-                        # Fallback to dict-style access
-                        if usage is None and hasattr(response, 'get'):
-                            usage = response.get('usage', None)
-                        
-                        if usage:
-                            # Handle both object and dict formats
-                            if hasattr(usage, 'prompt_tokens'):
-                                input_tokens = getattr(usage, 'prompt_tokens', 0) or 0
-                                output_tokens = getattr(usage, 'completion_tokens', 0) or 0
-                            elif isinstance(usage, dict):
-                                input_tokens = usage.get('prompt_tokens', 0) or 0
-                                output_tokens = usage.get('completion_tokens', 0) or 0
-                            else:
-                                input_tokens = 0
-                                output_tokens = 0
-                            
-                            if input_tokens > 0 or output_tokens > 0:
-                                self._metrics.record_tokens(input_tokens, output_tokens)
-                                logger.debug(f"📊 Recorded tokens: in={input_tokens}, out={output_tokens}")
+                        input_tokens = getattr(_last_usage, 'input_tokens', 0)
+                        output_tokens = getattr(_last_usage, 'output_tokens', 0)
+                        if input_tokens > 0 or output_tokens > 0:
+                            self._metrics.record_tokens(input_tokens, output_tokens)
+                            logger.debug(f"📊 Recorded tokens: in={input_tokens}, out={output_tokens}")
                     except Exception as e:
-                        logger.debug(f"Failed to extract token usage: {e}")
+                        logger.debug(f"Failed to record token usage: {e}")
                 
                 return response
 

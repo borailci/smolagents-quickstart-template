@@ -1,0 +1,18 @@
+{
+  "processed_tasks": [
+    "DeepAgents Core",
+    "CLI Main",
+    "CLI Agent",
+    "CLI Commands & Execution",
+    "CLI Integrations & Tools",
+    "Harbor Backend"
+  ],
+  "results": {
+    "DeepAgents Core": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/DeepAgents_Core\", \"task_name\": \"DeepAgents Core\", \"status\": \"completed\"}",
+    "CLI Main": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/CLI_Main\", \"task_name\": \"CLI Main\", \"status\": \"completed\"}",
+    "CLI Agent": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/CLI_Agent\", \"task_name\": \"CLI Agent\", \"status\": \"completed\"}",
+    "CLI Commands & Execution": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/CLI_Commands_&_Execution\", \"task_name\": \"CLI Commands & Execution\", \"status\": \"completed\"}",
+    "CLI Integrations & Tools": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/CLI_Integrations_&_Tools\", \"task_name\": \"CLI Integrations & Tools\", \"status\": \"completed\"}",
+    "Harbor Backend": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Harbor_Backend\", \"task_name\": \"Harbor Backend\", \"status\": \"completed\"}"
+  }
+}

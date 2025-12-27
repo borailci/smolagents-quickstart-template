@@ -49,6 +49,40 @@ JUDGE_MODELS = [
     "vertex_ai/gemini-2.5-pro",
 ]
 
+# External API support (Colab-hosted model)
+EXTERNAL_API_URL = os.environ.get("LLM_JUDGE_URL", None)
+
+def call_external_judge_api(messages: list, max_tokens: int = 2048) -> str:
+    """Call the external LLM Judge API (Colab-hosted GPT-OSS-20B)."""
+    import requests
+    
+    url = EXTERNAL_API_URL
+    if not url:
+        raise ValueError("LLM_JUDGE_URL environment variable not set")
+    
+    # Ensure URL doesn't end with /
+    url = url.rstrip("/")
+    endpoint = f"{url}/v1/chat/completions"
+    
+    logger.info(f"Calling external judge API: {endpoint}")
+    
+    response = requests.post(
+        endpoint,
+        json={
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.1
+        },
+        headers={"Content-Type": "application/json"},
+        timeout=300  # 5 minute timeout for large evaluations
+    )
+    
+    if response.status_code != 200:
+        raise Exception(f"External API error: {response.status_code} - {response.text}")
+    
+    data = response.json()
+    return data["choices"][0]["message"]["content"]
+
 # Evaluation criteria
 CRITERIA = ["accuracy", "completeness", "clarity", "structure", "diagrams"]
 
@@ -93,44 +127,97 @@ Return ONLY valid JSON (no markdown fences):
 }}
 """
 
-AGENT_JUDGE_PROMPT = """You are an expert technical documentation reviewer and judge.
-Your task is to compare two **Tutorial Series** (A and B) for the provided codebase and pick a winner.
-You have access to tools to read the codebase files. 
-You MUST use these tools to verify:
-1. **Fidelity**: Does the code in the tutorials match the actual codebase? (Check file existence, function names, signatures).
-2. **Coverage**: Do the tutorials cover the main components found in the codebase tree? (Use `get_codebase_tree` to see structure).
+AGENT_JUDGE_PROMPT = """You are a meticulous technical documentation judge conducting a blind A/B test.
+Your goal: Determine which Tutorial Series better teaches developers how to use this codebase.
 
-## Tutorial Series A
+## Your Tools
+- `get_codebase_tree`: See the project structure
+- `read_codebase_file`: Read source files AND tutorial files
+
+## Tutorial Locations
+### Series A
 {content_a}
 
-## Tutorial Series B
+### Series B
 {content_b}
 
-## Evaluation Criteria
-1. **Fidelity** (Crucial): Is the code accurate?
-2. **Pedagogy**: Is the progression logical?
-3. **Coverage**: Is the scope complete?
+---
 
-## Instructions
-1. First, explore the codebase using `get_codebase_tree` and `read_codebase_file` to understand the actual project structure and content.
-2. Read the tutorials sections above (they are provided in full context).
-3. Verify at least 3 assertions/code snippets from the tutorials against the codebase using your tools.
-4. Form your judgment.
-5. **FINAL ANSWER**: Your task is NOT done until you return the result.
-   You must end your execution by calling the `final_answer` function with a Python dictionary matching this structure:
-   ```python
-   final_answer({{
-       "winner": "A" or "B" or "Tie",
-       "fidelity_A": 1-5,
-       "fidelity_B": 1-5,
-       "pedagogy_A": 1-5,
-       "pedagogy_B": 1-5,
-       "coverage_A": 1-5,
-       "coverage_B": 1-5,
-       "rationale": "Detailed explanation..."
-   }})
-   ```
-   ```
+## MANDATORY WORKFLOW (Follow Exactly)
+
+### Step 1: Understand the Codebase
+1. Call `get_codebase_tree` to see the project structure.
+2. Read the main entry point (e.g., `index.ts`, `main.py`, `lib/core.ts`).
+3. Identify the **key exported functions/classes** that users would import.
+
+### Step 2: Read ALL Tutorials (REQUIRED)
+1. Read EVERY `.md` file listed in Series A.
+2. Read EVERY `.md` file listed in Series B.
+3. Do NOT skip any file. Do NOT assume content from filenames.
+
+### Step 3: Fact-Check Code Snippets
+For each series, verify at least 3 code examples:
+- Are import paths correct? (e.g., `from pkg import X` - does `X` exist?)
+- Are function signatures accurate? (e.g., `encode(data, options)` - check actual params)
+- Are API behaviors described correctly?
+
+### Step 4: Score Each Criterion
+
+**FIDELITY (1-5)**: Code Accuracy
+| Score | Meaning |
+|-------|---------|
+| 5 | All code snippets are copy-paste correct. Imports, functions, params match codebase exactly. |
+| 4 | Minor issues (e.g., optional param omitted) but code would run. |
+| 3 | Some inaccuracies but core concepts correct. |
+| 2 | Multiple errors. Code would fail or mislead users. |
+| 1 | Fabricated APIs, hallucinated functions, fundamentally wrong. |
+
+**PEDAGOGY (1-5)**: Teaching Quality
+| Score | Meaning |
+|-------|---------|
+| 5 | Perfect progression: basics → intermediate → advanced. Clear explanations with diagrams. |
+| 4 | Good flow with minor gaps. Concepts build logically. |
+| 3 | Adequate but jumps around or assumes knowledge. |
+| 2 | Confusing order. Hard to follow for beginners. |
+| 1 | No clear structure. Random topics. |
+
+**COVERAGE (1-5)**: Completeness (JUDGE BY CONTENT, NOT FILE COUNT!)
+| Score | Meaning |
+|-------|---------|
+| 5 | Covers all major features: core APIs, advanced options, CLI (if exists), streaming (if exists). |
+| 4 | Covers most features. Minor gaps. |
+| 3 | Covers basics well but misses significant features. |
+| 2 | Very shallow. Only scratches the surface. |
+| 1 | Barely covers anything useful. |
+
+---
+
+## CRITICAL REMINDERS
+- **File count ≠ Coverage**. A 3-file series can beat a 6-file series if content is denser.
+- **Actually read the files**. Never assume content from filenames alone.
+- **Verify claims with tools**. If a tutorial says "use `encodeStream()`", check if that function exists.
+
+---
+
+## FINAL OUTPUT (Required)
+After completing all steps, call `final_answer` with this exact structure:
+
+```python
+final_answer({{
+    "winner": "A" or "B" or "Tie",
+    "fidelity_A": <1-5>,
+    "fidelity_B": <1-5>,
+    "pedagogy_A": <1-5>,
+    "pedagogy_B": <1-5>,
+    "coverage_A": <1-5>,
+    "coverage_B": <1-5>,
+    "verified_snippets": [
+        {{"series": "A", "claim": "import X from pkg", "verified": true/false}},
+        {{"series": "B", "claim": "encode(data, opts)", "verified": true/false}}
+    ],
+    "rationale": "Detailed explanation citing specific evidence from your file reads..."
+}})
+```
 """
 
 COMPARE_PROMPT = """You are an expert technical documentation reviewer.
@@ -347,20 +434,27 @@ def evaluate_pair(model_id: str, file_name: str, codebase_context: str, path_a: 
     )
     
     try:
-        from utils.llm_factory import create_model
-        model = create_model(model_id=model_id)
-        
-        response = model(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=4096
-        )
-        
-        # smolagents Model returns ChatMessage directly
-        if hasattr(response, "content"):
-             content = str(response.content).strip()
+        # Check if using external Colab API
+        if model_id in ("colab", "gpt-oss-20b", "external"):
+            content = call_external_judge_api(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048
+            )
         else:
-             # Fallback for other potential return types
-             content = str(response).strip()
+            from utils.llm_factory import create_model
+            model = create_model(model_id=model_id)
+            
+            response = model(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=4096
+            )
+            
+            # smolagents Model returns ChatMessage directly
+            if hasattr(response, "content"):
+                 content = str(response.content).strip()
+            else:
+                 # Fallback for other potential return types
+                 content = str(response).strip()
         
         if content in ["None", ""] or content is None:
             logger.warning(f"Empty response for {file_name}. Retry suggested.")
@@ -789,8 +883,8 @@ def main() -> None:
     )
     
     # Mode 2: A/B Comparison
-    parser.add_argument("--baseline", type=Path, default=None, help="Path to Baseline tutorials")
-    parser.add_argument("--deep", type=Path, default=None, help="Path to DeepAgent tutorials")
+    parser.add_argument("--baseline", type=Path, default=None, help="Path to Series A tutorials")
+    parser.add_argument("--deep", type=Path, default=None, help="Path to Series B tutorials")
     
     # Common
     parser.add_argument(
@@ -805,7 +899,21 @@ def main() -> None:
         "--models", type=str, default=None,
         help="Comma-separated list of models"
     )
+    parser.add_argument(
+        "--colab", action="store_true",
+        help="Use Colab-hosted GPT-OSS-20B API (requires LLM_JUDGE_URL env var)"
+    )
+    parser.add_argument(
+        "--judge-url", type=str, default=None,
+        help="URL for external LLM judge API (overrides LLM_JUDGE_URL env var)"
+    )
     args = parser.parse_args()
+    
+    # Set external API URL if provided via CLI
+    global EXTERNAL_API_URL
+    if args.judge_url:
+        EXTERNAL_API_URL = args.judge_url
+        logger.info(f"Using external judge API: {EXTERNAL_API_URL}")
     
     # Determine Codebase
     codebase_root = None
@@ -834,7 +942,15 @@ def main() -> None:
         logger.info(f"Comparing {len(common_files)} common files...")
         context = _build_codebase_context(codebase_root)
         
-        models = [m.strip() for m in args.models.split(",")] if args.models else JUDGE_MODELS
+        # Select models - --colab flag overrides --models
+        if args.colab:
+            models = ["colab"]
+            logger.info("Using Colab-hosted GPT-OSS-20B API for evaluation")
+        elif args.models:
+            models = [m.strip() for m in args.models.split(",")]
+        else:
+            models = JUDGE_MODELS
+        
         all_results = []
         
         for file_name in common_files:
@@ -857,8 +973,8 @@ def main() -> None:
         total = len(all_results)
         if total > 0:
             print(f"Total: {total}")
-            print(f"Baseline (A): {wins['A']} ({wins['A']/total*100:.1f}%)")
-            print(f"DeepAgent (B): {wins['B']} ({wins['B']/total*100:.1f}%)")
+            print(f"Series A: {wins['A']} ({wins['A']/total*100:.1f}%)")
+            print(f"Series B: {wins['B']} ({wins['B']/total*100:.1f}%)")
             print(f"Tie:          {wins['Tie']} ({wins['Tie']/total*100:.1f}%)")
         
         # Write JSON

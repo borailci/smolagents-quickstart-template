@@ -1,0 +1,46 @@
+[
+  {
+    "winner": "B",
+    "fidelity_A": 4,
+    "fidelity_B": 5,
+    "pedagogy_A": 3,
+    "pedagogy_B": 5,
+    "coverage_A": 3,
+    "coverage_B": 5,
+    "verified_snippets": [
+      {
+        "series": "A",
+        "claim": "from deepagents import create_deep_agent",
+        "verified": true
+      },
+      {
+        "series": "A",
+        "claim": "from deepagents.backends import FilesystemBackend",
+        "verified": true
+      },
+      {
+        "series": "A",
+        "claim": "from deepagents import CompiledSubAgent",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "from deepagents_cli.agent import create_cli_agent",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "from deepagents_harbor.backend import HarborSandbox",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "agent.md for memory",
+        "verified": true
+      }
+    ],
+    "rationale": "Series B is the clear winner. It provides a much more comprehensive and practical guide to using the codebase, particularly the CLI, which is the main entry point for users. The tutorials in Series B are well-structured, starting from a simple 'hello world' and progressively introducing more advanced concepts like agent memory, sandboxing, and CLI commands. The code snippets are accurate and directly map to the source code. In contrast, Series A focuses on the lower-level 'deepagents' library and contains some inaccuracies (like the use of a non-existent 'init_chat_model' function). It also feels more abstract and less user-friendly for a developer trying to get started with the tool. Series B's focus on the end-user CLI application, its pedagogical structure, and its high fidelity make it the superior tutorial series.",
+    "file_name": "Comparison (Agentic)",
+    "model": "vertex_ai/gemini-2.5-pro"
+  }
+]

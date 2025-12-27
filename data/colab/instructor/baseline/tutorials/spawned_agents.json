@@ -1,0 +1,22 @@
+{
+  "01_getting_started.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/01_getting_started",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "02_providers.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/02_providers",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "03_advanced_features.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/03_advanced_features",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "04_cli.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/baseline/sub_agents_workspace/04_cli",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  }
+}

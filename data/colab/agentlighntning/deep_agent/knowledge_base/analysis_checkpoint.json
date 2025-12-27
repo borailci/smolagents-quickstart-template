@@ -1,0 +1,18 @@
+{
+  "processed_tasks": [
+    "Core Logic",
+    "Algorithm and Training",
+    "Data Handling and Storage",
+    "Client and Server",
+    "Instrumentation and Utilities",
+    "Dashboard Frontend"
+  ],
+  "results": {
+    "Core Logic": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Core_Logic\", \"task_name\": \"Core Logic\", \"status\": \"completed\"}",
+    "Algorithm and Training": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Algorithm_and_Training\", \"task_name\": \"Algorithm and Training\", \"status\": \"completed\"}",
+    "Data Handling and Storage": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Data_Handling_and_Storage\", \"task_name\": \"Data Handling and Storage\", \"status\": \"completed\"}",
+    "Client and Server": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Client_and_Server\", \"task_name\": \"Client and Server\", \"status\": \"completed\"}",
+    "Instrumentation and Utilities": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Instrumentation_and_Utilities\", \"task_name\": \"Instrumentation and Utilities\", \"status\": \"completed\"}",
+    "Dashboard Frontend": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Dashboard_Frontend\", \"task_name\": \"Dashboard Frontend\", \"status\": \"completed\"}"
+  }
+}

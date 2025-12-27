@@ -1,0 +1,29 @@
+{
+  "codebase_name": "toon",
+  "model_id": "vertex_ai/gemini-2.5-pro",
+  "timestamp": "2025-12-27T14:55:08.580329",
+  "duration_seconds": 325.92,
+  "total_tokens": 0,
+  "total_tool_calls": 26,
+  "total_context_overflows": 0,
+  "phases": {
+    "knowledge_base": null,
+    "tutorial": {
+      "name": "tutorial",
+      "duration_seconds": 325.92,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "tool_calls": 26,
+      "tool_calls_by_name": {
+        "get_codebase_tree": 1,
+        "read_codebase_file": 15,
+        "write_workspace_file": 5,
+        "list_codebase_directory": 5
+      },
+      "context_overflow_events": 0,
+      "model_errors": [],
+      "sub_agents_spawned": 5
+    }
+  }
+}

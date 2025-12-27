@@ -67,8 +67,30 @@ class SpawnTutorialAgentTool(Tool):
         #     shutil.rmtree(workspace_root)
         workspace_root.mkdir(parents=True, exist_ok=True)
 
-        # PRE-LOAD DISABLED - Agent reads files on its own
-        focus_list = "\n".join(f"- `{f}`" for f in focus_files) if focus_files else "(none)"
+        # VALIDATE focus_files - filter out directories and non-existent paths
+        validated_focus_files = []
+        if focus_files:
+            for f in focus_files:
+                # Check if it's a KB file (ends with .md and doesn't have src/ or packages/)
+                is_kb_file = f.endswith('.md') and not ('src/' in f or 'packages/' in f)
+                if is_kb_file:
+                    # KB files don't need codebase validation
+                    validated_focus_files.append(f)
+                else:
+                    # Codebase file - validate it exists and is a file
+                    file_path = self.ctx.codebase_root / f
+                    if file_path.exists() and file_path.is_file():
+                        validated_focus_files.append(f)
+                    elif file_path.exists() and file_path.is_dir():
+                        # It's a directory - try to find actual files in it
+                        logger.warning(f"'{f}' is a directory, not a file. Expanding to source files...")
+                        for ext in ['.ts', '.tsx', '.js', '.py']:
+                            for child in file_path.glob(f'*{ext}'):
+                                validated_focus_files.append(str(child.relative_to(self.ctx.codebase_root)))
+                    else:
+                        logger.warning(f"Focus file '{f}' not found in codebase, skipping...")
+        
+        focus_list = "\n".join(f"- `{f}`" for f in validated_focus_files) if validated_focus_files else "(none)"
 
         # Use centralized task template
         from prompts import prompts
@@ -113,6 +135,11 @@ class SpawnTutorialAgentTool(Tool):
             )
 
             workspace = workspaces[0] if workspaces else None
+            
+            # Track sub-agents spawned in metrics
+            if self.ctx.metrics and workspaces:
+                self.ctx.metrics.sub_agents_spawned += len(workspaces)
+                
             if workspace and workspace.exists():
                 # Validation Removed (Step 1991)
                 status = "completed"

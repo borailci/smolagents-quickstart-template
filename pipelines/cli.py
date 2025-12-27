@@ -126,6 +126,14 @@ def parse_args() -> argparse.Namespace:
         "--output", type=Path, default=None,
         help="Optional path to output the evaluation report.",
     )
+    eval_parser.add_argument(
+        "--colab", action="store_true",
+        help="Use Colab-hosted GPT-OSS-20B API (requires LLM_JUDGE_URL env var or --judge-url).",
+    )
+    eval_parser.add_argument(
+        "--judge-url", type=str, default=None,
+        help="URL for external LLM judge API (overrides LLM_JUDGE_URL env var).",
+    )
 
     deep_agent_parser = subparsers.add_parser(
         "deep-agent",
@@ -247,6 +255,12 @@ def main() -> None:
         logger.info("Tutorials written to:\n{}", _format_paths(outputs))
     elif args.command == "evaluate":
         from pipelines.llm_judge import evaluate_tutorials, evaluate_pair, evaluate_series, write_json_report, write_markdown_report, JUDGE_MODELS, _build_codebase_context
+        import pipelines.llm_judge as llm_judge_module
+        
+        # Handle external API URL
+        if args.judge_url:
+            llm_judge_module.EXTERNAL_API_URL = args.judge_url
+            logger.info(f"Using external judge API: {args.judge_url}")
         
         # A/B Comparison Mode
         if args.baseline and args.deep:
@@ -267,7 +281,15 @@ def main() -> None:
                  logger.error("Missing tutorial files in one of the directories.")
                  return
 
-             models = [m.strip() for m in args.models.split(",")] if args.models else JUDGE_MODELS
+             # Select models - --colab flag overrides --models
+             if args.colab:
+                 models = ["colab"]
+                 logger.info("Using Colab-hosted GPT-OSS-20B API for evaluation")
+             elif args.models:
+                 models = [m.strip() for m in args.models.split(",")]
+             else:
+                 models = JUDGE_MODELS
+             
              all_results = []
              
              for model_id in models:

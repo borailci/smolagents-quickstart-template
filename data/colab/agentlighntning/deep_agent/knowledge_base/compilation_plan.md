@@ -1,0 +1,6 @@
+- [x] Core Logic - Main entry points and core types (Files: agentlightning/client.py, agentlightning/server.py, agentlightning/types/core.py, agentlightning/types/resources.py)
+- [x] Algorithm and Training - APO algorithm and training logic (Files: agentlightning/algorithm/apo/apo.py, agentlightning/trainer/trainer.py, agentlightning/algorithm/fast.py, agentlightning/litagent/litagent.py)
+- [x] Data Handling and Storage - Data storage and collection management (Files: agentlightning/store/base.py, agentlightning/store/collection/base.py, agentlightning/store/collection/memory.py, agentlightning/store/collection/mongo.py)
+- [x] Client and Server - Client/server execution and communication (Files: agentlightning/execution/base.py, agentlightning/execution/client_server.py, agentlightning/execution/inter_process.py, agentlightning/runner/agent.py)
+- [x] Instrumentation and Utilities - Telemetry, logging, and utility functions (Files: agentlightning/instrumentation/agentops.py, agentlightning/tracer/otel.py, agentlightning/utils/otel.py, agentlightning/utils/server_launcher.py)
+- [x] Dashboard Frontend - Main frontend components and application logic (Files: dashboard/src/App.tsx, dashboard/src/main.tsx, dashboard/src/pages/Resources.page.tsx, dashboard/src/pages/Rollouts.page.tsx)

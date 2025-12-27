@@ -1,0 +1,4 @@
+- [x] Core Logic (Files: raganything/raganything.py, raganything/base.py, raganything/processor.py, raganything/query.py)
+- [x] Batch Processing (Files: raganything/batch.py, raganything/batch_parser.py)
+- [x] Parsing and Data Handling (Files: raganything/parser.py, raganything/enhanced_markdown.py, raganything/modalprocessors.py)
+- [x] Configuration and Utilities (Files: raganything/config.py, raganything/utils.py, raganything/prompt.py)

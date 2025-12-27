@@ -241,12 +241,31 @@ class KnowledgeBaseBuilder:
         )
         
         logger.info("Starting Summarizer Agent...")
-        try:
-            agent.run("Generate the Executive Summary based on the available Knowledge Base files.")
-            if summary_path.exists():
-                return summary_path
-        except Exception as e:
-            logger.error(f"Summarizer Agent failed: {e}")
+        
+        # Retry logic for rate limit handling
+        max_retries = 5
+        retry_delay = 30.0
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                agent.run("Generate the Executive Summary based on the available Knowledge Base files.")
+                if summary_path.exists():
+                    logger.info("Executive summary generated successfully")
+                    return summary_path
+                else:
+                    logger.warning("Summarizer completed but executive_summary.md not found")
+                    break
+            except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = "rate" in error_str or "429" in error_str or "quota" in error_str or "exhausted" in error_str
+                
+                if is_rate_limit and attempt < max_retries:
+                    logger.warning(f"Summarizer rate limited (attempt {attempt}/{max_retries}). Waiting {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 1.5, 120.0)  # Cap at 2 minutes
+                else:
+                    logger.error(f"Summarizer Agent failed: {e}")
+                    break
             
         return None
 

@@ -243,6 +243,10 @@ class SpawnSubAgentsTool(Tool):
                 metrics=self.ctx.metrics,
             )
             
+            # Track sub-agents spawned in metrics
+            if self.ctx.metrics and workspaces:
+                self.ctx.metrics.sub_agents_spawned += len(workspaces)
+            
             # 3. Process Results with LLM Validation
             for i, workspace in enumerate(workspaces):
                 meta = task_metadata[i]

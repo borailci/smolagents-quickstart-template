@@ -1,0 +1,46 @@
+[
+  {
+    "winner": "B",
+    "fidelity_A": 2,
+    "fidelity_B": 5,
+    "pedagogy_A": 3,
+    "pedagogy_B": 5,
+    "coverage_A": 3,
+    "coverage_B": 5,
+    "verified_snippets": [
+      {
+        "series": "A",
+        "claim": "import { parse, stringify } from '@toon-format/toon';",
+        "verified": false
+      },
+      {
+        "series": "A",
+        "claim": "toon --reverse",
+        "verified": false
+      },
+      {
+        "series": "A",
+        "claim": "import { encode } from '@toon-format/toon';",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "import { encode, decode } from '@toon-format/toon';",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "encode(data, { keyFolding: 'safe' })",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "decodeStream(lines)",
+        "verified": true
+      }
+    ],
+    "rationale": "Series B is the clear winner. Its fidelity is perfect, with all code snippets and API references being accurate and verifiable against the source code. In contrast, Series A suffers from significant fidelity issues, referencing non-existent functions (`parse`, `stringify`) and CLI flags (`--reverse`), which would confuse and mislead developers. Pedagogically, Series B is superior; it follows a logical, structured plan that progressively builds knowledge from basic encoding to advanced topics like streaming, tabular arrays, and error handling. Series A's plan is less structured and its content jumps between topics. In terms of coverage, Series B is far more comprehensive. It covers core APIs, the CLI, advanced encoding, streaming, error handling, and the important tabular array feature. Series A covers the basics but misses key features like tabular arrays and error handling, leaving significant gaps in a developer's understanding of the codebase.",
+    "file_name": "Comparison (Agentic)",
+    "model": "vertex_ai/gemini-2.5-pro"
+  }
+]

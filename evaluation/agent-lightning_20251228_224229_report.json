@@ -1,0 +1,8 @@
+[
+  {
+    "file_name": "Comparison",
+    "model": "vertex_ai/gemini-2.5-pro",
+    "winner": "Error",
+    "rationale": "JSON parse error: {\n    \"winner\": \"B\",\n    \"fidelity_A\": 2,\n    \"fidelity_B\": 5,\n    \"pedagogy_A\": 3,\n    \"pedagogy_B\": 5,\n    \"coverage_A\": 3,\n    \"coverage_B\": 5,\n    \"verified_snippets\": [\n        {\n            \"ser"
+  }
+]

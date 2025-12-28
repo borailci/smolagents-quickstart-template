@@ -1,0 +1,6 @@
+- [x] Task 1: Core Components (Files: agentlightning/client.py, agentlightning/server.py, agentlightning/config.py, agentlightning/llm_proxy.py, agentlightning/semconv.py)
+- [x] Task 2: Execution and Runner (Files: agentlightning/execution/base.py, agentlightning/execution/client_server.py, agentlightning/runner/base.py, agentlightning/runner/agent.py)
+- [x] Task 3: Data Storage (Files: agentlightning/store/base.py, agentlightning/store/collection_based.py, agentlightning/store/memory.py, agentlightning/store/mongo.py)
+- [x] Task 4: Instrumentation and Tracing (Files: agentlightning/instrumentation/agentops.py, agentlightning/instrumentation/litellm.py, agentlightning/tracer/base.py, agentlightning/tracer/otel.py)
+- [x] Task 5: Agent Algorithm and Training (Files: agentlightning/algorithm/base.py, agentlightning/algorithm/apo/apo.py, agentlightning/trainer/trainer.py, agentlightning/litagent/litagent.py)
+- [x] Task 6: Adapters and Data Types (Files: agentlightning/adapter/base.py, agentlightning/adapter/messages.py, agentlightning/types/core.py, agentlightning/types/resources.py)

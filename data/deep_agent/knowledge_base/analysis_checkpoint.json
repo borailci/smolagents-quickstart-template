@@ -1,0 +1,18 @@
+{
+  "processed_tasks": [
+    "Core Components",
+    "Execution and Runner",
+    "Data Storage",
+    "Instrumentation and Tracing",
+    "Agent Algorithm and Training",
+    "Adapters and Data Types"
+  ],
+  "results": {
+    "Core Components": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Core_Components\", \"task_name\": \"Core Components\", \"status\": \"completed\"}",
+    "Execution and Runner": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Execution_and_Runner\", \"task_name\": \"Execution and Runner\", \"status\": \"completed\"}",
+    "Data Storage": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Data_Storage\", \"task_name\": \"Data Storage\", \"status\": \"completed\"}",
+    "Instrumentation and Tracing": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Instrumentation_and_Tracing\", \"task_name\": \"Instrumentation and Tracing\", \"status\": \"completed\"}",
+    "Agent Algorithm and Training": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Agent_Algorithm_and_Training\", \"task_name\": \"Agent Algorithm and Training\", \"status\": \"completed\"}",
+    "Adapters and Data Types": "{\"workspace\": \"/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_kb/Adapters_and_Data_Types\", \"task_name\": \"Adapters and Data Types\", \"status\": \"completed\"}"
+  }
+}

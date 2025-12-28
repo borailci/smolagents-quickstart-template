@@ -1,0 +1,46 @@
+{
+  "codebase_name": "agent-lightning",
+  "model_id": "vertex_ai/gemini-2.5-pro",
+  "timestamp": "2025-12-28T22:22:27.867095",
+  "duration_seconds": 1320.93,
+  "total_tokens": 3381333,
+  "total_tool_calls": 101,
+  "total_context_overflows": 0,
+  "phases": {
+    "knowledge_base": {
+      "name": "knowledge_base",
+      "duration_seconds": 699.95,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "tool_calls": 58,
+      "tool_calls_by_name": {
+        "get_codebase_tree": 1,
+        "write_workspace_file": 13,
+        "read_codebase_file": 44
+      },
+      "context_overflow_events": 0,
+      "model_errors": [],
+      "sub_agents_spawned": 6
+    },
+    "tutorial": {
+      "name": "tutorial",
+      "duration_seconds": 620.98,
+      "input_tokens": 3236280,
+      "output_tokens": 145053,
+      "total_tokens": 3381333,
+      "tool_calls": 43,
+      "tool_calls_by_name": {
+        "list_knowledge_base": 1,
+        "read_knowledge_base_file": 2,
+        "get_codebase_tree": 2,
+        "read_codebase_file": 20,
+        "list_codebase_directory": 10,
+        "write_workspace_file": 8
+      },
+      "context_overflow_events": 0,
+      "model_errors": [],
+      "sub_agents_spawned": 7
+    }
+  }
+}

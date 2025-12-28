@@ -141,7 +141,13 @@ class TutorialGenerator:
             return []
 
         from pipelines.checkpoint import run_with_rate_limit_retry
+        import re
+        import sys
+        from io import StringIO
         
+        # Capture stdout to parse token counts
+        old_stdout = sys.stdout
+        sys.stdout = buffer = StringIO()
         try:
             run_with_rate_limit_retry(
                 supervisor.run,
@@ -152,6 +158,19 @@ class TutorialGenerator:
             logger.error(f"Supervisor failed: {e}")
             if not self.dry_run:
                 raise
+        finally:
+            sys.stdout = old_stdout
+            output = buffer.getvalue()
+            
+            # Parse token counts from step summaries
+            if metrics:
+                pattern = r'Input tokens: ([\d,]+) \| Output tokens: ([\d,]+)'
+                matches = re.findall(pattern, output)
+                if matches:
+                    total_input = sum(int(m[0].replace(',', '')) for m in matches)
+                    total_output = sum(int(m[1].replace(',', '')) for m in matches)
+                    metrics.record_tokens(total_input, total_output)
+                    logger.info(f"📊 Parsed tokens from output: in={total_input}, out={total_output}")
         
         output_files = list(self.output_root.glob("*.md"))
         logger.info(f"Generated {len(output_files)} tutorials.")
@@ -174,7 +193,13 @@ class TutorialGenerator:
         supervisor = self._create_baseline_supervisor_agent(metrics=metrics)
         
         from pipelines.checkpoint import run_with_rate_limit_retry
+        import re
+        import sys
+        from io import StringIO
         
+        # Capture stdout to parse token counts
+        old_stdout = sys.stdout
+        sys.stdout = buffer = StringIO()
         try:
             run_with_rate_limit_retry(
                 supervisor.run,
@@ -185,6 +210,19 @@ class TutorialGenerator:
             logger.error(f"Baseline Supervisor failed: {e}")
             if not self.dry_run:
                 raise
+        finally:
+            sys.stdout = old_stdout
+            output = buffer.getvalue()
+            
+            # Parse token counts from step summaries
+            if metrics:
+                pattern = r'Input tokens: ([\d,]+) \| Output tokens: ([\d,]+)'
+                matches = re.findall(pattern, output)
+                if matches:
+                    total_input = sum(int(m[0].replace(',', '')) for m in matches)
+                    total_output = sum(int(m[1].replace(',', '')) for m in matches)
+                    metrics.record_tokens(total_input, total_output)
+                    logger.info(f"📊 Parsed tokens from output: in={total_input}, out={total_output}")
         
         output_files = list(self.output_root.glob("*.md"))
         logger.info(f"Generated {len(output_files)} baseline tutorials.")

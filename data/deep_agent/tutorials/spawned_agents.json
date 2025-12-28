@@ -1,0 +1,37 @@
+{
+  "tutorial_plan.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/tutorial_plan",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "01_getting_started.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/01_getting_started",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "02_data_persistence.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/02_data_persistence",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "03_observability.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/03_observability",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "04_cli_configuration.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/04_cli_configuration",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "05_distributed_training.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/05_distributed_training",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  },
+  "06_llm_proxy.md": {
+    "workspace": "/Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/deep_agent/sub_agents_tutorials/06_llm_proxy",
+    "status": "completed",
+    "validation": "Validation Disabled"
+  }
+}

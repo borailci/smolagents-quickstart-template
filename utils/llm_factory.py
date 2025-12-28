@@ -31,10 +31,20 @@ _last_usage = threading.local()
 def _litellm_success_callback(kwargs, completion_response, start_time, end_time):
     """Callback to capture token usage from litellm responses."""
     try:
-        usage = completion_response.get("usage", {})
-        _last_usage.input_tokens = usage.get("prompt_tokens", 0) or 0
-        _last_usage.output_tokens = usage.get("completion_tokens", 0) or 0
-    except Exception:
+        # Handle both dict and object responses
+        if hasattr(completion_response, 'usage'):
+            usage = completion_response.usage
+            _last_usage.input_tokens = getattr(usage, 'prompt_tokens', 0) or 0
+            _last_usage.output_tokens = getattr(usage, 'completion_tokens', 0) or 0
+        elif isinstance(completion_response, dict):
+            usage = completion_response.get("usage", {})
+            _last_usage.input_tokens = usage.get("prompt_tokens", 0) or 0
+            _last_usage.output_tokens = usage.get("completion_tokens", 0) or 0
+        else:
+            _last_usage.input_tokens = 0
+            _last_usage.output_tokens = 0
+    except Exception as e:
+        logger.debug(f"Failed to capture token usage in callback: {e}")
         _last_usage.input_tokens = 0
         _last_usage.output_tokens = 0
 
@@ -68,22 +78,69 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         
         while True:
             try:
-                # Call LiteLLM directly
+                # Call litellm.completion directly to get full response with usage
                 print("Calling LLM...")
-                response = super().__call__(messages, *args, **kwargs)
+                full_response = litellm.completion(
+                    model=self.model_id,
+                    messages=messages,
+                    *args,
+                    **kwargs
+                )
                 
-                # Report successful call metrics using callback-captured usage
+                # Extract tokens from full response
+                # Log to file for debugging
+                try:
+                    with open('/tmp/token_debug.log', 'a') as f:
+                        f.write(f"\n=== LLM CALL ===\n")
+                        f.write(f"metrics: {self._metrics}\n")
+                        f.write(f"response type: {type(full_response)}\n")
+                        f.write(f"has usage: {hasattr(full_response, 'usage')}\n")
+                except:
+                    pass
+                
                 if self._metrics:
                     try:
-                        input_tokens = getattr(_last_usage, 'input_tokens', 0)
-                        output_tokens = getattr(_last_usage, 'output_tokens', 0)
+                        input_tokens = 0
+                        output_tokens = 0
+                        
+                        # Debug: Print response structure
+                        print(f"DEBUG: Response type: {type(full_response)}")
+                        print(f"DEBUG: Has usage attr: {hasattr(full_response, 'usage')}")
+                        if hasattr(full_response, 'usage'):
+                            print(f"DEBUG: Usage value: {full_response.usage}")
+                        print(f"DEBUG: Response dir: {[x for x in dir(full_response) if not x.startswith('_')][:10]}")
+                        
+                        # Extract from response.usage
+                        if hasattr(full_response, 'usage') and full_response.usage:
+                            usage = full_response.usage
+                            input_tokens = getattr(usage, 'prompt_tokens', 0) or getattr(usage, 'input_tokens', 0) or 0
+                            output_tokens = getattr(usage, 'completion_tokens', 0) or getattr(usage, 'output_tokens', 0) or 0
+                            print(f"DEBUG: Extracted tokens - in:{input_tokens}, out:{output_tokens}")
+                        
                         if input_tokens > 0 or output_tokens > 0:
                             self._metrics.record_tokens(input_tokens, output_tokens)
-                            logger.debug(f"📊 Recorded tokens: in={input_tokens}, out={output_tokens}")
+                            logger.info(f"📊 Recorded tokens: in={input_tokens}, out={output_tokens}")
+                            try:
+                                with open('/tmp/token_debug.log', 'a') as f:
+                                    f.write(f"✅ RECORDED: in={input_tokens}, out={output_tokens}\n")
+                            except:
+                                pass
+                        else:
+                            msg = f"⚠️ No usage info in response. Response type: {type(full_response)}, has usage: {hasattr(full_response, 'usage')}"
+                            logger.warning(msg)
+                            print(msg)
                     except Exception as e:
-                        logger.debug(f"Failed to record token usage: {e}")
+                        msg = f"Failed to extract token usage: {e}"
+                        logger.warning(msg)
+                        print(f"ERROR: {msg}")
                 
-                return response
+                # Extract the text content to return (matching LiteLLMModel behavior)
+                if hasattr(full_response, 'choices') and full_response.choices:
+                    response_text = full_response.choices[0].message.content
+                else:
+                    response_text = str(full_response)
+                
+                return response_text
 
             except Exception as e:
                 # Robust Rate Limit Detection

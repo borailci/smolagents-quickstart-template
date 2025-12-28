@@ -215,3 +215,7 @@ __marimo__/
 
 # Local filtered logs
 filtered_log*.txt
+
+data/deep_agent_output/
+data/rag_vector_store/
+data/benchmark/

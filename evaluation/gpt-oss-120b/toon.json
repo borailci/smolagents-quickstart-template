@@ -1,0 +1,42 @@
+{
+  "winner": "B",
+  "fidelity_A": 4,
+  "fidelity_B": 5,
+  "pedagogy_A": 4,
+  "pedagogy_B": 5,
+  "coverage_A": 4,
+  "coverage_B": 5,
+  "verified_snippets": [
+    {
+      "series": "A",
+      "claim": "import `encode` and `decode` functions from `toon` package",
+      "verified": true
+    },
+    {
+      "series": "A",
+      "claim": "`constants.ts` defines delimiter characters used by the encoder",
+      "verified": true
+    },
+    {
+      "series": "A",
+      "claim": "`shared/validation.ts` provides runtime validation utilities for decoded data",
+      "verified": true
+    },
+    {
+      "series": "B",
+      "claim": "import `create_cli_agent` from `toon-cli` and configure it with `auto_approve:false`",
+      "verified": true
+    },
+    {
+      "series": "B",
+      "claim": "`encode` supports custom `EncodeReplacer` functions as documented in the tutorial",
+      "verified": true
+    },
+    {
+      "series": "B",
+      "claim": "`decode` can stream large JSON inputs using `decodeStream` as shown in the tutorial",
+      "verified": true
+    }
+  ],
+  "rationale": "Both tutorial series accurately describe the core API of the Toon library, but Series B (the deep_agent tutorials) demonstrates a more comprehensive and precise use of the library. The baseline series (Series A) correctly covers basic encoding and decoding concepts, such as importing the `encode` and `decode` functions and using the delimiter constants defined in `constants.ts`. It also mentions validation utilities from `shared/validation.ts`. However, it stops short of illustrating advanced features like custom replacer functions, streaming decoding, or CLI integration, and it contains a minor inconsistency in the import path for the `decode` module. In contrast, Series B not only uses the correct import paths (including `create_cli_agent` from `toon-cli`) but also showcases the `EncodeReplacer` API, which allows users to transform values during encoding, and demonstrates the `decodeStream` capability for handling large JSON payloads efficiently. The deep_agent tutorials also provide clear Mermaid diagrams and step‑by‑step CLI usage instructions, which improve pedagogical flow and help users understand the interaction between the CLI, the backend, and the library. These richer examples, combined with accurate code snippets that match the actual implementation (e.g., proper handling of delimiters, correct streaming API signatures, and correct backend configuration), give Series B higher scores for fidelity, pedagogy, and coverage. Consequently, Series B wins with a higher overall rating, reflecting its superior depth, accuracy, and instructional quality."
+}

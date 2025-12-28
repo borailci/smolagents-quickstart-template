@@ -1,0 +1,46 @@
+[
+  {
+    "winner": "B",
+    "fidelity_A": 4,
+    "fidelity_B": 5,
+    "pedagogy_A": 3,
+    "pedagogy_B": 5,
+    "coverage_A": 3,
+    "coverage_B": 5,
+    "verified_snippets": [
+      {
+        "series": "A",
+        "claim": "from deepagents import create_deep_agent",
+        "verified": true
+      },
+      {
+        "series": "A",
+        "claim": "from deepagents.backends import FilesystemBackend",
+        "verified": true
+      },
+      {
+        "series": "A",
+        "claim": "from deepagents import CompiledSubAgent",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "from deepagents_cli.agent import create_cli_agent",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "from deepagents_harbor.backend import HarborSandbox",
+        "verified": true
+      },
+      {
+        "series": "B",
+        "claim": "agent.md for memory",
+        "verified": true
+      }
+    ],
+    "rationale": "Series B emerges as the superior tutorial series for DeepAgents, offering a more user-centric, comprehensive, and pedagogically sound approach to learning the framework. While Series A provides a solid foundation in the core library components, Series B excels in delivering practical, end-to-end guidance that aligns with how developers actually interact with the DeepAgents ecosystem.\n\n**Fidelity:**\n- **Series A (Score: 4):** The tutorials demonstrate good accuracy in describing core functions like `create_deep_agent`, middleware, and backends. However, there are minor inconsistencies, such as using `from langchain.chat_models import init_chat_model` which is deprecated in favor of provider-specific imports. The code snippets are generally correct but occasionally abstract, lacking the concrete runnable examples that would make them immediately actionable.\n- **Series B (Score: 5):** Every code snippet is meticulously accurate and directly verifiable against the source code. The CLI-focused examples use correct imports like `from deepagents_cli.agent import create_cli_agent` and properly demonstrate features like the Harbor backend integration. The tutorials avoid deprecated APIs and present modern, production-ready code patterns.\n\n**Pedagogy:**\n- **Series A (Score: 3):** The structure follows a logical progression from basic agent creation to advanced customization, which is pedagogically sound. However, it assumes a certain level of familiarity with LangGraph and agent concepts that may not be present for all users. The examples are more conceptual than hands-on, potentially leaving beginners struggling to apply the concepts in practice.\n- **Series B (Score: 5):** The pedagogical approach is exceptional, starting with the most accessible entry point - the CLI - and building progressively through core concepts, tools, memory management, secure execution, and advanced features. Each tutorial includes clear verification steps, common pitfalls, and challenges that reinforce learning. The use of Mermaid diagrams and step-by-step implementations makes complex topics digestible.\n\n**Coverage:**\n- **Series A (Score: 3):** Provides adequate coverage of the core `deepagents` library, including agent creation, customization, sub-agents, and backends. However, it largely ignores the CLI application, which is the primary interface for most users, and misses important features like agent memory, HITL workflows, and sandbox execution that are covered in Series B.\n- **Series B (Score: 5):** Offers comprehensive coverage of the entire DeepAgents ecosystem. It addresses both the programmatic API and the user-friendly CLI, includes advanced topics like persistent memory, secure sandbox execution with Harbor, and CLI customization. The series successfully bridges the gap between library usage and practical application, making it suitable for users at all levels.",
+    "file_name": "Comparison (Agentic)",
+    "model": "vertex_ai/gemini-2.5-pro"
+  }
+]

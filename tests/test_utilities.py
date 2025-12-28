@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path.cwd()))
 
-# pipelines.types import removed
+
 from utils.llm_factory import RateLimitedLiteLLMModel, create_model
 
 def test_create_model_returns_rate_limited_wrapper():

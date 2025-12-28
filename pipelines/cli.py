@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Maximum number of directories to analyze.",
     )
-    # usage of --supervisor flag removed (default is now supervisor)
+
     tutorial_parser = subparsers.add_parser(
         "tutorials",
         aliases=["build-tutorials", "tutorial"],
@@ -190,7 +190,7 @@ def generate_knowledge_base(
     step_delay_seconds: float | None = None,
     max_targets: int | None = None,
 
-    # use_supervisor unused, kept for signature compatibility or removed? Removing from signature.
+
 ) -> list[Path]:
     builder = KnowledgeBaseBuilder(
         codebase_root=codebase,

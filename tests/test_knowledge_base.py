@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path.cwd()))
 
 from pipelines.knowledge_base_builder import KnowledgeBaseBuilder
-# pipelines.types import removed
+
 
 
 @pytest.fixture

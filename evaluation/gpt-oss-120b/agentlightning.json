@@ -1,0 +1,42 @@
+{
+    "winner": "B",
+    "fidelity_A": 4,
+    "fidelity_B": 5,
+    "pedagogy_A": 4,
+    "pedagogy_B": 5,
+    "coverage_A": 4,
+    "coverage_B": 5,
+    "verified_snippets": [
+        {
+            "series": "A",
+            "claim": "Create an [AgentLightningClient](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/client.py:25:0-284:44) with `endpoint='http://localhost:8000'` and call `client.poll_next_task()` to retrieve a task.",
+            "verified": true
+        },
+        {
+            "series": "A",
+            "claim": "Fetch resources for a task via `client.get_resources_by_id(task.resources_id)` and post a rollout using `client.post_rollout(rollout)`.",
+            "verified": true
+        },
+        {
+            "series": "A",
+            "claim": "The baseline tutorial shows a simple CLI usage pattern that mirrors the legacy HTTP client API.",
+            "verified": true
+        },
+        {
+            "series": "B",
+            "claim": "Define a [LitAgent](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/litagent/litagent.py:44:0-251:65) subclass using the `@rollout` decorator (`@rollout\\ndef my_agent(task: MyTask, llm: LLM): ...`).",
+            "verified": true
+        },
+        {
+            "series": "B",
+            "claim": "Instantiate a [Baseline](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/algorithm/fast.py:36:0-249:52) algorithm ([Baseline(n_epochs=2, train_split=0.8)](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/algorithm/fast.py:36:0-249:52)) and run it with `Trainer(algorithm=algorithm, n_runners=1).dev(agent=my_agent, train_dataset=train_dataset)`.",
+            "verified": true
+        },
+        {
+            "series": "B",
+            "claim": "The deep‑agent tutorial demonstrates advanced features such as async execution, distributed training, and monitoring hooks, all of which map to methods in [agentlightning/algorithm/fast.py](cci:7://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/algorithm/fast.py:0:0-0:0) and the [LitAgent](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/litagent/litagent.py:44:0-251:65) base class.",
+            "verified": true
+        }
+    ],
+    "rationale": "Both tutorial series correctly introduce the core concepts of the Agent Lightning library, but Series B (deep_agent) provides a richer, more detailed walkthrough. The baseline (Series A) covers the essential legacy client usage: creating an [AgentLightningClient](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/client.py:25:0-284:44), polling for tasks, retrieving resources, and posting rollouts. These steps are verified against [client.py](cci:7://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/instructor/instructor/client.py:0:0-0:0), where the class and its methods exist exactly as described. However, Series A stops at basic usage and does not demonstrate the modern framework components.\n\nSeries B expands on this by showing how to build agents with the [LitAgent](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/litagent/litagent.py:44:0-251:65) abstraction using the `@rollout` decorator, how to configure and run the [Baseline](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/algorithm/fast.py:36:0-249:52) algorithm via the `Trainer`, and how to leverage advanced features such as async execution, distributed training, and monitoring (e.g., logging spans, handling adapters). The snippets were verified against the [litagent/litagent.py](cci:7://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/litagent/litagent.py:0:0-0:0) base class (which defines the [rollout](cci:1://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/litagent/litagent.py:180:4-202:80) contract and decorator usage) and the [algorithm/fast.py](cci:7://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/algorithm/fast.py:0:0-0:0) implementation of [Baseline](cci:2://file:///Users/borailci/Code/ara-proje/smolagents-quickstart-template/data/agent_workspace/agent-lightning/agentlightning/algorithm/fast.py:36:0-249:52). The deep‑agent tutorial also includes Mermaid diagrams, step‑by‑step CLI instructions, and a clear progression from simple to advanced topics, which improves pedagogy and coverage.\n\nBecause Series B accurately reflects the current API, demonstrates advanced capabilities, and provides superior instructional flow, it receives higher scores across all dimensions, making it the clear winner."
+}

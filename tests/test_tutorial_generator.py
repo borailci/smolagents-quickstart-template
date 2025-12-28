@@ -7,7 +7,7 @@ import pytest
 sys.path.insert(0, str(Path.cwd()))
 
 from pipelines.tutorial_generator import TutorialGenerator
-# pipelines.types import removed
+
 
 @pytest.fixture
 def mock_dirs(tmp_path):

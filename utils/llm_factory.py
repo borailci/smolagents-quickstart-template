@@ -41,7 +41,7 @@ def _litellm_success_callback(kwargs, completion_response, start_time, end_time)
 # Register the callback globally
 litellm.success_callback = [_litellm_success_callback]
 
-# throttled_api_call removed - using direct logic in RateLimitedLiteLLMModel
+
 
 class RateLimitedLiteLLMModel(LiteLLMModel):
     """Wrapper around LiteLLMModel that enforces rate limits and tracks metrics."""

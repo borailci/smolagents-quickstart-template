@@ -1,0 +1,42 @@
+{
+    "winner": "B",
+    "fidelity_A": 4,
+    "fidelity_B": 5,
+    "pedagogy_A": 3,
+    "pedagogy_B": 5,
+    "coverage_A": 3,
+    "coverage_B": 5,
+    "verified_snippets": [
+        {
+            "series": "A",
+            "claim": "Import `encode` and `decode` from '@toon-format/toon' and use them to convert JavaScript objects to TOON strings and back.",
+            "verified": true
+        },
+        {
+            "series": "A",
+            "claim": "Tutorial shows basic encoding with default options producing TOON format with indentation and array notation.",
+            "verified": true
+        },
+        {
+            "series": "A",
+            "claim": "Tutorial mentions CLI usage but provides limited implementation details.",
+            "verified": false
+        },
+        {
+            "series": "B",
+            "claim": "Tutorial demonstrates `encode` function with `EncodeOptions` including `indent`, `delimiter`, and `keyFolding` parameters, all verified in index.ts and types.",
+            "verified": true
+        },
+        {
+            "series": "B",
+            "claim": "Tutorial shows `DELIMITERS` constant for changing tabular array delimiters (e.g., `DELIMITERS.comma`), verified in constants.ts exports.",
+            "verified": true
+        },
+        {
+            "series": "B",
+            "claim": "Tutorial demonstrates `keyFolding: 'safe'` option for collapsing single-key nested objects into dotted notation (e.g., 'config.system.api.endpoint').",
+            "verified": true
+        }
+    ],
+    "rationale": "After comprehensive examination of both tutorial series against the toon codebase, Series B (deep_agent) demonstrates significantly superior quality across all evaluation dimensions.\n\n**Fidelity Analysis:**\nBoth series correctly show the basic `encode` and `decode` functions from '@toon-format/toon' (verified in `packages/toon/src/index.ts:48-50`). Series A provides accurate basic examples but stops there. Series B demonstrates perfect fidelity by accurately documenting advanced features: the `EncodeOptions` interface with `indent`, `delimiter`, and `keyFolding` parameters (all verified in the types and implementation), the `DELIMITERS` constant for customizing tabular array separators (verified in constants.ts exports), the `keyFolding: 'safe'` option for collapsing nested single-key objects into dotted notation, and streaming capabilities with `decodeStream`. All code examples in Series B match the actual API signatures and behavior patterns found in the codebase.\n\n**Pedagogy Analysis:**\nSeries A provides basic examples with minimal context. The tutorials show simple encode/decode operations but don't explain when or why to use TOON, what problems it solves, or how to customize the output for different use cases. The CLI tutorial (04_cli_usage.md) is particularly weak, providing conceptual descriptions without concrete command examples or workflows. Series B excels pedagogically with a clear progression: starting with a well-explained synopsis that positions TOON as a token-efficient format for LLMs (01_getting_started.md), then diving into advanced encoding options with visual diagrams showing the encoding pipeline (02_advanced_encoding.md), covering streaming for large datasets (03_streaming.md), demonstrating practical CLI usage with actual commands (04_cli_usage.md), explaining tabular array handling (05_tabular_arrays.md), and providing comprehensive error handling patterns (06_error_handling.md). Each deep_agent tutorial includes verification sections showing expected outputs, common pitfalls warnings with specific examples, and challenge exercises that build on the concepts. The advanced encoding tutorial (02) is particularly strong, providing a Mermaid diagram of the encoding pipeline and demonstrating how multiple options interact.\n\n**Coverage Analysis:**\nSeries A covers only basic features: simple encode/decode operations, basic array notation, and conceptual CLI mentions. It lacks coverage of critical features like customization options, streaming, error handling, and practical CLI workflows. Series B provides comprehensive coverage including: the complete encoding API with all options (`indent`, `delimiter`, `keyFolding`), the `DELIMITERS` constant for customizing separators, streaming capabilities with `decodeStream` for handling large datasets, tabular array formatting for structured data, error handling patterns with `strict` mode options, and practical CLI usage with actual command examples. The deep_agent series demonstrates real-world usage patterns like using `keyFolding: 'safe'` to create compact representations for LLM prompts, combining multiple encoding options for specific use cases, and handling edge cases like malformed TOON strings with appropriate error handling.\n\nSeries B is the clear winner, providing accurate, pedagogically superior, and comprehensive tutorials that enable users to effectively use TOON for token-efficient data representation in LLM applications."
+}

@@ -1,0 +1,42 @@
+{
+    "winner": "B",
+    "fidelity_A": 4,
+    "fidelity_B": 5,
+    "pedagogy_A": 4,
+    "pedagogy_B": 5,
+    "coverage_A": 3,
+    "coverage_B": 5,
+    "verified_snippets": [
+        {
+            "series": "A",
+            "claim": "Import `create_deep_agent` from `deepagents` package and use it to create agents with custom models, tools, and middleware.",
+            "verified": true
+        },
+        {
+            "series": "A",
+            "claim": "Tutorial shows middleware using `AgentMiddleware` base class from `langchain.agents.middleware`, which matches the import in filesystem.py:9-10.",
+            "verified": true
+        },
+        {
+            "series": "A",
+            "claim": "Tutorial demonstrates `interrupt_on` parameter with dictionary structure containing tool names and `allowed_decisions` list.",
+            "verified": true
+        },
+        {
+            "series": "B",
+            "claim": "Tutorial shows `create_cli_agent` function with parameters `model`, `assistant_id`, and `auto_approve=False` for HITL workflows.",
+            "verified": true
+        },
+        {
+            "series": "B",
+            "claim": "Tutorial demonstrates agent memory system using `~/.deepagents/{assistant_id}/agent.md` for user memory and `./.deepagents/agent.md` for project memory, processed by `AgentMemoryMiddleware`.",
+            "verified": true
+        },
+        {
+            "series": "B",
+            "claim": "Tutorial provides detailed tool documentation including `shell`, `execute`, `write_file`, `read_file`, `edit_file`, `web_search`, and `fetch_url` with HITL trigger information.",
+            "verified": true
+        }
+    ],
+    "rationale": "After comprehensive examination of both tutorial series against the deepagents codebase, Series B (deep_agent) demonstrates superior quality across all evaluation dimensions, though Series A provides a solid foundation.\n\n**Fidelity Analysis:**\nBoth series maintain high fidelity to the codebase. Series A correctly shows the `create_deep_agent` function signature and its parameters (model, system_prompt, tools, middleware, subagents, interrupt_on, backend), all verified against graph.py. The middleware example correctly uses `AgentMiddleware` from `langchain.agents.middleware` (verified in filesystem.py:9-10). Series B goes further by providing accurate details about the CLI agent implementation, including the `create_cli_agent` function with its `auto_approve` parameter for HITL workflows. The memory system documentation (using `~/.deepagents/{assistant_id}/agent.md` and `./.deepagents/agent.md`) is architecturally sound and matches the middleware-based injection pattern. All tool names and behaviors described in the deep_agent tutorials align with the actual implementation.\n\n**Pedagogy Analysis:**\nSeries A follows a logical progression from getting started to customization, subagents, and backends. Each tutorial includes architecture diagrams and code examples. However, the examples are often conceptual rather than fully runnable. Series B excels pedagogically with a clear \"easy to hard\" progression: starting with a minimal CLI introduction (01_getting_started.md), then diving into core concepts (02_core_concepts.md), followed by practical tool usage with detailed HITL examples (03_cli_agent_and_tools.md), memory configuration (04_agent_memory.md), backend integration (05_harbor_backend.md), and advanced CLI features (06_advanced_cli.md). Each deep_agent tutorial includes verification steps, common pitfalls sections, and challenge exercises. The tutorial on CLI tools (03) is particularly strong, providing a comprehensive table of tools with HITL trigger information and step-by-step examples showing the actual approval prompts users will see.\n\n**Coverage Analysis:**\nSeries A covers essential topics: basic agent creation, customization options, subagents, and backends. However, it stops at conceptual explanations without diving into practical workflows. Series B provides significantly broader coverage, including: the complete CLI agent workflow with local vs sandbox modes, detailed tool documentation with security considerations, the hierarchical memory system for personality and project context, backend integration patterns, and advanced CLI features. The deep_agent series demonstrates real-world usage patterns like chaining multiple tools together (web_search → fetch_url → file operations) and explains the architectural reasoning behind features like HITL and sandbox isolation. This comprehensive coverage makes Series B far more valuable for users who want to actually build and deploy deepagents-based systems.\n\nSeries B is the clear winner, providing accurate, pedagogically superior, and comprehensive tutorials that enable users to effectively learn and use the deepagents framework in production scenarios."
+}

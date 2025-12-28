@@ -1,0 +1,42 @@
+{
+  "winner": "B",
+  "fidelity_A": 4,
+  "fidelity_B": 5,
+  "pedagogy_A": 3,
+  "pedagogy_B": 5,
+  "coverage_A": 3,
+  "coverage_B": 5,
+  "verified_snippets": [
+    {
+      "series": "A",
+      "claim": "from deepagents import create_deep_agent",
+      "verified": true
+    },
+    {
+      "series": "A",
+      "claim": "agent = create_deep_agent(tools=[internet_search])",
+      "verified": true
+    },
+    {
+      "series": "A",
+      "claim": "from deepagents.backends import CompositeBackend, StateBackend, StoreBackend",
+      "verified": true
+    },
+    {
+      "series": "B",
+      "claim": "from deepagents.graph import create_deep_agent",
+      "verified": true
+    },
+    {
+      "series": "B",
+      "claim": "from deepagents_cli.agent import create_cli_agent",
+      "verified": true
+    },
+    {
+      "series": "B",
+      "claim": "agent, backend = create_cli_agent(model=model, assistant_id='my-cli-agent', auto_approve=False)",
+      "verified": true
+    }
+  ],
+  "rationale": "Series B is the superior tutorial series for DeepAgents, providing a more comprehensive, accurate, and user-friendly learning experience. It focuses on the practical CLI interface that most developers will use, while Series A concentrates on lower-level library details.\n\n**Fidelity:**\n- **Series A (Score: 4):** Accurate in core concepts but includes some deprecated imports like `init_chat_model` and conceptual examples that aren't fully runnable.\n- **Series B (Score: 5):** All code snippets are precise matches to the source code, using correct imports and demonstrating real CLI usage patterns.\n\n**Pedagogy:**\n- **Series A (Score: 3):** Logical structure but assumes LangGraph knowledge and provides abstract examples that may confuse beginners.\n- **Series B (Score: 5):** Excellent progression from basic CLI setup to advanced features, with clear diagrams, verification steps, and practical challenges.\n\n**Coverage:**\n- **Series A (Score: 3):** Covers core library features well but misses CLI, memory, and sandbox execution.\n- **Series B (Score: 5):** Comprehensive coverage of the full ecosystem, including CLI, agent memory, Harbor sandbox, and advanced CLI features."
+}

@@ -52,36 +52,208 @@ JUDGE_MODELS = [
 # External API support (Colab-hosted model)
 EXTERNAL_API_URL = os.environ.get("LLM_JUDGE_URL", None)
 
-def call_external_judge_api(messages: list, max_tokens: int = 2048) -> str:
-    """Call the external LLM Judge API (Colab-hosted GPT-OSS-20B)."""
+def check_external_api_health(url: str = None) -> bool:
+    """Check if the external LLM API is reachable."""
     import requests
+    
+    api_url = url or EXTERNAL_API_URL
+    if not api_url:
+        return False
+    
+    try:
+        response = requests.get(f"{api_url.rstrip('/')}/health", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"✅ External API healthy: {data.get('model', 'unknown')}")
+            return True
+        else:
+            logger.warning(f"External API returned status {response.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"External API health check failed: {e}")
+        return False
+
+
+def call_external_evaluate_endpoint(content_a: str, content_b: str, codebase_context: str, max_retries: int = 3) -> dict:
+    """Call the custom /evaluate endpoint on the Colab-hosted GPT-OSS-20B model.
+    
+    This uses the dedicated evaluation endpoint which handles prompt formatting
+    and returns structured JSON results.
+    """
+    import requests
+    import time
     
     url = EXTERNAL_API_URL
     if not url:
         raise ValueError("LLM_JUDGE_URL environment variable not set")
     
-    # Ensure URL doesn't end with /
-    url = url.rstrip("/")
-    endpoint = f"{url}/v1/chat/completions"
+    endpoint = f"{url.rstrip('/')}/evaluate"
     
-    logger.info(f"Calling external judge API: {endpoint}")
+    # Truncate content to fit model context
+    payload = {
+        "content_a": content_a[:6000],
+        "content_b": content_b[:6000],
+        "codebase_context": codebase_context[:3000]
+    }
     
-    response = requests.post(
-        endpoint,
-        json={
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": 0.1
-        },
-        headers={"Content-Type": "application/json"},
-        timeout=300  # 5 minute timeout for large evaluations
+    logger.info(f"Calling external evaluate endpoint: {endpoint}")
+    logger.info(f"Payload sizes: A={len(payload['content_a'])} B={len(payload['content_b'])} ctx={len(payload['codebase_context'])}")
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(endpoint, json=payload, timeout=180)
+            
+            if response.status_code != 200:
+                raise RuntimeError(f"API returned status {response.status_code}: {response.text[:200]}")
+            
+            data = response.json()
+            response_text = data.get("response", "")
+            
+            logger.info(f"Raw response ({len(response_text)} chars): {response_text[:500]}...")
+            
+            # Parse JSON from response
+            # Strip markdown fences if present
+            response_text = re.sub(r"^```(?:json)?\s*", "", response_text, flags=re.IGNORECASE).strip()
+            response_text = re.sub(r"\s*```$", "", response_text).strip()
+            
+            # Try to parse JSON
+            try:
+                result = json.loads(response_text)
+                result["model"] = "gpt-oss-20b"
+                return result
+            except json.JSONDecodeError:
+                # Try to find JSON object in response
+                match = re.search(r'\{[^{}]*"winner"[^{}]*\}', response_text, re.DOTALL)
+                if match:
+                    result = json.loads(match.group(0))
+                    result["model"] = "gpt-oss-20b"
+                    return result
+                raise RuntimeError(f"Could not parse JSON from response: {response_text[:200]}")
+                
+        except requests.exceptions.Timeout:
+            logger.warning(f"Request timeout (attempt {attempt}/{max_retries})")
+            if attempt < max_retries:
+                time.sleep(5 * attempt)
+                continue
+            raise
+        except Exception as e:
+            logger.error(f"Evaluate endpoint failed (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                time.sleep(3 * attempt)
+                continue
+            raise
+    
+    raise RuntimeError("Max retries exceeded for evaluate endpoint")
+
+
+def call_external_judge_api(messages: list, max_tokens: int = 2048) -> str:
+    """Call the external LLM Judge API using LiteLLM (Colab-hosted GPT-OSS-20B)."""
+    import litellm
+    
+    url = EXTERNAL_API_URL
+    if not url:
+        raise ValueError("LLM_JUDGE_URL environment variable not set")
+    
+    # LiteLLM appends /chat/completions, so we need /v1 in the base
+    api_base = url.rstrip("/") + "/v1"
+    
+    logger.info(f"Calling external judge API via LiteLLM: {api_base}")
+    logger.info(f"Request: {len(messages)} messages, max_tokens={max_tokens}")
+    
+    # Log full message content
+    for i, msg in enumerate(messages):
+        content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
+        logger.info(f"[REQ MSG {i}] role={msg.get('role', '?')}, content ({len(content)} chars):\n{content[:2000]}{'...[truncated]' if len(content) > 2000 else ''}")
+    
+    # Use LiteLLM with custom api_base for OpenAI-compatible endpoints
+    response = litellm.completion(
+        model="openai/gpt-oss-20b",
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=0.1,
+        api_base=api_base,
+        api_key="dummy"  # Required by LiteLLM but ignored by our server
     )
     
-    if response.status_code != 200:
-        raise Exception(f"External API error: {response.status_code} - {response.text}")
+    content = response.choices[0].message.content
+    logger.info(f"[RESPONSE] ({len(content)} chars):\n{content[:2000]}{'...[truncated]' if len(content) > 2000 else ''}")
     
-    data = response.json()
-    return data["choices"][0]["message"]["content"]
+    return content
+
+
+class ExternalAPIModel:
+    """A smolagents-compatible model wrapper that uses LiteLLM for external API."""
+    
+    def __init__(self, api_url: str = None):
+        self.api_url = api_url or EXTERNAL_API_URL
+        if not self.api_url:
+            raise ValueError("LLM_JUDGE_URL environment variable not set and no api_url provided")
+        self.model_id = "gpt-oss-20b"
+        # Attributes expected by smolagents
+        self.last_input_token_count = 0
+        self.last_output_token_count = 0
+    
+    def _call_api(self, messages, max_tokens=4096):
+        """Internal method to call the external API via LiteLLM."""
+        import litellm
+        
+        # Convert messages to list of dicts if needed
+        formatted_messages = []
+        for msg in messages:
+            if hasattr(msg, "role") and hasattr(msg, "content"):
+                content = ""
+                if msg.content:
+                    content = str(msg.content) if not isinstance(msg.content, list) else str(msg.content)
+                formatted_messages.append({"role": msg.role, "content": content})
+            elif isinstance(msg, dict):
+                formatted_messages.append(msg)
+            else:
+                formatted_messages.append({"role": "user", "content": str(msg)})
+        
+        api_base = self.api_url.rstrip("/") + "/v1"
+        
+        # Add ngrok header to bypass browser warning page
+        extra_headers = {
+            "ngrok-skip-browser-warning": "true"
+        }
+        
+        response = litellm.completion(
+            model="openai/gpt-oss-20b",
+            messages=formatted_messages,
+            max_tokens=max_tokens,
+            temperature=0.1,
+            api_base=api_base,
+            api_key="dummy",
+            extra_headers=extra_headers
+        )
+        
+        content = response.choices[0].message.content
+        
+        # Update token counts
+        self.last_input_token_count = response.usage.prompt_tokens if response.usage else 0
+        self.last_output_token_count = response.usage.completion_tokens if response.usage else 0
+        
+        return content
+    
+    def __call__(self, messages, stop_sequences=None, grammar=None, tools_to_call_from=None, **kwargs):
+        """Call the external API and return a response compatible with smolagents."""
+        from smolagents.models import ChatMessage
+        
+        max_tokens = kwargs.get("max_tokens", 4096)
+        content = self._call_api(messages, max_tokens)
+        
+        # Return a ChatMessage-like object
+        return ChatMessage(role="assistant", content=content)
+    
+    def generate(self, messages, stop_sequences=None, grammar=None, tools_to_call_from=None, **kwargs):
+        """Generate method required by smolagents ToolCallingAgent."""
+        from smolagents.models import ChatMessage
+        
+        max_tokens = kwargs.get("max_tokens", 4096)
+        content = self._call_api(messages, max_tokens)
+        
+        # Return a ChatMessage
+        return ChatMessage(role="assistant", content=content)
 
 # Evaluation criteria
 CRITERIA = ["accuracy", "completeness", "clarity", "structure", "diagrams"]
@@ -253,6 +425,245 @@ Return ONLY valid JSON (no markdown fences):
 }}
 """
 
+SERIES_COMPARE_PROMPT = """You are judging tutorial quality by checking if code matches the actual codebase.
+
+Available files to read:
+CODEBASE: {codebase_files}
+TUTORIALS A: {series_a_files}
+TUTORIALS B: {series_b_files}
+
+To read a file, just say: I want to read <filename>
+
+Start by reading a few key source files, then read tutorials from both series.
+
+When done, output JSON: {{"winner":"A or B","fidelity_A":1-5,"fidelity_B":1-5,"pedagogy_A":1-5,"pedagogy_B":1-5,"coverage_A":1-5,"coverage_B":1-5,"rationale":"why"}}"""
+
+def evaluate_series_external(codebase_root: str | Path, baseline_paths: List[Path], deep_paths: List[Path]) -> dict | None:
+    """Compare tutorials using external GPT-OSS-20B API with tool-calling simulation.
+    
+    Like the Gemini agentic pipeline: give model a prompt with file list and tool
+    instructions, model requests files via READ: commands, we provide them iteratively.
+    """
+    import requests
+    import time
+    
+    codebase_root = Path(codebase_root) if isinstance(codebase_root, str) else codebase_root
+    
+    # Check API health first
+    if not check_external_api_health():
+        return {"winner": "Error", "rationale": "External API is not reachable. Check LLM_JUDGE_URL and ensure Colab notebook is running."}
+    
+    url = EXTERNAL_API_URL
+    if not url:
+        return {"winner": "Error", "rationale": "LLM_JUDGE_URL not set"}
+    
+    endpoint = f"{url.rstrip('/')}/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true"
+    }
+    
+    # Filter tutorial files
+    series_a_files = sorted([p for p in baseline_paths if p.name.endswith('.md') and not p.name.startswith('spawned')])
+    series_b_files = sorted([p for p in deep_paths if p.name.endswith('.md') and not p.name.startswith('spawned') and p.name != 'tutorial_plan.md'])
+    
+    logger.info(f"Series A: {len(series_a_files)} tutorials, Series B: {len(series_b_files)} tutorials")
+    
+    # Build file index for quick lookup
+    file_index = {}
+    
+    # Add codebase files to index
+    codebase_files_list = []
+    for fp in codebase_root.rglob("*"):
+        if fp.is_file() and not any(skip in str(fp) for skip in ["__pycache__", ".git", "venv", "node_modules", ".pyc"]):
+            try:
+                rel = str(fp.relative_to(codebase_root))
+                file_index[fp.name] = fp
+                file_index[rel] = fp
+                if rel.endswith(('.py', '.ts', '.js', '.md')):
+                    codebase_files_list.append(rel)
+            except:
+                pass
+    
+    # Add tutorials to index with prefixes
+    series_a_names = []
+    for p in series_a_files:
+        file_index[f"A/{p.name}"] = p
+        file_index[f"series_a/{p.name}"] = p
+        series_a_names.append(f"A/{p.name}")
+    
+    series_b_names = []
+    for p in series_b_files:
+        file_index[f"B/{p.name}"] = p
+        file_index[f"series_b/{p.name}"] = p
+        series_b_names.append(f"B/{p.name}")
+    
+    # Build SMALL initial prompt - just instructions and file list, NO content
+    prompt = f"""You are a technical documentation judge comparing two tutorial series.
+
+To read files, output EXACTLY this format on its own line:
+READ: A/01_getting_started.md
+
+## AVAILABLE TUTORIALS
+
+Series A (Baseline):
+{chr(10).join(series_a_names)}
+
+Series B (Deep Agent):
+{chr(10).join(series_b_names)}
+
+Codebase files: {', '.join(codebase_files_list[:10])}
+
+## TASK
+1. Read tutorials using READ: commands (one per line)
+2. Compare and score: FIDELITY, PEDAGOGY, COVERAGE (1-5 each)
+3. Output JSON when done
+
+## EXAMPLE
+To read a file, say:
+READ: A/01_getting_started.md
+
+When finished, output:
+{{"winner": "A", "fidelity_A": 4, "fidelity_B": 3, "pedagogy_A": 4, "pedagogy_B": 3, "coverage_A": 4, "coverage_B": 3, "rationale": "explanation"}}
+
+Start now. Read the first tutorial:
+READ: {series_a_names[0] if series_a_names else 'A/01_getting_started.md'}
+"""
+
+    logger.info(f"Initial prompt: {len(prompt)} chars")
+    
+    messages = [{"role": "user", "content": prompt}]
+    max_turns = 30
+    files_read = set()
+    
+    # Pre-load first tutorial to show the model how it works
+    if series_a_files:
+        first_file = series_a_files[0]
+        first_name = f"A/{first_file.name}"
+        try:
+            first_content = first_file.read_text(errors='replace')[:4000]
+            messages.append({"role": "assistant", "content": f"READ: {first_name}"})
+            messages.append({"role": "user", "content": f"=== {first_name} ===\n{first_content}"})
+            files_read.add(first_name)
+            logger.info(f"Pre-loaded: {first_name} ({len(first_content)} chars)")
+        except:
+            pass
+    
+    for turn in range(max_turns):
+        logger.info(f"Turn {turn + 1}/{max_turns}, files read: {len(files_read)}")
+        
+        try:
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json={
+                    "messages": messages,
+                    "max_tokens": 1500,
+                    "temperature": 0.1
+                },
+                timeout=120
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"API error: {response.status_code} - {response.text[:200]}")
+                time.sleep(3)
+                continue
+            
+            data = response.json()
+            response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            if not response_text:
+                logger.warning("Empty response, retrying...")
+                time.sleep(2)
+                continue
+            
+            logger.info(f"Response ({len(response_text)} chars): {response_text[:200]}...")
+            messages.append({"role": "assistant", "content": response_text})
+            
+            # Check for final JSON result
+            json_match = re.search(r'\{[^{}]*"winner"[^{}]*\}', response_text, re.DOTALL)
+            if json_match and len(files_read) >= 4:  # Only accept JSON after reading files
+                try:
+                    result = json.loads(json_match.group(0))
+                    result["model"] = "gpt-oss-20b"
+                    result["turns"] = turn + 1
+                    result["files_read"] = list(files_read)
+                    logger.info(f"✅ Evaluation complete in {turn + 1} turns: Winner={result.get('winner')}")
+                    return result
+                except json.JSONDecodeError:
+                    pass
+            
+            # Parse READ: commands - try multiple patterns
+            read_requests = re.findall(r'READ:\s*([^\n,]+)', response_text, re.IGNORECASE)
+            
+            # Also try to find file paths mentioned without READ: prefix
+            if not read_requests:
+                # Look for A/filename.md or B/filename.md patterns
+                path_patterns = re.findall(r'[AB]/[^\s,\n]+\.md', response_text)
+                if path_patterns:
+                    read_requests = path_patterns[:2]
+            
+            # Also try to find {"path": "..."} patterns
+            if not read_requests:
+                json_paths = re.findall(r'"path":\s*"([^"]+)"', response_text)
+                if json_paths:
+                    read_requests = json_paths[:2]
+            
+            list_requests = re.findall(r'LIST:\s*([^\n,]+)', response_text, re.IGNORECASE)
+            
+            tool_outputs = []
+            
+            # Handle READ requests
+            for filename in read_requests[:2]:  # Max 2 files per turn
+                filename = filename.strip().strip('"\'`')
+                fp = file_index.get(filename)
+                if fp and fp.exists():
+                    try:
+                        content = fp.read_text(errors='replace')[:4000]
+                        tool_outputs.append(f"=== {filename} ===\n{content}")
+                        files_read.add(filename)
+                        logger.info(f"READ: {filename} ({len(content)} chars)")
+                    except Exception as e:
+                        tool_outputs.append(f"=== {filename} ===\nError reading: {e}")
+                else:
+                    # Try fuzzy match
+                    matches = [k for k in file_index.keys() if filename.lower() in k.lower()]
+                    if matches:
+                        tool_outputs.append(f"File '{filename}' not found. Did you mean: {', '.join(matches[:5])}?")
+                    else:
+                        tool_outputs.append(f"File '{filename}' not found.")
+            
+            # Handle LIST requests
+            for dirname in list_requests[:1]:
+                dirname = dirname.strip().strip('"\'`')
+                dir_path = codebase_root / dirname if dirname else codebase_root
+                if dir_path.exists() and dir_path.is_dir():
+                    files = [f.name for f in dir_path.iterdir() if f.is_file()][:20]
+                    dirs = [f.name + "/" for f in dir_path.iterdir() if f.is_dir()][:10]
+                    tool_outputs.append(f"=== LIST: {dirname} ===\nFiles: {', '.join(files)}\nDirs: {', '.join(dirs)}")
+            
+            if tool_outputs:
+                messages.append({"role": "user", "content": "\n\n".join(tool_outputs)})
+            else:
+                # No tool requests - prompt model to continue
+                if len(files_read) < 4:
+                    messages.append({"role": "user", "content": f"You've read {len(files_read)} files. Please read more tutorials using READ: commands. Try: READ: {series_a_names[0] if series_a_names else 'A/...'}"})
+                else:
+                    messages.append({"role": "user", "content": "You have read enough files. Please provide your final JSON evaluation now."})
+            
+        except requests.exceptions.Timeout:
+            logger.warning(f"Request timeout on turn {turn + 1}")
+            time.sleep(5)
+            continue
+        except Exception as e:
+            logger.error(f"Error on turn {turn + 1}: {e}")
+            time.sleep(2)
+            continue
+    
+    logger.warning("Max turns reached without final result")
+    return {"winner": "Error", "rationale": f"Max turns reached. Read {len(files_read)} files: {list(files_read)}", "model": "gpt-oss-20b"}
+
+
 def evaluate_series(model_id: str, codebase_context: str, baseline_paths: List[Path], deep_paths: List[Path]) -> dict | None:
     """Compare two complete sets of tutorials using an Agentic Judge."""
     
@@ -332,19 +743,37 @@ def evaluate_series(model_id: str, codebase_context: str, baseline_paths: List[P
         allow_writes=False # Judge is read-only
     )
     
-    model = create_model(model_id=model_id)
+    # Use ExternalAPIModel for colab, otherwise use create_model
+    if model_id in ("colab", "gpt-oss-20b", "external"):
+        model = ExternalAPIModel(api_url=EXTERNAL_API_URL)
+        logger.info(f"Using ExternalAPIModel with URL: {EXTERNAL_API_URL}")
+        use_code_agent = True  # CodeAgent parses tool calls from code, no need for parse_tool_calls
+    else:
+        model = create_model(model_id=model_id)
+        use_code_agent = False
     
     # Step callback to add delay between steps
     import time as time_module
     def step_delay_callback(step_log):
         time_module.sleep(0.5)  # 0.5 second delay between steps
     
-    agent = ToolCallingAgent(
-        tools=tools,
-        model=model,
-        max_steps=50, # Allow extensive exploration
-        step_callbacks=[step_delay_callback],
-    )
+    # Use CodeAgent for external API (parses tool calls from code blocks)
+    # Use ToolCallingAgent for models with native tool calling
+    if use_code_agent:
+        from smolagents import CodeAgent
+        agent = CodeAgent(
+            tools=tools,
+            model=model,
+            max_steps=50,
+            step_callbacks=[step_delay_callback],
+        )
+    else:
+        agent = ToolCallingAgent(
+            tools=tools,
+            model=model,
+            max_steps=50,
+            step_callbacks=[step_delay_callback],
+        )
 
     max_retries = 10
     retry_delay = 5  # Start with 5 seconds

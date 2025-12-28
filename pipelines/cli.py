@@ -292,13 +292,36 @@ def main() -> None:
              
              all_results = []
              
-             for model_id in models:
-                 logger.info(f"Comparing Series with {model_id} (Agentic Mode)...")
-                 # Pass codebase_root as the context argument for the Agent to use tools on
-                 res = evaluate_series(model_id, codebase_root, baseline_files, deep_files)
+             # For colab/external API, use multi-turn chat evaluation
+             # Reads ALL tutorials upfront, model can request codebase files via READ: commands
+             if args.colab:
+                 from pipelines.llm_judge import evaluate_series_external
+                 
+                 logger.info(f"Evaluating with external API (Multi-turn mode - reads ALL tutorials)...")
+                 logger.info(f"Series A: {len([f for f in baseline_files if f.name.endswith('.md')])} files")
+                 logger.info(f"Series B: {len([f for f in deep_files if f.name.endswith('.md')])} files")
+                 
+                 res = evaluate_series_external(codebase_root, baseline_files, deep_files)
                  if res:
                      all_results.append(res)
-                     print(f"Winner: {res.get('winner')}")
+                     print(f"\n{'='*50}")
+                     print(f"WINNER: {res.get('winner')}")
+                     print(f"{'='*50}")
+                     if res.get('fidelity_A'):
+                         print(f"Fidelity  - A: {res.get('fidelity_A')}/5, B: {res.get('fidelity_B')}/5")
+                         print(f"Pedagogy  - A: {res.get('pedagogy_A')}/5, B: {res.get('pedagogy_B')}/5")
+                         print(f"Coverage  - A: {res.get('coverage_A')}/5, B: {res.get('coverage_B')}/5")
+                     print(f"Turns: {res.get('turns', 'N/A')}")
+                     print(f"Files read: {res.get('files_read', [])}")
+                     print(f"Rationale: {res.get('rationale', 'N/A')[:300]}...")
+             else:
+                 # Use agentic mode for native models
+                 for model_id in models:
+                     logger.info(f"Comparing Series with {model_id} (Agentic Mode)...")
+                     res = evaluate_series(model_id, codebase_root, baseline_files, deep_files)
+                     if res:
+                         all_results.append(res)
+                         print(f"Winner: {res.get('winner')}")
              
              # Save JSON
              output_dir = args.output or Path("evaluation")

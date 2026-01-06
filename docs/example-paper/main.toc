@@ -1,0 +1,41 @@
+\contentsline {chapter}{KISALTMA LİSTESİ}{v}{}%
+\contentsline {chapter}{ŞEKİL LİSTESİ}{vi}{}%
+\contentsline {chapter}{TABLO LİSTESİ}{vii}{}%
+\contentsline {chapter}{ÖZET}{viii}{}%
+\contentsline {chapter}{ABSTRACT}{ix}{}%
+\contentsline {chapter}{\numberline {1}GİRİŞ}{1}{}%
+\contentsline {chapter}{\numberline {2}SİSTEM ANALİZİ VE FİZİBİLİTE}{5}{}%
+\contentsline {section}{\numberline {2.1}Sistem Analizi}{5}{}%
+\contentsline {section}{\numberline {2.2}Gereksinim Analizi}{7}{}%
+\contentsline {section}{\numberline {2.3}Fizibilite}{8}{}%
+\contentsline {subsection}{\numberline {2.3.1}Teknik Fizibilite}{8}{}%
+\contentsline {subsubsection}{\numberline {2.3.1.1}Donanım}{8}{}%
+\contentsline {subsubsection}{\numberline {2.3.1.2}Yazılım}{8}{}%
+\contentsline {subsection}{\numberline {2.3.2}Yasal Fizibilite}{8}{}%
+\contentsline {subsection}{\numberline {2.3.3}Ekonomik Fizibilite}{8}{}%
+\contentsline {subsubsection}{\numberline {2.3.3.1}Giderler}{8}{}%
+\contentsline {subsubsection}{\numberline {2.3.3.2}Katma Değer}{9}{}%
+\contentsline {subsection}{\numberline {2.3.4}İşgücü ve Zaman Fizibilitesi}{9}{}%
+\contentsline {chapter}{\numberline {3}SİSTEM TASARIMI}{11}{}%
+\contentsline {section}{\numberline {3.1}Arayüz Tasarımı}{11}{}%
+\contentsline {subsection}{\numberline {3.1.1}Komut Satırı Arayüzü (CLI)}{11}{}%
+\contentsline {subsection}{\numberline {3.1.2}Web Tabanlı Kontrol Paneli (Web Dashboard)}{11}{}%
+\contentsline {section}{\numberline {3.2}Veri Yapısı Tasarımı}{12}{}%
+\contentsline {subsection}{\numberline {3.2.1}Yapılandırma Yönetimi}{12}{}%
+\contentsline {subsection}{\numberline {3.2.2}İzole Çalışma Alanları (Scoped Filesystem)}{13}{}%
+\contentsline {section}{\numberline {3.3}Nesneye Yönelik Tasarım ve Ajan Mimarisi}{13}{}%
+\contentsline {subsection}{\numberline {3.3.1}Dinamik Ajan Yapısı}{13}{}%
+\contentsline {subsection}{\numberline {3.3.2}Orkestrasyon Katmanı}{14}{}%
+\contentsline {chapter}{\numberline {4}UYGULAMA SONUÇLARI ve TESTLER}{15}{}%
+\contentsline {section}{\numberline {4.1}Uygulama Tanıtımı}{15}{}%
+\contentsline {section}{\numberline {4.2}Test Sonuçları}{15}{}%
+\contentsline {subsection}{\numberline {4.2.1}Maliyet ve Bağlam Analizi (Deney 4)}{16}{}%
+\contentsline {section}{\numberline {4.3}Doğrulama}{16}{}%
+\contentsline {subsection}{\numberline {4.3.1}Yargıç LLM Değerlendirmesi (Deney 2)}{17}{}%
+\contentsline {subsection}{\numberline {4.3.2}Gereksinim Uyumluluk Analizi}{18}{}%
+\contentsline {chapter}{\numberline {5}SONUÇ VE TARTIŞMA}{19}{}%
+\contentsline {section}{\numberline {5.1}Elde Edilen Kazanımlar}{19}{}%
+\contentsline {section}{\numberline {5.2}Kısıtlar ve Maliyet}{20}{}%
+\contentsline {section}{\numberline {5.3}Gelecek Çalışmalar}{20}{}%
+\contentsline {chapter}{Referanslar}{21}{}%
+\contentsline {chapter}{Özgeçmiş}{21}{}%

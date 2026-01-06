@@ -1,0 +1,261 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%% BU DOSYA ÜZERİNDE OYNAMA YAPMAYINIZ %%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\onehalfspacing
+\pagenumbering{roman}
+
+\begin{titlepage}
+    \begin{center}
+    
+        \large
+        
+        \textbf{\country\\ \university \\ \department}
+        \vspace*{0.5cm}
+        
+        \includegraphics[width=0.25\textwidth]{ytu_logo.png}
+        
+        \vspace*{1.5cm}
+        \Large
+        \parbox[][0.8cm][c]{1.0\textwidth}{
+            \centering
+            \textbf{\titleOfThesis}
+        }
+        
+        \vspace{3cm}
+        
+        \numberi~$-$~\studenti\\ 
+        \ifnum\pdfstrcmp{\studentii}{~}=0
+        ~
+        \else
+        \numberii~$-$~\studentii
+        \fi 
+        \vspace{2cm}
+        
+        \large
+        \textbf{\thesisType}
+
+        
+        \vspace{2cm}
+        
+        \normalsize
+        {\advisorT\\\advisor}
+        
+        \vspace{1.5cm}
+        
+        \large
+        \date
+    \end{center}
+\end{titlepage}
+
+\newpage
+\thispagestyle{empty}
+\par\vspace*{\fill}
+\noindent
+
+\ifnum\lang=0
+\textbf{\footnotesize\centering\textcopyright~All rights reserved to Yıldız Technical University, Computer Engineering Department.}
+\else
+\textbf{\footnotesize\centering\textcopyright~Bu projenin bütün hakları Yıldız Teknik Üniversitesi Bilgisayar Mühendisliği Bölümü’ne aittir.}
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%% TEŞEKKÜR SAYFASI %%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\ifnum\final=1
+\newpage
+\chapter*{\acknowledgements}
+
+\acknowledgementText
+
+\begin{flushright}
+\studenti\\
+\studentii
+\end{flushright}
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%% İÇİNDEKİLER SAYFASI %%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\pagestyle{fancy}
+\newpage
+\chapter*{\contents}
+\renewcommand\contentsname{\vspace{-3.6em}}
+\tableofcontents
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%% SEMBOLLER SAYFASI %%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\setbox0=\vbox{\symbols\unskip}\ifdim\wd0=0pt
+
+\else
+    \newpage
+    \chapter*{\symbolName}
+    \addcontentsline{toc}{chapter}{\symbolName}
+    \vspace{-0.3em}
+    \symbols
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%% KISALTMALAR SAYFASI %%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\setbox0=\vbox{\abbrevations\unskip}\ifdim\wd0=0pt
+
+\else
+    \newpage
+    \chapter*{\abbreviationName}
+    \addcontentsline{toc}{chapter}{\abbreviationName}
+    \vspace{-0.3em}
+    \abbrevations
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%    TABLO, ŞEKİL, HARİTA LİSTESİ SAYFASI    %%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newlength{\mylen}
+\newlength{\tempp}
+\setlength{\tempp}{\cftfignumwidth}
+
+\iffigures
+    \newpage
+    \renewcommand{\figurename}{\figureName}
+    \renewcommand{\cftfigpresnum}{\figurename\enspace}
+    \renewcommand{\cftfigaftersnum}{}
+    \settowidth{\mylen}{\cftfigpresnum\cftfigaftersnum}
+    \addtolength{\cftfignumwidth}{\mylen}
+    
+    \chapter*{\listfigures}
+    \renewcommand\listfigurename{\vspace{-3.2em}}
+    \addcontentsline{toc}{chapter}{\listfigures}
+    \listoffigures
+\fi
+
+\iftables
+    \newpage
+    \renewcommand{\tablename}{\tableName}
+    \renewcommand{\cfttabpresnum}{\tablename\enspace}
+    \renewcommand{\cfttabaftersnum}{}
+    \settowidth{\mylen}{\cfttabpresnum\cfttabaftersnum}
+    \addtolength{\cfttabnumwidth}{\mylen}
+    
+    \chapter*{\listtables}
+    \renewcommand\listtablename{\vspace{-3.2em}}
+    \addcontentsline{toc}{chapter}{\listtables}
+    
+    \listoftables
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%  ÖZET SAYFASI  %%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\ifnum\final=1
+\ifnum\lang=0
+\newpage
+\chapter*{\eabstract}
+\addcontentsline{toc}{chapter}{\eabstract}
+
+\begin{center}
+{\bfseries \Large\titleEN}
+
+\studenti \\ \studentii
+
+Department of Computer Engineering \\ {\degree~Project}
+
+Advisor: \advisorEN
+
+\end{center}
+
+\abstractTextEnglish
+
+{\bfseries Keywords:} \abstractKeywordsEnglish
+
+
+\newpage
+\chapter*{\tabstract}
+\addcontentsline{toc}{chapter}{\tabstract}
+
+\begin{center}
+{\bfseries \Large\titleTR}
+
+\studenti \\ \studentii
+
+Bilgisayar Mühendisliği Bölümü \\ {\tdegree~Projesi}
+
+Danışman: \advisorTR
+
+\end{center}
+
+\abstractTextTurkish
+
+{\bfseries Anahtar Kelimeler:} \abstractKeywordsTurkish
+
+\else
+\newpage
+\chapter*{\tabstract}
+\addcontentsline{toc}{chapter}{\tabstract}
+
+\begin{center}
+{\bfseries \Large\titleTR}
+
+\studenti \\ \studentii
+
+Bilgisayar Mühendisliği Bölümü \\ {\tdegree~Projesi}
+
+Danışman: \advisorTR
+
+\end{center}
+
+\abstractTextTurkish
+
+{\bfseries Anahtar Kelimeler:} \abstractKeywordsTurkish
+
+\newpage
+\chapter*{\eabstract}
+\addcontentsline{toc}{chapter}{\eabstract}
+
+\begin{center}
+{\bfseries \Large\titleEN}
+
+\studenti \\ \studentii
+
+Department of Computer Engineering \\ {\degree~Project}
+
+Advisor: \advisorEN
+
+\end{center}
+
+\abstractTextEnglish
+
+{\bfseries Keywords:} \abstractKeywordsEnglish
+
+\fi
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%  BAŞLANGIÇ   %%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\onehalfspacing
+\clearpage
+\pagenumbering{arabic}

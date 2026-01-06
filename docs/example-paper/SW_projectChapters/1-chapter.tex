@@ -1,0 +1,71 @@
+\chapter{GİRİŞ}
+\label{ch:giris}
+
+% --- 1.1 ---
+
+\label{sec:ajan-mimari}
+
+Modern yapay zeka uygulamalarının temelinde, devasa metin ve kod veri kümeleri üzerinde eğitilmiş Büyük Dil Modelleri (LLM) yer almaktadır. Bu modeller, kendilerine sunulan bilgiyi anlama ve üretme konusunda yüksek kapasiteye sahip olsalar da, tek başlarına karmaşık ve çok aşamalı görevleri yerine getirmede sınırlı kalmaktadır. Bu noktada ajan tabanlı sistemler devreye girmektedir. Bir ajan, LLM'yi karar alma çekirdeği olarak kullanır; hedefe yönelik planlama yapar, dosya okuma veya kod yürütme gibi yardımcı araçları etkinleştirir ve çevreden aldığı geri bildirime göre stratejisini günceller.
+
+Örneğin finans teknolojileri alanında çalışan bir yazılım mühendisinin, on binlerce dosyadan oluşan yeni bir ödeme altyapısına katıldığını düşünelim. Geliştiricinin mimariyi anlaması, iş akışlarını kavraması ve basit bir değişikliği güvenle uygulayabilmesi çoğu zaman haftalar almaktadır. İnsan gözetiminde yürüyen bu uzun uyum sağlama süreci, kod tabanından yapılandırılmış bilgi çıkarabilen otonom sistemlerin yokluğunda daha da uzamakta; iş devri ve bakım maliyetleri yükselmektedir.
+
+Bu mimarilerin en belirgin teknik kısıtlaması, LLM'lerin "bağlam penceresi" olarak bilinen veri işleme sınırıdır. Bir model aynı anda yalnızca sınırlı miktarda bilgiyi hafızasında tutabilir. Dolayısıyla kapsamlı bir yazılım projesinin tamamını tek seferde değerlendirmek geleneksel ajan yaklaşımlarıyla mümkün olamamaktadır.
+
+
+Ajan tabanlı sistemler, yazılım geliştirme yaşam döngüsünün (SDLC) birçok aşamasını otomatize etme potansiyeline sahiptir. Bu sistemler, basit kod tamamlama araçlarının çok ötesine geçerek aktif roller üstlenmeye başlamıştır. Güncel uygulama alanları arasında şunlar bulunmaktadır:
+
+\begin{itemize}
+    \item \textbf{Otomatik Hata Ayıklama (Debugging):} Bir kod tabanındaki hataları tespit etmek için test senaryoları yürütebilen, günlük (log) dosyalarını analiz edebilen ve hatanın kaynağını belirleyebilen ajanlar.
+    \item \textbf{Talep Üzerine Kod Üretimi:} "Kullanıcılar için bir giriş (login) sayfası oluştur" gibi doğal dil taleplerini alıp, gerekli dosya yapılarını ve kod bloklarını üreten sistemler.
+    \item \textbf{Mevcut Kodun Yeniden Yapılandırılması (Refactoring):} Verimsiz veya eski kod standartlarına göre yazılmış bölümleri analiz edip, daha performanslı veya modern eşdeğerleriyle güncelleyen ajanlar.
+    \item \textbf{Kod Analizi ve Dokümantasyon:} Bu projenin de odak noktası olan, mevcut bir kod tabanını inceleyerek sistemin mimarisini, veri akışlarını ve bileşenlerin sorumluluklarını anlatan teknik dokümantasyon üreten sistemler.
+\end{itemize}
+
+
+Yazılım geliştirme süreçlerinde, geniş ve yabancı bir kod tabanını anlamak, yazılım geliştiricilerin karşılaştığı en önemli zorluklardan biridir. Yeni bir geliştiricinin bir projeye dahil olması  veya tecrübeli bir geliştiricinin projenin daha önce dokunmadığı bir bölümüne müdahale etmesi gerektiğinde, mevcut dokümantasyon genellikle eksik, güncel olmayan veya yüzeysel kalmaktadır. Bu durum, projelere adaptasyon sürecinin haftalar, hatta aylar sürmesine neden olarak ciddi bir zaman ve verimlilik kaybına yol açmaktadır.
+
+Tıpkı geniş ölçekli çevrim içi platformlarda olduğu gibi, modern bir kurumsal kod tabanı binlerce dosya, on binlerce işlev ve milyonlarca satır kod içerebilir. Bu büyüklükteki ve yüksek derecede bağlı verinin, tek bir kişinin kısa sürede incelemesi ve anlamlandırması mümkün değildir. Son yıllarda bu sorunu aşmak için büyük dil modellerinden yararlanan ajan tabanlı yapay zekâ çözümleri geliştirilmektedir. Ancak söz konusu çözümler bile yüksek hacimli kod yığınını bütünüyle kavramada bağlam penceresi sınırlamasına takılmaktadır.
+
+Bu sınırlamanın temel nedeni, LLM'lerin belirli bir bağlam uzunluğunu aşamaması ve bu nedenle kod tabanındaki anlamsal bütünlüğü tek seferde kuramamasıdır. Kod tabanını bütünüyle modele yüklemek ya da aynı ajanın tüm dosyaları art arda okumasını beklemek, bağlamın dağılmasına ve yapılan değerlendirmelerin güvenilirliğinin azalmasına yol açmaktadır.
+
+Bu çalışma kapsamında, bağlam penceresi kısıtlamasını aşmak için Sub-Agent mimarisi adını verdiğimiz özgün bir yöntem benimsenmiştir. Söz konusu yaklaşımda kapsamlı analiz görevi daha küçük ve yönetilebilir alt görevlere bölünmektedir.
+
+Projenin temel hedefi, söz konusu mimariyi kullanarak bir "yapay zekâ eğitmeni" prototipi geliştirmektir. Sistem iki ana aşamada işlemektedir:
+\begin{enumerate}
+    \item \textbf{Aşama 1: Knowledge Base Üretimi:} Supervisor Agent, analiz edilecek yazılım projesini mantıksal modüllerine ayırır. Her bir bölümün analizi için, o bölüme özel, izole bir çalışma alanına ve kısıtlı araçlara sahip bir Sub-Agent görevlendirir. Sub-Agent kendi analizini tamamlar ve bulgularını (markdown dosyaları, diyagramlar) belirlenen dizin altında merkezi bir Knowledge Base oluşturacak şekilde kaydeder. Bu yaklaşım, Supervisor Agent'ın bağlamını temiz tutar ve görevi ölçeklenebilir hale getirir.
+    \item \textbf{Aşama 2: Eğitim Dokümanı Üretimi:} İlk aşamada üretilen ve kod tabanının bütününü özetleyen Knowledge Base bu bölümde girdi olarak kullanılır. Tutorial Generator bileşeni, söz konusu bilgi birikimini ve doğrudan kaynak koddan alınan güncel örnekleri bir araya getirerek geliştiricilere yönelik öğretici dokümanlar üretir.
+\end{enumerate}
+
+    Bu projenin seçilmesinin temel gerekçesi, özellikle üniversite öğrencileri ve stajyer geliştiriciler için kaynak hazırlanırken karşılaşılan bilgi derleme güçlüğünü ortadan kaldırmaktır. Klasik dokümantasyon süreçleri uzun zaman aldığından pek çok kurum güncel eğitim materyali sunamamaktadır; Sub-Agent destekli yarı otonom bir çözüm bu boşluğu kapatmayı amaçlamaktadır.
+
+Çalışmanın özgün katkıları aşağıdaki başlıklar altında toplanabilir:
+\begin{itemize}
+        \item \textbf{Kararlı görev bölme yaklaşımı:} Supervisor Agent'ın kod tabanının dizin yapısını inceleyerek ilk seviye klasörlere göre tutarlı alt görevler oluşturması sağlanmış, böylece karmaşık planlama adımlarının yalın bir kural ile yürütülmesi mümkün kılınmıştır.
+        \item \textbf{İzole çalışma alanları:} Her bir Sub-Agent'ın yalnızca kendi çalışma dizinine yazabildiği, kod tabanına ise salt okunur eriştiği güvenli bir görev yürütme modeli tasarlanmış, bağlam taşması ve veri bütünlüğü riskleri azaltılmıştır.
+        \item \textbf{İki aşamalı üretim hattı:} Knowledge Base ile başlayan ve eğitim dokümanı üretimiyle tamamlanan süreç, dokümantasyon kalitesini yükseltirken ortaya çıkan içeriğin doğrudan öğretim amaçlı kullanılmasına olanak tanımaktadır.
+\end{itemize}
+
+
+
+
+
+
+Yazılım endüstrisinde geniş ve yabancı kod tabanlarını anlamak, dokümantasyon eksiklikleri nedeniyle ciddi bir darboğaz oluşturmaktadır. Yeni geliştiricilerin çok sayıda dosyayı tek tek incelemesi yüksek zaman maliyetine yol açmakta; yorumlama süreci ise kişinin bilgi düzeyine bağlı olarak tutarsız sonuçlar üretebilmektedir.
+
+Bu alanda kullanılan ilk yöntemler, AutoGPT benzeri tek ajanlı kod inceleme sistemleridir. Bu sistemler araç kullanımıyla belirli görevleri yerine getirebilse de, LLM bağlam penceresi sınırlaması nedeniyle çok sayıda dosyayı aynı oturumda tutarlı biçimde analiz edememiş; uzun görevlerde odak kaybı ve hatalı çıkarımlar gözlenmiştir.
+
+Sonraki aşamada ortaya çıkan yönetici–işçi düzenindeki çoklu ajan mimarileri, LangChain tabanlı örneklerde olduğu gibi görev dağılımı yaparak kısmi iyileştirme sağlamıştır. Ancak işçilerden gelen çıktının tekrar yöneticide birikmesi bağlam taşmasına, görevlerin yöneticinin belirlediği sıraya sıkı sıkıya bağlı olması ise esneklik kaybına neden olmuştur. Bu yapı yüksek hacimli depo analizlerinde ölçeklenebilirlik sorunlarını ortadan kaldıramamıştır.
+
+Bu ön inceleme göstermektedir ki mevcut yaklaşımlar, özellikle:
+
+\begin{itemize}
+    \item tek ajanlı sistemlerde bağlam sınırı ve uzun soluklu planlama güçlüğü,
+    \item yönetici–işçi modellerinde verimlilik ve esneklik kısıtları,
+
+gibi temel problemleri çözmekte yetersizdir.
+\end{itemize}
+
+Dolayısıyla büyük kod tabanlarında tutarlı, izole ve ölçeklenebilir analiz yapabilmek için Sub-Agent mimarisine dayalı bir çözümün gerekliliği ortaya çıkmaktadır. Her bir Sub-Agent'ın kendi sorumlu dizininde çalışması, çıktılarının güvenli biçimde bir Knowledge Base'de toplanması ve Supervisor Agent'ın bağlam yükünden arındırılması bu yaklaşımın temel motivasyonunu oluşturur.
+
+
+

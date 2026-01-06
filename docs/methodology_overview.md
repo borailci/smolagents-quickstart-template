@@ -51,7 +51,7 @@ A mermaid diagram showing the pre-processing phase with sub-agents architecture 
 ```mermaid
 graph TD
     subgraph "Pre-processing Phase"
-        A[Codebase] --> B["Agent (Sub-agents Architecture Methodology)"]
+        A[Codebase] --> B["Supervisor Agent (Deep Agent Architecture Methodology)"]
         B --> C[Generate Knowledge Base]
     end
     subgraph "Knowledge Base"
@@ -105,9 +105,9 @@ This solves the context window limitation of the previous approaches, as each ag
 - **Fixed agent count:** The most important challenge is that before we start the process, we need to decide how many worker agents we need based on the size of the codebase. In multi-agent systems, the number of agents is fixed before the process starts. However, in our case, the size of the codebase may vary significantly, and we may not know in advance how many agents we need to effectively process the codebase. This can lead to either underutilization or overutilization of agents, resulting in inefficiencies and suboptimal results.
 - **Sequential delegation:** Another minor challenge is that the supervisor can delegate a task to a single worker agent at a time. Usually, it cannot assign tasks to multiple worker agents in parallel.
 
-### Option 3: Sub-agents Architecture Methodology
+### Option 3: Deep Agent Architecture (Sub-agents Methodology)
 
-In this approach, we use a single main agent (manager agent) that can dynamically create and manage sub-agents at runtime. Each sub-agent can be responsible for reading a specific file, understanding the code, and generating a part of the knowledge base. Each sub-agent is created at runtime by the main agent whenever needed and is destroyed after its task is completed. Each sub-agent has its own memory, its own workspace, and its own access to only a specific part of the codebase (for example, a single directory) that is assigned to it by the main agent.
+In this approach, we use a single **Supervisor Agent** that can dynamically create and manage **Sub-Agents** at runtime. Each sub-agent can be responsible for reading a specific file, understanding the code, and generating a part of the knowledge base. Each sub-agent is created at runtime by the **Supervisor Agent** whenever needed and is destroyed after its task is completed. Each sub-agent has its own memory, its own workspace, and its own access to only a specific part of the codebase (for example, a single directory) that is assigned to it by the **Supervisor Agent**.
 
 ### Analogy: Comparing Multi-Agent Systems vs Sub-Agents Architecture
 

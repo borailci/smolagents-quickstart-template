@@ -4,35 +4,37 @@ This guide walks you through everything you can do with this Smolagents template
 
 ## What's in This Project
 
-**Current Setup (Single Agent):**
+**Current Setup (Multi-Agent Analytics):**
 
-- `ExampleToolCallingAgent` - An agent with filesystem tools and a joke API tool
-- Gradio chat UI for talking to the agent
-- Example workspace with documents and code files
-- File management tools (read, write, search, list directories)
+- **Supervisor Agent** - Coordinates the entire analysis.
+- **Sub-Agents** - Analyze specific modules of a codebase.
+- **Knowledge Base** - Structured documentation generated from codebase analysis.
+- **Tutorial Generator** - Produces educational content from the Knowledge Base.
+- **Next.js Dashboard** - Modern web UI for browsing and editing tutorials.
+- **Filesystem Tools** - Advanced read, write, and search utilities.
 
-**Optional Multi-Agent Setup:**
+**Evaluation & Quality:**
 
-- `ExampleManagerAgent` - Coordinates other agents
-- Shows how to delegate tasks between agents
+- **Judge LLM** - Independent SOTA models used to verify content accuracy.
+- **Phoenix Integration** - OpenTelemetry tracing for monitoring agent traces.
 
 ## Project Structure
 
 ```
 smolagents-quickstart-template/
 ├── agents/
-│   ├── example_tool_calling_agent.py    # Worker agent with tools
-│   ├── example_manager_agent.py         # Manager agent (optional)
+│   ├── deep_agent.py                    # Supervisor & Sub-Agent logic
+│   ├── tutorial_generator.py            # Tutorial production logic
 │   └── base_agent.py                    # Base classes
 ├── toolkits/
-│   ├── example_joke_toolkit.py          # Joke API tool
+│   ├── codebase_toolkit.py              # Repository analysis tools
 │   └── filesystem_toolkit.py            # File operations
-├── data/agent_workspace/                # Agent's file workspace
-│   ├── example_docs/alan_turing.md     # Sample document
-│   └── example_codes/car.c             # Sample code file
-├── ui/gradio_agent_ui.py               # Chat interface
-├── main.py                             # App entry point
-└── run.sh                              # Convenience script
+├── data/                                # Managed data directory
+│   ├── knowledge_base/                  # Generated module summaries
+│   └── tutorials/                       # Generated pedagogical lessons
+├── ui/                                  # Next.js Dashboard
+├── pipelines/                           # Main execution scripts
+└── run.sh                               # Convenience script
 ```
 
 ## What You Can Ask the Agent

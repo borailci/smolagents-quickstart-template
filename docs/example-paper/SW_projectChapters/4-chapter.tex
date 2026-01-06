@@ -1,0 +1,137 @@
+\chapter{UYGULAMA SONUÇLARI ve TESTLER}
+\label{ch:uygulama-sonuclari}
+
+\section{Uygulama Tanıtımı}
+\label{sec:uygulama-tanitimi}
+
+Geliştirilen sistem, son kullanıcıların karmaşık komut dizileriyle uğraşmadan, doğrudan doğal dil ve basit terminal konfigürasyonlarıyla çalıştırabileceği bir yapı sunmaktadır. Uygulama, ana dizinde bulunan çalıştırıcı betik üzerinden yönetilmektedir. Bu betik, gerekli ortam değişkenlerini yükler, sanal ortamı kontrol eder ve Python tabanlı komut satırı arayüzünü başlatır.
+
+Kullanıcılar için iki temel çalışma modu tasarlanmıştır:
+\begin{enumerate}
+    \item \textbf{Deep Agent Modu:} Sub-Agent mimarisinin tam kapasiteyle çalıştığı, önce Knowledge Base oluşturup ardından eğitim içeriği üreten mod.
+    \item \textbf{Baseline Modu:} Karşılaştırma amacıyla geliştirilen, Sub-Agent ve Knowledge Base kullanmadan doğrudan tek bir ajanın (ReAct mimarisi) tüm işi yapmaya çalıştığı mod.
+\end{enumerate}
+
+Sistem, otonom analiz ve içerik üretimi için yapılandırılmış komut setleri ile çalıştırılmaktadır. Kullanıcı, hedef kod tabanının yolunu belirterek analizi başlatabilir; karşılaştırma amaçlı olarak sistemin alt-ajan kullanmadan doğrudan tekil bir yapı üzerinden ilerlediği bir temel (baseline) modu da desteklenmektedir.
+
+Uygulama çalıştığında, arka planda olay tabanlı bir loglama sistemi devreye girer. Kullanıcı terminalde anlık ilerlemeyi (ajanın o an hangi dosyayı okuduğu, hangi kararı verdiği) görebilirken, üretilen Markdown formatındaki eğitim dokümanları ve analiz raporları ilgili dizin altında otomatik olarak oluşturulur.
+
+\section{Test Sonuçları}
+\label{sec:test-sonuclari}
+
+Sistemin başarımı, \textit{Sistem Analizi} bölümünde belirlenen gereksinimler doğrultusunda, özellikle maliyet etkinliği ve bağlam (context) yönetimi açısından test edilmiştir. Bu testlerde "Agent Lightning" kütüphanesi örnek proje olarak kullanılmış ve aynı donanım/ortam şartlarında hem Baseline hem de Deep Agent modları çalıştırılmıştır.
+
+Elde edilen veriler, sistemin işlem yükü, token tüketimi ve araç kullanım sıklığı gibi performans metriklerini ortaya koymaktadır.
+
+\subsection{Maliyet ve Bağlam Analizi (Deney 4)}
+
+Büyük Dil Modelleri ile çalışan sistemlerde en kritik darboğaz, modelin bağlam penceresi ve token başına maliyettir. Aşağıdaki Tablo \ref{tab:cost-context}, Baseline ve Deep Agent yaklaşımlarının "Tutorial Üretim Fazı" için karşılaştırmalı performansını göstermektedir.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Baseline ve Deep Agent Modellerinin Tutorial Üretim Fazı Karşılaştırması}
+    \label{tab:cost-context}
+    \begin{tabular}{|l|c|c|}
+        \hline
+        \textbf{Metrik} & \textbf{Baseline Agent} & \textbf{Deep Agent} \\
+        \hline
+        Toplam Süre (saniye) & 378.25 & 620.98 \\
+        \hline
+        Girdi Token Sayısı (Input) & 1,732,968 & 3,236,280 \\
+        \hline
+        Çıktı Token Sayısı (Output) & 77,745 & 145,053 \\
+        \hline
+        Toplam Token Maliyeti & \textbf{1.81 Milyon} & \textbf{3.38 Milyon} \\
+        \hline
+        Araç Çağrı Sayısı (Tool Calls) & 32 & 43 \\
+        \hline
+        Bağlam Taşması (Overflow) & 0 & 0 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\noindent\textbf{Analiz:}
+Tablo incelendiğinde, Deep Agent mimarisinin Baseline'a göre yaklaşık iki kat daha fazla token tükettiği ve işlemin daha uzun sürdüğü görülmektedir. İlk bakışta bu bir dezavantaj gibi görünse de, çıktının kalitesi ve derinliği göz önüne alındığında (Bkz. Bölüm \ref{sec:dogrulama}), bu "fazladan" maliyetin sisteme \textbf{bağlam zenginliği} olarak geri döndüğü anlaşılmaktadır. Baseline ajan, daha az token harcamasına rağmen yüzeysel ve genel geçer çıktılar üretirken; Deep Agent, oluşturduğu Knowledge Base'i bağlamına yüklediği için (input token artışı buradan kaynaklanmaktadır) çok daha detaylı, kod referanslı ve teknik doğruluğu yüksek içerikler üretmiştir.
+
+Ayrıca, her iki sistemde de "Bağlam Taşması (Context Overflow)" olayının "0" olması, geliştirilen hız sınırlamalı dil modeli sarmalayıcısının ve token yönetim mekanizmasının başarılı bir şekilde çalıştığını kanıtlamaktadır.
+
+\section{Doğrulama}
+\label{sec:dogrulama}
+
+Sistemin ürettiği çıktıların kalitesi ve kullanıcı gereksinimlerini karşılama düzeyi, güncel bir yöntem olan "Judge LLM" (Yargıç LLM) metodu ile doğrulanmıştır.
+
+\subsection{Yargıç LLM Değerlendirmesi (Deney 2)}
+
+Bu deneyde, SOTA (State-of-the-Art) kabul edilen \textbf{Claude 4.5 Sonnet} ve \textbf{GPT-OSS-120B} modelleri "tarafsız yargıç" olarak atanmıştır. Yargıçlara, hem Baseline (Seri A) hem de Deep Agent (Seri B) tarafından üretilen eğitim dokümanları, kaynak kod ile birlikte verilmiş ve şu üç kriterde puanlama yapmaları istenmiştir:
+
+\begin{enumerate}
+    \item \textbf{Doğruluk (Fidelity):} Üretilen kod örnekleri ve açıklamalar gerçek kod tabanıyla örtüşüyor mu? Halüsinasyon var mı?
+    \item \textbf{Pedagoji (Pedagogy):} Anlatım, bir öğrencinin anlayabileceği şekilde basitten zora doğru mu? Örnekler öğretici mi?
+    \item \textbf{Kapsam (Coverage):} Kod tabanının kritik özelliklerine değinilmiş mi yoksa sadece yüzeyde mi kalınmış?
+\end{enumerate}
+
+Yargıçların değerlendirme sonuçları Tablo \ref{tab:win-rate}’de özetlenmiştir.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Yargıç LLM'lerin Kalite Değerlendirmesi (5 üzerinden puan)}
+    \label{tab:win-rate}
+    \begin{tabular}{|l|c|c|c|c|c|c|}
+        \hline
+        \multirow{2}{*}{\textbf{Yargıç Model}} & \multicolumn{2}{c|}{\textbf{Doğruluk}} & \multicolumn{2}{c|}{\textbf{Pedagoji}} & \multicolumn{2}{c|}{\textbf{Kapsam}} \\
+        \cline{2-7}
+         & Base & \textbf{Deep} & Base & \textbf{Deep} & Base & \textbf{Deep} \\
+        \hline
+        Claude 4.5 Sonnet & 3 & \textbf{5} & 3 & \textbf{5} & 3 & \textbf{5} \\
+        \hline
+        GPT-OSS-120B & 4 & \textbf{5} & 4 & \textbf{5} & 4 & \textbf{5} \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \begin{tikzpicture}[scale=0.9]
+        \begin{axis}[
+            ybar,
+            enlarge x limits=0.25,
+            legend style={at={(0.5,-0.2)}, anchor=north, legend columns=-1},
+            ylabel={Puan (1-5)},
+            symbolic x coords={Doğruluk, Pedagoji, Kapsam},
+            xtick=data,
+            nodes near coords,
+            nodes near coords align={vertical},
+            ylimits={0,6},
+            bar width=15pt,
+            width=10cm,
+            height=6cm,
+            title={Ortalama Yargıç Değerlendirme Puanları}
+        ]
+            \addplot[fill=gray!40] coordinates {(Doğruluk,3.5) (Pedagoji,3.5) (Kapsam,3.5)};
+            \addplot[fill=blue!40] coordinates {(Doğruluk,5.0) (Pedagoji,5.0) (Kapsam,5.0)};
+            \legend{Baseline Agent, Deep Agent}
+        \end{axis}
+    \end{tikzpicture}
+    \caption{Baseline ve Deep Agent modellerinin kalite metrikleri bazında karşılaştırılması.}
+    \label{fig:evaluation-comparison}
+\end{figure}
+
+\noindent\textbf{Sonuç Yorumu:}
+Her iki yargıç modeli de **Deep Agent (Seri B)** tarafından üretilen dokümanları "açık ara kazanan" (Winner: B) olarak ilan etmiştir.
+\begin{itemize}
+    \item \textbf{Doğruluk:} Baseline modelin, kullanılmayan (deprecated) API'leri önerdiği veya sınıf isimlerini yanlış yazdığı tespit edilmiştir. Deep Agent ise Knowledge Base'den doğrulama yaptığı için \%100'e yakın doğruluk sağlamıştır.
+    \item \textbf{Pedagoji:} Deep Agent; "Hello World" örneğinden başlayıp, ileri seviye konulara (Distributed Training, Async Execution) doğru giden yapılandırılmış bir müfredat sunmuştur. Baseline ise konuları kopuk parçalar halinde sunmuştur.
+\end{itemize}
+
+\subsection{Gereksinim Uyumluluk Analizi}
+
+Projenin başlangıcında (Bkz. Bölüm \ref{sec:gereksinim-analizi}) belirlenen işlevsel ve işlevsel olmayan gereksinimlerin karşılanma durumu yapılan son denetimlerle (audit) doğrulanmıştır.
+
+\begin{itemize}
+    \item \textbf{Sub-Agent Mimarisi:} \checkmark Tamamlandı. Supervisor Agent dinamik olarak Sub-Agent'lar oluşturabilmekte ve izole çalışma alanlarını yönetebilmektedir.
+    \item \textbf{Güvenlik (Path Traversal):} \checkmark Tamamlandı. Geliştirilen kısıtlanmış dosya erişim modülü, ajanların sadece izin verilen dizinlere erişmesini garanti altına almıştır.
+    \item \textbf{Knowledge Base Üretimi:} \checkmark Tamamlandı. Kod tabanından otomatik olarak kapsamlı bir Markdown Knowledge Base oluşturulabilmektedir.
+    \item \textbf{Raporlama ve İzleme:} \checkmark Tamamlandı. Hem terminal çıktıları hem de JSON formatındaki metrik dosyaları ile süreç şeffaf hale getirilmiştir.
+\end{itemize}
+
+Bu sonuçlar, geliştirilen sistemin hedeflenen otonom eğitim içerik üretimi görevini başarıyla yerine getirdiğini ve Deep Agent mimarisinin, geleneksel yöntemlere göre kalite açısından belirgin bir üstünlük sağladığını doğrulamaktadır.

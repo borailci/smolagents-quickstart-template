@@ -1,0 +1,193 @@
+\ProvidesPackage{ytucestyle}
+
+\newif\if@turkish \@turkishfalse
+\newif\if@phd \@phdfalse
+
+\DeclareOption{computer}{\@turkishtrue \@phdfalse}
+\DeclareOption{senior}{\@turkishfalse \@phdtrue}
+
+\newif\if@final \@finalfalse
+\DeclareOption{report}{\@finalfalse}
+\DeclareOption{final}{\@finaltrue}
+
+\DeclareOption*{Invalid Option \CurrentOption}
+
+\ProcessOptions\relax
+
+\usepackage[bitstream-charter]{mathdesign}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+
+\hyphenchar\font=-1
+\sloppy
+
+\usepackage{tocloft,subfig}
+\usepackage[justification=centering, labelsep=space, figurewithin=none, tablewithin=none, labelfont=bf]{caption}
+\usepackage[backend=biber,style=ieee,sorting=none,citestyle=numeric-comp]{biblatex}
+
+\usepackage{enumitem}
+\newlist{abbrv}{itemize}{1}
+\setlist[abbrv,1]{label=,labelwidth=1in,align=parleft,itemsep=0.1\baselineskip,leftmargin=!}
+
+\include{information}
+
+\if@final
+\def\final{1}
+\else
+\def\final{0}
+\fi
+
+\if@phd
+\def\degree{Senior}
+\def\tdegree{Bitirme}
+\def\thesisDegree{1}
+\else
+\def\degree{Computer}
+\def\tdegree{Bilgisayar}
+\def\thesisDegree{0}
+\fi
+
+\def\tabstract{ÖZET}
+\def\eabstract{ABSTRACT}
+
+\if@turkish
+\uccode `\i='235
+\lccode `\I='031
+\def\YTU{YILDIZ TEKNİK ÜNİVERSİTESİ}
+\def\ytu{Yıldız Teknik Üniversitesi}
+\def\country{TÜRKİYE CUMHURİYETİ}
+\def\university{\YTU}
+\def\titleOfThesis{\MakeUppercase\titleTR}
+\def\advisorT{Danışman}
+\def\advisor{\advisorTR}
+\def\thesisType{\MakeUppercase\tdegree~PROJESİ}
+\def\acknowledgements{TEŞEKKÜR}
+\def\contents{İÇİNDEKİLER}
+\def\listfigures{ŞEKİL LİSTESİ}
+\def\listtables{TABLO LİSTESİ}
+\def\tableName{Tablo}
+\def\figureName{Şekil}
+\def\abbreviationName{KISALTMA LİSTESİ}
+\def\symbolName{SİMGE LİSTESİ}
+\def\appName{EKLER}
+\def\bibName{Referanslar}
+\def\cvName{Özgeçmiş}
+\def\cvTitlei{BİRİNCİ ÜYE}
+\def\cvTitleii{İKİNCİ ÜYE}
+\def\cvFLName{İsim-Soyisim}
+\def\cvDate{Doğum Tarihi ve Yeri}
+\def\cvEmail{E-mail}
+\def\cvPhone{Telefon}
+\def\cvIntern{Staj Tecrübeleri}
+\def\lang{1}
+\def\faculty{ELEKTRİK - ELEKTRONİK FAKÜLTESİ}
+\def\department{BİLGİSAYAR MÜHENDİSLİĞİ BÖLÜMÜ}
+\def\projectInfo{Proje Sistem Bilgileri}
+\def\systemsoftware{Sistem ve Yazılım}
+\def\requiredram{Gerekli RAM}
+\def\requireddisk{Gerekli Disk}
+
+\else
+\def\YTU{YILDIZ TECHNICAL UNIVERSITY}
+\def\ytu{Yildiz Technical University}
+\def\country{REPUBLIC OF TURKEY}
+\def\university{\YTU}
+\def\titleOfThesis{\MakeUppercase\titleEN}
+\def\advisorT{Advisor}
+\def\advisor{\advisorEN}
+\def\thesisType{\MakeUppercase\degree~PROJECT}
+\def\acknowledgements{ACKNOWLEDGEMENTS}
+\def\contents{TABLE OF CONTENTS}
+\def\listfigures{LIST OF FIGURES}
+\def\listtables{LIST OF TABLES}
+\def\tableName{Table}
+\def\figureName{Figure}
+\def\abbreviationName{LIST OF ABBREVIATIONS}
+\def\symbolName{LIST OF SYMBOLS}
+\def\appName{APPENDICES}
+\def\bibName{References}
+\def\cvName{Curriculum Vitae}
+\def\cvTitlei{FIRST MEMBER}
+\def\cvTitleii{SECOND MEMBER}
+\def\cvFLName{Name-Surname}
+\def\cvDate{Birthdate and Place of Birth}
+\def\cvEmail{E-mail}
+\def\cvPhone{Phone}
+\def\cvIntern{Practical Training}
+\def\lang{0}
+\def\faculty{FACULTY OF ELECTRICAL AND ELECTRONICS}
+\def\department{DEPARTMENT OF COMPUTER ENGINEERING}
+\def\projectInfo{Project System Informations}
+\def\systemsoftware{System and Software}
+\def\requiredram{Required RAM}
+\def\requireddisk{Required Disk}
+\fi
+
+\parskip=12pt
+\parindent=0pt
+
+\usepackage{amsmath, graphicx, setspace}
+
+\usepackage{geometry}
+\geometry{
+   paperwidth=210mm, paperheight=297mm,
+   left=35mm, right=25mm, top=25mm, bottom=25mm
+}
+
+\usepackage{fancyhdr}
+\fancyhf{}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\setcounter{secnumdepth}{4}
+\renewcommand{\chaptername}{}
+
+\usepackage{titlesec} 
+%\usepackage{titlecaps}
+%\DeclareRobustCommand{\MLC}[1]{\lowercase{\titlecap{#1}}}
+
+\titleformat{\chapter}[display]
+  {\bfseries\Large}
+  {\chaptername~\filleft\bfseries\fontsize{30}{00}\selectfont\thechapter}
+  {12pt}
+  {\vspace{-2em}\filleft\Large}
+  [\vspace{0.5em}\titlerule]
+
+\titleformat{\section}
+  {\bfseries\large}
+  {\thesection}{1em}{}[\vspace{-1.5em}]
+
+\titleformat{\subsection}
+  {\bfseries\normalsize}
+  {\thesubsection}{1em}{}[\vspace{-1.5em}]
+
+\titleformat{\subsubsection}
+  {\bfseries\normalsize}
+  {\thesubsubsection}{1em}{}[\vspace{-1.5em}]
+
+
+\newif\iffigures
+\newif\iftables
+
+\makeatletter
+\@addtoreset{figure}{chapter}
+\@addtoreset{table}{chapter}
+\renewcommand{\thefigure}{\thechapter.\arabic{figure}} 
+\renewcommand{\thetable}{\thechapter.\arabic{table}} 
+
+\let\OLDtable\table
+\def\table  {\tables@in@document\OLDtable }
+\let\OLDfigure\figure
+\def\figure {\figures@in@document\OLDfigure }
+
+\def\tables@in@document {%
+    \immediate\write\@mainaux {\global\string\tablestrue}%
+    \global\let\tables@in@document\empty
+}
+
+\def\figures@in@document {%
+    \immediate\write\@mainaux {\global\string\figurestrue}%
+    \global\let\figures@in@document\empty
+}
+
+\setlength{\@fptop}{0pt}
+\makeatother

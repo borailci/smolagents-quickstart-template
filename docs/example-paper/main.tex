@@ -1,0 +1,106 @@
+%%%%% Güncelleme Geçmişi
+%%%%% v3.5 -> 10.09.2024 (AEL)
+%%%%% v3.4 -> 06.06.2020 (AEL)
+%%%%% v3.3 -> 03.06.2020 (HOI)
+%%%%% v3.2 -> 29.05.2019 (HOI)
+%%%%% v3.1 -> 22.05.2019 (IOS)
+%%%%% v3.0 -> 06.11.2018 (IOS)
+%%%%% v2.0 -> 01.03.2017 (IOS)
+%%%%% v1.2 -> 20.12.2016 (IOS)
+%%%%% v1.1 -> 10.11.2016 (IOS)
+
+\documentclass[a4paper,12pt,oneside,openany]{book}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%      PROJECT PARAMETERS      %%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Project Option: "computer" or "senior"
+% Report Option: "report" or "final"
+
+% Example:   \usepackage[computer, report]{ytucestyle}
+%            \usepackage[senior, final]{ytucestyle}
+
+\usepackage[computer, final]{ytucestyle}
+
+\usepackage{listings}
+\usepackage{float}
+\lstset{
+  basicstyle=\ttfamily\small,
+  frame=lines,
+  breaklines=true,
+  postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+  literate={ğ}{{\u{g}}}1 {ü}{{\"u}}1 {ş}{{\c{s}}}1 {ı}{{\i}}1 {ö}{{\"o}}1 {ç}{{\c{c}}}1 {Ğ}{{\u{G}}}1 {Ü}{{\"U}}1 {Ş}{{\c{S}}}1 {İ}{{\.I}}1 {Ö}{{\"O}}1 {Ç}{{\c{C}}}1
+}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{pgfgantt} % <-- Gantt şeması için eklendi
+\usepackage{multirow}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%         REFERENCES       %%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\addbibresource{references.bib} 
+
+\begin{document}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%         FRONT PAGES      %%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Aşağıdaki değeri {1} AR-GE 1, YAZILIM 2 veya LATEX TUTORİAL 3 olarak değiştirin 
+\newcommand{\projecttype}{2}
+\ifnum\projecttype=3
+\input {LatexTutorial/Warning.tex}
+\else
+\input {frontPages.tex}
+\fi
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%      CHAPTERS     %%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\ifnum\projecttype=1
+\input {RD_projectChapters/1-chapter.tex}
+\input {RD_projectChapters/2-chapter.tex}
+\input {RD_projectChapters/3-chapter.tex}
+\input {RD_projectChapters/4-chapter.tex}
+\input {RD_projectChapters/5-chapter.tex}
+\input {RD_projectChapters/6-chapter.tex}
+
+\fi
+\ifnum\projecttype=2
+\input {SW_projectChapters/1-chapter.tex}
+\input {SW_projectChapters/2-chapter.tex}
+\input {SW_projectChapters/3-chapter.tex}
+\input {SW_projectChapters/4-chapter.tex}
+\input {SW_projectChapters/5-chapter.tex}
+\fi
+\ifnum\projecttype=3
+\input {LatexTutorial/kilavuz}
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%      APPENDICES     %%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage\appendix
+% gerekliyse ekler için aşağıdaki yorum satırlarını açabilirsiniz. 
+%\input {projectChapters/A-appendix.tex}
+%\input {projectChapters/B-appendix.tex}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%         BACK PAGES       %%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\addcontentsline{toc}{chapter}{\bibName}
+\singlespacing
+\printbibliography[title={\bibName}]
+
+\ifnum\final=1
+\newpage
+\addcontentsline{toc}{chapter}{\cvName}
+
+\ifnum\projecttype>0
+\input {cv.tex}
+\fi
+\fi
+
+\end{document}

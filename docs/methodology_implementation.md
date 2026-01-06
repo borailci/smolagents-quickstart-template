@@ -1,19 +1,19 @@
-# A Basic Implementation of Sub-Agents Architecture
+# A Basic Implementation of Deep Agent Architecture
 
-This document outlines a basic implementation of the sub-agents architecture methodology using the Smolagents framework. While some other frameworks such as Langchain provide built-in support for sub-agents very recently and offer more advanced features, our implementation will be a simplified version to demonstrate the core concepts.
+This document outlines a basic implementation of the **Deep Agent Architecture** methodology (based on the sub-agents pattern) using the Smolagents framework. While some other frameworks such as Langchain provide built-in support for sub-agents very recently and offer more advanced features, our implementation will be a simplified version to demonstrate the core concepts.
 
 ## Overview
 
 In this implementation, we will create a main agent that on-the-fly spawns sub-agents to handle specific tasks to finally generate the knowledge base. The overall flow will be as follows:
 
 1. The loop starts.
-2. The main agent is given a codebase (within its workspace) to analyze.
-3. The main agent analyzes the codebase and identifies specific tasks that can be delegated to sub-agents.
-4. The main agent spawns sub-agents to handle these tasks concurrently.
+2. The **Supervisor Agent** is given a codebase (within its workspace) to analyze.
+3. The **Supervisor Agent** analyzes the codebase and identifies specific tasks that can be delegated to sub-agents.
+4. The **Supervisor Agent** spawns sub-agents to handle these tasks concurrently.
 5. Each sub-agent works on its assigned task and generates a part of the knowledge base and saves the results to a dedicated storage it controls.
-6. The subagents report back to the main agent once they complete their tasks and report to the main agent that they have saved the results to their dedicated storage.
-7. The main agent reads the synthesized results from the sub-agents' storages and combines them to form the final knowledge base.
-8. The main agent writes the final knowledge base to its own storage.
+6. The subagents report back to the **Supervisor Agent** once they complete their tasks and report that they have saved the results to their dedicated storage.
+7. The **Supervisor Agent** reads the synthesized results from the sub-agents' storages and combines them to form the final knowledge base.
+8. The **Supervisor Agent** writes the final knowledge base to its own storage.
 9. The loop is terminated.
 
 Before implementing each single agent and its tools, first lets focus on how can this architecture be used to generate the knowledge base.
@@ -64,22 +64,22 @@ The main agent is given a codebase in its workspace to analyze. Initially, it ha
 
 Multiple techniques can be used here, for example:
 
-- The main agent can start by reading the root directory structure of the codebase to get an overview of the files and directories present. We can give the agent a tool that, when called, returns the root directory structure of the codebase.
+- The **Supervisor Agent** can start by reading the root directory structure of the codebase to get an overview of the files and directories present. We can give the agent a tool that, when called, returns the root directory structure of the codebase.
 - We can also give it a more detailed tool such as `get_tree` that returns the full tree structure of the codebase, including directories, subdirectories, and files.
 
 These two tools are **SUPER USEFUL** at the initial step because they give the agent a high-level overview of the codebase structure, allowing it to identify important files and directories that may require further analysis.
 
-After having an overview of the codebase structure, the main agent can start by reading some important files that are usually present in the codebase, such as `README.md`, `package.json`, or other configuration files, to gain insights into the project structure and dependencies.
+After having an overview of the codebase structure, the **Supervisor Agent** can start by reading some important files that are usually present in the codebase, such as `README.md`, `package.json`, or other configuration files, to gain insights into the project structure and dependencies.
 
 Also, the agent may decide to read some of the code files that are starting points or entry points of the codebase, such as `main.py` in Python projects or `index.js` in JavaScript projects, to understand the overall flow of the application. It may also identify other important files to read from the `main.py` imports and dependencies.
 
-Now, after this initial analysis, the main agent should have a basic understanding of the codebase, including its structure, dependencies, and overall purpose. With this knowledge, it can now identify specific tasks that can be delegated to sub-agents for more detailed analysis and knowledge base generation.
+Now, after this initial analysis, the **Supervisor Agent** should have a basic understanding of the codebase, including its structure, dependencies, and overall purpose. With this knowledge, it can now identify specific tasks that can be delegated to sub-agents for more detailed analysis and knowledge base generation.
 
 ### 2. Write a TODO List
 
-One feature that can be very helpful here is to have the main agent write a TODO list of tasks that need to be accomplished to generate the knowledge base.
+One feature that can be very helpful here is to have the **Supervisor Agent** write a TODO list of tasks that need to be accomplished to generate the knowledge base.
 
-This TODO list is written and managed by the main agent itself, and it can add or remove tasks from the list as needed.
+This TODO list is written and managed by the **Supervisor Agent** itself, and it can add or remove tasks from the list as needed.
 
 For example, the TODO list may look like this:
 

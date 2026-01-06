@@ -1,0 +1,141 @@
+
+\chapter{SİSTEM TASARIMI}
+\label{ch:sistem-tasarimi}
+
+Bu bölümde, geliştirilen çok ajanlı yapay zekâ analiz platformunun sistem tasarımı detaylandırılmaktadır. Tasarım mimarisi; kullanıcı etkileşimi, veri yönetimi ve nesne yönelimli modelleme olmak üzere üç temel eksende kurgulanmıştır. Amaç, karmaşık yazılım projelerini otonom olarak analiz edebilen ve eğitsel içerik üretebilen modüler, güvenli ve ölçeklenebilir bir yapı sunmaktır.
+
+%---------------------------------------------------------
+\section{Arayüz Tasarımı}
+\label{sec:arayuz-tasarimi}
+
+Sistem, kullanım kolaylığı ve operasyonel esnekliği bir arada sunmak amacıyla ikili bir arayüz yapısı benimsemiştir: Operasyonel süreçler için **Komut Satırı Arayüzü (CLI)** ve analitik çıktılar için **Web Tabanlı Kontrol Paneli**.
+
+\subsection{Komut Satırı Arayüzü (CLI)}
+Analiz süreçlerinin başlatılması ve yönetilmesi, geliştiricilerin alışkın olduğu terminal ortamı üzerinden gerçekleştirilir. Kullanıcılar, tek bir komut ile hedef projeyi sisteme tanıtır ve analiz sürecini başlatır. Sistemin CLI katmanı, arka planda çalışan yapay zekâ ajanlarının durumunu, kaynak tüketimini ve ilerleme yüzdelerini anlık olarak terminal ekranına yansıtır. Bu yalın tasarım, sistemin CI/CD (Sürekli Entegrasyon/Dağıtım) boru hatlarına kolayca entegre edilmesine olanak tanır.
+
+\subsection{Web Tabanlı Kontrol Paneli (Web Dashboard)}
+Otonom analiz tamamlandıktan sonra üretilen Knowledge Base ve eğitim materyallerinin son kullanıcıya sunulması için modern web teknolojileri (Next.js ve React) kullanılarak geliştirilmiş bir arayüz mevcuttur. Bu panelin temel işlevleri şunlardır:
+
+\begin{itemize}
+    \item **Proje Kütüphanesi:** Analiz edilen farklı kod tabanlarının görsel kartlar halinde listelenmesi ve yönetilmesi.
+    \item **Etkileşimli İçerik Görüntüleyici:** Ajanlar tarafından üretilen Markdown formatındaki ders içeriklerinin, kod renklendirme (syntax highlighting) ve dinamik diyagram destekli olarak okunabilir hale getirilmesi.
+    \item **Akıllı Gezinme:** Oluşturulan müfredat içerikleri arasında hiyerarşik geçiş imkanı.
+\end{itemize}
+
+Şekil~\ref{fig:ui-flow}'te sistemin operasyonel ve analitik arayüzleri arasındaki veri akış diyagramı sunulmuştur.
+
+\begin{figure}[H]
+    \centering
+    \resizebox{0.95\textwidth}{!}{%
+    \begin{tikzpicture}[
+        node distance=2.4cm,
+        >=Latex,
+        box/.style={
+            draw,
+            rounded corners,
+            minimum width=22mm,
+            minimum height=8mm,
+            align=center,
+            fill=blue!5
+        }
+    ]
+        \node[box] (user) {Kullanıcı};
+        \node[box, right=of user, fill=gray!10] (cli) {CLI\\(Terminal)};
+        \node[box, right=of cli, fill=green!8] (pipeline) {Otonom\\Analiz Motoru};
+        \node[box, above=of pipeline, fill=red!10, draw=red!60] (phoenix) {Phoenix\\(İzleme)};
+        \node[box, right=of pipeline, fill=yellow!10] (fs) {Dosya\\Sistemi};
+        \node[box, below=of pipeline, fill=blue!10] (web) {Web Dashboard\\(Next.js)};
+
+        \draw[->] (user) -- node[above]{Komut} (cli);
+        \draw[->] (cli) -- node[above]{Başlat} (pipeline);
+        \draw[->] (pipeline) -- node[above]{Kaydet} (fs);
+        \draw[->] (web) -- node[left]{Oku} (fs);
+        \draw[->] (user) -- node[left]{İncele} (web);
+        \draw[dashed, ->, draw=red!80] (pipeline) -- node[right, text=red]{Loglar} (phoenix);
+    \end{tikzpicture}%
+    }
+    \caption{Kullanıcı etkileşimi ve veri akış şeması.}
+    \label{fig:ui-flow}
+\end{figure}
+
+%---------------------------------------------------------
+\section{Veri Yapısı Tasarımı}
+\label{sec:veri-yapisi-tasarimi}
+
+Proje mimarisinde, karmaşık veritabanı yönetim sistemleri yerine, taşınabilirlik ve şeffaflığı ön planda tutan, dosya sistemi tabanlı (filesystem-based) bir veri yaklaşımı tercih edilmiştir. Bu tasarım kararı, üretilen dokümantasyonun versiyon kontrol sistemleri (örn. Git) ile uyumlu olmasını ve projenin kendisiyle birlikte saklanabilmesini sağlar.
+
+\subsection{Yapılandırma Yönetimi}
+Sistemin davranış kalıpları ve parametreleri, merkezi yapılandırma dosyaları üzerinden yönetilir. Model seçimleri, API erişim anahtarları ve global sistem ayarları tek bir noktadan kontrol edilirken, web arayüzünde görüntülenecek metadata bilgileri ayrıştırılmış formatlarda saklanır.
+
+\subsection{İzole Çalışma Alanları (Scoped Filesystem)}
+Veri güvenliğini sağlamak ve projeler arası çakışmaları önlemek adına "İzole Dosya Sistemi" mimarisi uygulanmıştır. Her analiz süreci, kendine tahsis edilen üç katmanlı bir dizin yapısı içinde çalışır:
+
+\begin{enumerate}
+    \item **Kaynak Katmanı (Okuma):** Ajanların sadece okuma iznine sahip olduğu, orijinal kod tabanının bulunduğu güvenli alan.
+    \item **Bellek Katmanı (Geçici):** Analiz sürecinde oluşturulan ara özetlerin ve notların tutulduğu çalışma alanı.
+    \item **Çıktı Katmanı (Yazma):** Nihai eğitim materyallerinin ve raporların derlendiği sonuç klasörü.
+\end{enumerate}
+
+Bu yapı sayesinde, yapay zekâ ajanlarının proje dosyalarına zarar vermesi engellenmiş ve veri bütünlüğü garanti altına alınmıştır.
+
+%---------------------------------------------------------
+\section{Nesneye Yönelik Tasarım ve Ajan Mimarisi}
+\label{sec:ajan-mimarisi}
+
+Sistemin yazılım mimarisi, klasik statik sınıf hiyerarşileri yerine, esnekliği maksimize eden **Bileşimsel (Composition-based)** ve **Dinamik** bir tasarım modeline dayanır. Ajanlar, sabit kod blokları olarak değil, çalışma zamanında (runtime) ihtiyaca göre bir araya getirilen yetenek kümeleri olarak kurgulanmıştır.
+
+\subsection{Dinamik Ajan Yapısı}
+Platform içerisindeki her bir ajan (Supervisor Agent, Sub-Agent, Tutorial Generator), üç temel bileşenin dinamik birleşimiyle oluşturulur:
+
+\begin{itemize}
+    \item **Kimlik ve Rol Tanımı (Prompt):** Ajanın amacını, kurallarını ve davranış biçimini belirleyen doğal dil talimatlarıdır.
+    \item **Yetenek Seti (Toolkit):** Ajanın dosya okuma, komut çalıştırma veya internette arama yapma gibi teknik becerilerini tanımlayan modüler fonksiyon kütüphaneleridir.
+    \item **Dil Modeli (LLM):** Görevin karmaşıklığına göre seçilen, ajana zeka sağlayan işlem birimidir.
+\end{itemize}
+
+Bu modüler yapı, sisteme yeni yeteneklerin eklenmesini veya ajan davranışlarının değiştirilmesini, kaynak kodda köklü değişiklikler yapmadan mümkün kılar.
+
+\subsection{Orkestrasyon Katmanı}
+Ajanların koordinasyonu ve görev dağılımı, üst seviye yönetici sınıflar tarafından sağlanır. Sistemde ana yönetici rolünü üstlenen bu yapı, analiz sürecini mantıksal aşamalara (Bilgi Toplama, Planlama, İçerik Üretimi) böler ve her aşama için gerekli ajanları senkronize bir şekilde devreye sokar.
+
+Şekil~\ref{fig:class-diagram}'de sistemin dinamik nesne mimarisi özetlenmiştir.
+
+\begin{figure}[H]
+    \centering
+    \resizebox{0.85\textwidth}{!}{%
+    \begin{tikzpicture}[
+        node distance=2.0cm,
+        >=Latex,
+        class/.style={
+            draw,
+            rounded corners,
+            minimum width=35mm,
+            minimum height=10mm,
+            align=center,
+            fill=blue!5
+        }
+    ]
+        \node[class, fill=green!10] (orch) {Supervisor Agent\\(Yönetici Modül)};
+        \node[class, below left=of orch, fill=yellow!15] (kb) {Knowledge Base\\Builder};
+        \node[class, below right=of orch, fill=yellow!15] (tut) {Tutorial\\Generator};
+        \node[class, below=of kb, yshift=-1cm] (agents) {Dinamik Ajan\\(Örneklem)};
+
+        \draw[->] (orch) -- (kb);
+        \draw[->] (orch) -- (tut);
+        \draw[->, dashed] (kb) -- node[left]{Oluşturur} (agents);
+        \draw[->, dashed] (tut) -- node[right]{Oluşturur} (agents);
+        
+        \node[right=of agents, text width=4.5cm, align=left] (components) {
+            \textit{Smolagents Ajan Yapısı:}\\
+            + \textbf{Sistem Komutu (Prompt)}\\
+            + \textbf{Araç Seti (Toolkits)}\\
+            + \textbf{Dil Modeli (LLM Gateway)}
+        };
+        \draw[dotted, thick] (agents) -- (components);
+    \end{tikzpicture}%
+    }
+    \caption{Orkestrasyon yapısı ve dinamik ajan üretimi.}
+    \label{fig:class-diagram}
+\end{figure}
+
+Bu mimari tercih, sistemin bakım maliyetini düşürmekte ve farklı programlama dilleri veya teknolojiler için kolayca özelleştirilebilmesine olanak tanımaktadır.

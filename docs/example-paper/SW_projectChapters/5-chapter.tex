@@ -1,0 +1,32 @@
+\chapter{SONUÇ VE TARTIŞMA}
+\label{ch:sonuc-ve-tartisma}
+
+Bu çalışmada, büyük ve karmaşık kod tabanlarını otomatize etmek amacıyla "Sub-Agent" mimarisine dayalı otonom bir yapay zekâ sistemi tasarlanmış ve prototipi geliştirilmiştir. Geliştirilen sistem, "Agent Lightning" gibi modern ve dokümantasyonu sınırlı kütüphaneler üzerinde test edilmiş; elde edilen sonuçlar hem nicel metrikler hem de nitel Yargıç LLM değerlendirmeleriyle analiz edilmiştir.
+
+Proje kapsamında elde edilen temel sonuçlar ve tartışma başlıkları aşağıda sunulmuştur:
+
+\section{Elde Edilen Kazanımlar}
+
+\begin{enumerate}
+    \item \textbf{Bağlam Sınırının Aşılması:} Geleneksel tek ajanlı sistemlerin en büyük problemi olan "bağlam penceresi" (context window) kısıtı, geliştirdiğimiz iki aşamalı (Knowledge Base Üretimi $\rightarrow$ İçerik Üretimi) mimari sayesinde aşılmıştır. Supervisor Agent'ın tüm dosyaları okumak yerine, görevi alt ajanlara dağıtması ve sadece özet bilgiyi (Knowledge Base) kullanması, sistemin binlerce dosyalık projelerde bile "bağlam taşması" yaşamadan çalışmasını sağlamıştır.
+
+    \item \textbf{Kalite ve Derinlik Artışı:} Yapılan karşılaştırmalı testler (Bölüm \ref{sec:test-sonuclari}), Deep Agent stratejisinin token maliyetini artırmasına rağmen (Baseline: 1.8M vs Deep: 3.3M), çıktı kalitesinde tartışılmaz bir üstünlük sağladığını göstermiştir. Baseline ajan yüzeysel bilgiler verirken; Deep Agent, kodun derinliklerindeki mimari desenleri, asenkron çalışma yapılarını ve doğru sınıf isimlerini tespit ederek "kullanılabilir ve doğru" eğitim materyali üretmeyi başarmıştır. Yargıç LLM'ler, Deep Agent'a doğruluk ve pedagoji kriterlerinde tam puan (5/5) vermiştir.
+
+    \item \textbf{Güvenli ve İzole Çalışma:} Tasarlanan kısıtlanmış dosya erişim modeli sayesinde, otonom ajanların sadece kendilerine atanan dizinlerde çalışması sağlanmış, böylece olası veri kaybı veya dizin gezintisi (path traversal) zafiyetleri mimari düzeyde engellenmiştir.
+\end{enumerate}
+
+\section{Kısıtlar ve Maliyet}
+
+Sistemin sunduğu yüksek kalitenin bir bedeli olarak işlem süresi ve maliyeti artış göstermiştir. Deep Agent modunda bir kütüphanenin analizi ve tutorial üretimi ortalama 10-20 dakika sürmektedir. Bu süre, bir insanın haftalar süren öğrenme sürecine göre ihmal edilebilir olsa da, anlık yanıt bekleyen interaktif senaryolar için (örneğin IDE içi kod tamamlama) bu mimari şu an için yavaş kalabilir. Ayrıca token tüketiminin yüksek olması, GPT-OSS-120B gibi pahalı modellerle çalışıldığında maliyetli olabilir; bu nedenle sistemin Gemini 2.5 Pro veya açık kaynaklı (OSS) modellerle optimize edilmesi önerilmektedir.
+
+\section{Gelecek Çalışmalar}
+
+Mevcut prototipin başarısı, bu alanda yapılacak ileri çalışmalar için güçlü bir temel oluşturmaktadır. Gelecek dönemde şu geliştirmelerin yapılması hedeflenmektedir:
+
+\begin{itemize}
+    \item \textbf{İnsan Deneyleri:} Şu an Yargıç LLM'lerle yapılan doğrulamanın, gerçek yazılım geliştiriciler ve üniversite öğrencileriyle yapılacak A/B testleriyle (Deney 1 ve Deney 3) desteklenmesi.
+    \item \textbf{Ablasyon Çalışmaları:} Bilgi Bankası bileşeninin etkisini daha net ölçmek için, sistemin farklı modüllerinin kapatılarak (ör. sadece RAG ile, Knowledge Base olmadan) test edilmesi (Deney 5).
+    \item \textbf{Web Arayüzü:} Mevcut CLI yapısının, daha geniş kitlelere hitap edecek, sürükle-bırak özellikli bir Web UI ile zenginleştirilmesi.
+\end{itemize}
+
+Sonuç olarak, bu proje ile otonom ajanların sadece kod yazmakla kalmayıp, yazılan kodu "anlatma ve öğretme" konusunda da insan geliştiricilere güçlü bir asistan olabileceği kanıtlanmıştır.

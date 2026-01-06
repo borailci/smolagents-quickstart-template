@@ -4,33 +4,37 @@ Bu rehber, Smolagents şablonunda yapabileceğiniz her şeyi adım adım açıkl
 
 ## Projede Neler Var
 
-**Mevcut Kurulum (Tek Agent):**
-- `ExampleToolCallingAgent` - Dosya sistemi araçları ve bir şaka API aracı ile donatılmış bir agent
-- Agent ile konuşmak için Gradio sohbet arayüzü
-- Örnek çalışma alanı ile belgeler ve kod dosyaları
-- Dosya yönetimi araçları (oku, yaz, ara, dizinleri listele)
+**Mevcut Kurulum (Çoklu-Ajan Analitiği):**
 
-**İsteğe Bağlı Çoklu-Agent Kurulumu:**
-- `ExampleManagerAgent` - Diğer agent'ları koordine eder
-- Agent'lar arasında görevleri nasıl devrettiğini gösterir
+- **Supervisor Agent** - Tüm analiz sürecini koordine eder.
+- **Sub-Agent'lar** - Kod tabanının belirli modüllerini analiz eden alt ajanlar.
+- **Knowledge Base (Bilgi Bankası)** - Kod analizinden üretilen yapılandırılmış dokümantasyon.
+- **Tutorial Generator** - Bilgi bankasını kullanarak eğitsel içerikler üretir.
+- **Next.js Dashboard** - Eğitim içeriklerini görüntülemek ve düzenlemek için modern web arayüzü.
+- **Dosya Sistemi Araçları** - Gelişmiş okuma, yazma ve arama yetenekleri.
+
+**Değerlendirme ve Kalite:**
+
+- **Yargıç LLM** - İçerik doğruluğunu denetleyen bağımsız üst seviye modeller.
+- **Phoenix Entegrasyonu** - Ajan izlerini (trace) izlemek için OpenTelemetry desteği.
 
 ## Proje Yapısı
 
 ```
 smolagents-quickstart-template/
 ├── agents/
-│   ├── example_tool_calling_agent.py    # Araçlarla çalışan agent
-│   ├── example_manager_agent.py         # Yönetici agent (isteğe bağlı)
+│   ├── deep_agent.py                    # Supervisor ve Sub-Agent mantığı
+│   ├── tutorial_generator.py            # Eğitim içeriği üretim mantığı
 │   └── base_agent.py                    # Temel sınıflar
 ├── toolkits/
-│   ├── example_joke_toolkit.py          # Şaka API aracı
+│   ├── codebase_toolkit.py              # Kod tabanı analiz araçları
 │   └── filesystem_toolkit.py            # Dosya işlemleri
-├── data/agent_workspace/                # Agent'ın dosya çalışma alanı
-│   ├── example_docs/alan_turing.md     # Örnek belge
-│   └── example_codes/car.c             # Örnek kod dosyası
-├── ui/gradio_agent_ui.py               # Sohbet arayüzü
-├── main.py                             # Uygulama giriş noktası
-└── run.sh                              # Kolaylık betiği
+├── data/                                # Yönetilen veri dizini
+│   ├── knowledge_base/                  # Üretilen modül özetleri
+│   └── tutorials/                       # Üretilen pedagojik dersler
+├── ui/                                  # Next.js Dashboard (Web Arayüzü)
+├── pipelines/                           # Ana yürütme betikleri
+└── run.sh                               # Kolaylık betiği
 ```
 
 ## Agent'a Ne Sorabilirsiniz

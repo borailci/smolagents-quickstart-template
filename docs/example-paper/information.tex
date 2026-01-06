@@ -1,0 +1,119 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%% Aşağıda istenilen bilgileri dikkatlice doldurunuz.   %%%%%%%%
+%%%%%%%%% Doldurmanız istenilen ifadenin sonunda TR ya da EN   %%%%%%%%
+%%%%%%%%% yazıyorsa, sırasıyla Türkçe veya İngilizce olarak    %%%%%%%%
+%%%%%%%%% doldurunuz. Eğer herhangi bir ifade yoksa, projenizi %%%%%%%%
+%%%%%%%%% hangi dilde yazıyorsanız (Türkçe veya İngilizce), o  %%%%%%%%
+%%%%%%%%% dile göre doldurunuz. İsimleri yazarken soyisimleri  %%%%%%%%
+%%%%%%%%% büyük harf ile yazınız.                              %%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% Proje başlığını Türkçe olarak yazınız.
+\def\titleTR{ OTONOM AJAN YAKLAŞIMIYLA KOD VERİ TABANINDAN EĞİTİM İÇERİĞİ ÜRETEN YAPAY ZEKA TABANLI YAZILIMIN TASARIMI VE GELİŞTİRMESİ }
+
+% Proje başlığını İngilizce olarak yazınız.
+\def\titleEN{ DESIGN AND DEVELOPMENT OF AN ARTIFICIAL INTELLIGENCE-BASED SOFTWARE THAT GENERATES EDUCATIONAL CONTENT FROM A CODE DATABASE USING AN AUTONOMOUS AGENT APPROACH }
+
+% Proje grubundaki ilk ismi yazınız.
+\def\studenti{BORA İLCİ}
+%İlk öğrencinin, öğrenci numarasını yazınız.
+\def\numberi{21011035}
+% Proje grubundaki ilk öğrencinin doğum tarihi ve yerini yazınız.
+\def\studentibdate{04.10.2003, Bursa}
+% Proje grubundaki ilk öğrencinin e-mail adresini yazınız.
+\def\studentiemail{bora.ilci@std.yildiz.edu.tr}
+% Proje grubundaki ilk öğrencinin cep telefonu numarasını yazınız.
+\def\studentiphone{0541 200 31 04}
+% Proje grubundaki ilk öğrencinin staj deneyimlerini yazınız. Satır atlatmak için \\ kullanabilirsiniz.
+\def\studentiintern{Orion Innovation Türkiye Ar-Ge Departmanı}
+
+% Proje grubundaki ikinci ismi yazınız. Eğer ikinci üye yoksa ~ işareti ekleyiniz ve ikinci
+% öğrenci ile alakalı diğer bilgileri atlayınız.
+\def\studentii{KAAN EMRE KARA}
+%İkinci öğrencinin, öğrenci numarasını yazınız.
+\def\numberii{21011506}
+% Proje grubundaki ikinci öğrencinin doğum tarihi ve yerini yazınız.
+\def\studentiibdate{24.09.2002, İstanbul}
+% Proje grubundaki ikinci öğrencinin e-mail adresini yazınız.
+\def\studentiiemail{emre.kara@std.yildiz.edu.tr}
+% Proje grubundaki ikinci öğrencinin cep telefonu numarasını yazınız.
+\def\studentiiphone{0530 776 8079}
+% Proje grubundaki ikinci öğrencinin staj deneyimlerini yazınız. Satır atlatmak için \\ kullanabilirsiniz.
+\def\studentiiintern{ Nef Solution Yazılım Departmanı}
+
+% Projeyi teslim ettiğiniz ay ve yılı proje için kullandığınız dilde yazınız.
+\def\date{Ocak, 2026}
+
+% Proje danışmanınızın ismini Türkçe ünvanı ile yazınız.
+\def\advisorTR{Prof. Dr. Mehmet Sıddık AKTAŞ}
+% Proje danışmanınızın ismini İngilizce ünvanı ile yazınız.
+\def\advisorEN{Prof. Dr. Mehmet Sıddık AKTAŞ}
+
+\def\acknowledgementText{
+    % Buraya teşekkür metninizi proje için kullandığınız dilde yazınız. 
+    Yıldız Teknik Üniversitesi, tarihi 1911'e dayanan Türkiye'nin en eski mühendislik okullarından biri olmasının yanı sıra, ülkemizin en prestijli eğitim kurumlarından kabul edilmektedir. Üniversitemiz bugün 10 Fakültesi, 2 Enstitüsü ve 25.000'den fazla öğrencisiyle bilim ve teknoloji dünyasına katkı sunmaya devam etmektedir.
+
+    Kurumumuz, 20 Haziran 1982 tarih ve 41 sayılı kanun hükmünde kararname ile Yıldız Üniversitesi adını almış; Fen-Edebiyat ve Mühendislik bölümleriyle akademik altyapısını güçlendirmiştir. Günümüzde geniş kampüs olanakları ve güçlü akademik kadrosuyla, özellikle mühendislik ve mimarlık başta olmak üzere pek çok alanda öncü bir rol oynamaktadır. Bu projenin gerçekleştirilmesinde emeği geçen tüm kurumsal ve bireysel paydaşlara teşekkür ederiz.
+}
+
+\def\abstractTextEnglish{
+    This project addresses the challenge of understanding and documenting large, unfamiliar codebases by developing an autonomous artificial intelligence agent capable of generating high-quality educational content. Traditional single-agent approaches often fail when processing large repositories due to the finite context window of Large Language Models (LLMs). To overcome this limitation, a novel \textit{Deep Agent} architecture based on the \textit{Sub-Agent} methodology has been implemented.
+    
+    The system operates in two phases: first, a Supervisor Agent orchestrates multiple Sub-Agents to analyze isolated parts of the codebase, generating a structured Knowledge Base without overloading the context. Second, a Tutorial Generator utilizes this knowledge base to produce comprehensive, step-by-step educational markdown files. The proposed system was tested on complex libraries such as "Agent Lightning" and evaluated against a Baseline (single-agent) approach. Results from LLM-as-a-Judge experiments (using Claude 4.5 Sonnet, GPT-OSS-120B, Gemini 2.5 Pro, and Grok Code Fast 1) demonstrate that the Deep Agent architecture significantly outperforms the baseline in terms of fidelity, pedagogy, and coverage, effectively transforming raw code into valuable learning resources.
+}
+
+
+\def\abstractKeywordsEnglish{
+   Deep Agents, Multi-Agent Systems, Automated Documentation, Large Language Models, Context Management, Software Engineering Education
+}
+
+\def\abstractTextTurkish{
+    Bu proje, büyük ve karmaşık kod tabanlarını anlama ve dokümantasyon oluşturma zorluğunu, yüksek kaliteli eğitim içeriği üretebilen otonom bir yapay zeka ajanı geliştirerek çözmeyi amaçlamaktadır. Geleneksel tek ajanlı yaklaşımlar, Büyük Dil Modellerinin (LLM) sınırlı bağlam penceresi nedeniyle geniş kod depolarını işlerken genellikle başarısız olmaktadır. Bu kısıtlamayı aşmak için, \textit{Sub-Agent} metodolojisine dayalı özgün bir \textit{Deep Agent} mimarisi geliştirilmiştir.
+    
+    Sistem iki aşamada çalışmaktadır: İlk aşamada, bir Supervisor Agent, kod tabanının farklı bölümlerini izole olarak analiz etmek için birden fazla Sub-Agent görevlendirir ve bağlamı aşırı yüklemeden yapılandırılmış bir Knowledge Base oluşturur. İkinci aşamada, bir Tutorial Generator bu bilgi bankasını kullanarak kapsamlı, adım adım ilerleyen eğitici markdown dosyaları üretir. Önerilen sistem, "Agent Lightning" gibi karmaşık kütüphaneler üzerinde test edilmiş ve bir Temel (Baseline) yaklaşımla karşılaştırılmıştır. Yargıç LLM deneylerinden (Claude 4.5 Sonnet, GPT-OSS-120B, Gemini 2.5 Pro ve Grok Code Fast 1 kullanılarak) elde edilen sonuçlar, Deep Agent mimarisinin doğruluk, pedagoji ve kapsam açısından temel yaklaşımdan önemli ölçüde üstün olduğunu ve ham kodu değerli öğrenme kaynaklarına dönüştürmede etkili olduğunu göstermektedir.
+}
+
+\def\abstractKeywordsTurkish{
+Deep Agent, Multi-Agent Systems, Otonom Dokümantasyon, Büyük Dil Modelleri, Bağlam Yönetimi, Yazılım Mühendisliği Eğitimi
+}
+
+% Proje için gerekli olan sistem ve yazılım bilgilerini yazınız.
+\def\software{Windows/macOS/Linux, Python 3.10+, Smolagents}
+\def\memorysize{8 GB}
+\def\disksize{1 GB}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%% Aşağıdaki alana "\item[sembol] Sembol_açıklaması" %%%%%%%
+%%%% şeklinde sembollerinizi giriniz. Açıklamanın ilk  %%%%%%%
+%%%% harfine göre sıralayınız. Eğer sembol kullanmı-   %%%%%%%
+%%%% yorsanız "\def\symbols{}" olacak şekilde küme     %%%%%%%
+%%%% parantezlerinin içini siliniz.                    %%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\def\symbols{
+
+
+}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%% Aşağıdaki alana "\item[kısaltma] kısaltma_açıklaması" %%%
+%%%% şeklinde kısaltmalarınızı giriniz. Kısaltmanın ilk    %%%
+%%%% harfine göre sıralayınız. Eğer kısaltma kullanmıyor-  %%%
+%%%% sanız "\def\abbrevations{}" olacak şekilde küme pa-   %%%
+%%%% rantezlerinin içini siliniz.                          %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\def\abbrevations{
+    \begin{description}
+    \item[LLM] Large Language Model (Büyük Dil Modeli)
+    \item[RAG] Retrieval-Augmented Generation (Geri Getirme Artırılmış Üretim)
+    \item[API] Application Programming Interface (Uygulama Programlama Arayüzü)
+    \item[CLI] Command Line Interface (Komut Satırı Arayüzü)
+    \item[KB] Knowledge Base (Bilgi Bankası)
+    \item[SDLC] Software Development Life Cycle (Yazılım Geliştirme Yaşam Döngüsü)
+    \item[MIT] Massachusetts Institute of Technology License
+    \end{description}
+}

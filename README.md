@@ -1,5 +1,7 @@
 # Smolagents Quickstart Template
 
+[📄 View Final Report (`Rapor_21011035_21011506.pdf`)](teslim-paketi/Doc/Rapor_21011035_21011506.pdf)
+
 A minimal template for building AI agents with [Smolagents](https://huggingface.co/docs/smolagents). Features tool-calling agents, filesystem operations, optional multi-agent orchestration, and OpenTelemetry tracing.
 
 ## Features
